@@ -1344,6 +1344,85 @@ class TestExecuteJob:
 
         assert result["success"]
 
+    def test_guardrails_metadata_reports_per_validator_text_for_input_guardrail(
+        self, db, job_env, job_for_execution
+    ):
+        """metadata.input_guardrail should surface the original text, what
+        was sent to the LLM, and each validator's own before/after text --
+        not just the raw kaapi-guardrails response wrapper.
+        """
+        env = job_env
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        unsafe_input = "My credit card is 4111 1111 1111 1111"
+        sanitized_input = "My credit card is [REDACTED]"
+
+        with (
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
+        ):
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": sanitized_input,
+                    "rephrase_needed": False,
+                    "validator_results": [
+                        {
+                            "name": "PIIRemover",
+                            "type": "pii_remover",
+                            "stage": "input",
+                            "order": 1,
+                            "outcome": "FAIL",
+                            "error": "PII detected in the text.",
+                            "input_text": unsafe_input,
+                            "output_text": sanitized_input,
+                        }
+                    ],
+                },
+            }
+            mock_fetch_configs.return_value = (
+                [{"type": "pii_remover", "stage": "input"}],
+                [],
+            )
+
+            request_data = {
+                "query": {"input": unsafe_input},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4o"},
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [],
+                    }
+                },
+                "include_provider_raw_response": False,
+                "callback_url": None,
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"]
+
+        input_guardrail_metadata = result["metadata"]["input_guardrail"]
+        assert input_guardrail_metadata["user_input"] == unsafe_input
+        assert input_guardrail_metadata["input_sent_to_llm"] == sanitized_input
+
+        validators = input_guardrail_metadata["validators"]
+        assert len(validators) == 1
+        assert validators[0]["name"] == "PIIRemover"
+        assert validators[0]["outcome"] == "FAIL"
+        assert validators[0]["input_text"] == unsafe_input
+        assert validators[0]["output_text"] == sanitized_input
+
     def test_guardrails_skip_input_validation_for_audio_input(
         self, db, job_env, job_for_execution
     ):
@@ -1442,6 +1521,85 @@ class TestExecuteJob:
             result = self._execute_job(job_for_execution, db, request_data)
 
         assert "REDACTED" in result["data"]["response"]["output"]["content"]["value"]
+
+    def test_guardrails_metadata_reports_per_validator_text_for_output_guardrail(
+        self, db, job_env, job_for_execution
+    ):
+        """metadata.output_guardrail should surface the raw LLM output
+        (pre-guardrail), the final response text, and each validator's own
+        before/after text -- not just the raw kaapi-guardrails response
+        wrapper.
+        """
+        env = job_env
+
+        raw_llm_output = "Aadhar no 123-45-6789"
+        sanitized_output = "Aadhar [REDACTED]"
+        env["mock_llm_response"].response.output.content.value = raw_llm_output
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with (
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
+        ):
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": sanitized_output,
+                    "rephrase_needed": False,
+                    "validator_results": [
+                        {
+                            "name": "PIIRemover",
+                            "type": "pii_remover",
+                            "stage": "output",
+                            "order": 1,
+                            "outcome": "FAIL",
+                            "error": "PII detected in the text.",
+                            "input_text": raw_llm_output,
+                            "output_text": sanitized_output,
+                        }
+                    ],
+                },
+            }
+            mock_fetch_configs.return_value = (
+                [],
+                [{"type": "pii_remover", "stage": "output"}],
+            )
+
+            request_data = {
+                "query": {"input": "hello"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4o"},
+                        },
+                        "input_guardrails": [],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
+                    }
+                },
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"]
+
+        output_guardrail_metadata = result["metadata"]["output_guardrail"]
+        assert output_guardrail_metadata["llm_output_pre_guardrail"] == raw_llm_output
+        assert output_guardrail_metadata["response_to_user"] == sanitized_output
+
+        validators = output_guardrail_metadata["validators"]
+        assert len(validators) == 1
+        assert validators[0]["name"] == "PIIRemover"
+        assert validators[0]["outcome"] == "FAIL"
+        assert validators[0]["input_text"] == raw_llm_output
+        assert validators[0]["output_text"] == sanitized_output
 
     def test_guardrails_output_validation_sends_input_output_pair(
         self, db, job_env, job_for_execution

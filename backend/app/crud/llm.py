@@ -65,6 +65,7 @@ def create_llm_call(
     organization_id: int,
     resolved_config: ConfigBlob,
     original_provider: str,
+    metadata: dict[str, Any] | None = None,
 ) -> LlmCall:
     """
     Create a new LLM call record in the database.
@@ -76,6 +77,7 @@ def create_llm_call(
         project_id: Project this LLM call belongs to
         organization_id: Organization this LLM call belongs to
         resolved_config: The resolved configuration blob (either from stored config or ad-hoc)
+        metadata: Extensibility catch-all dict (e.g. input guardrail results)
 
     Returns:
         LlmCall: The created LLM call record
@@ -150,6 +152,7 @@ def create_llm_call(
         conversation_id=conversation_id,
         auto_create=auto_create,
         config=config_dict,
+        metadata_=metadata,
     )
 
     session.add(db_llm_call)
@@ -172,6 +175,7 @@ def update_llm_call_response(
     content: dict[str, Any] | None = None,
     usage: dict[str, Any] | None = None,
     conversation_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> LlmCall:
     """
     Update an LLM call record with response data.
@@ -183,6 +187,7 @@ def update_llm_call_response(
         content: Response content dict
         usage: Token usage dict
         conversation_id: Conversation ID if created/updated
+        metadata: Extensibility catch-all dict, merged into any existing value
 
     Returns:
         LlmCall: The updated LLM call record
@@ -218,6 +223,10 @@ def update_llm_call_response(
         db_llm_call.usage = usage
     if conversation_id is not None:
         db_llm_call.conversation_id = conversation_id
+    if metadata is not None:
+        existing_metadata = db_llm_call.metadata_ or {}
+        existing_metadata.update(metadata)
+        db_llm_call.metadata_ = existing_metadata
 
     db_llm_call.updated_at = now()
 
@@ -283,6 +292,7 @@ def save_rephrase_guardrail_call(
             resolved_config=config_blob,
             original_provider=str(config_blob.completion.provider),
             chain_id=chain_id,
+            metadata=request_metadata,
         )
         try:
             update_llm_call_response(

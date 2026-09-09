@@ -2,6 +2,20 @@ import re
 from typing import Any
 
 
+_REDACTED = "[REDACTED]"
+
+# sentry_sdk's CeleryIntegration attaches the task's raw args/kwargs to every
+# event captured during that task as extra["celery-job"]. For these tasks,
+# kwargs["request_data"] carries the caller's raw query text and (for chain
+# jobs) prior block responses -- none of that should reach Sentry.
+_LLM_JOB_TASK_NAMES = {
+    "app.celery.tasks.job_execution.run_llm_job",
+    "app.celery.tasks.job_execution.run_llm_chain_job",
+    "app.celery.tasks.job_execution.run_response_job",
+}
+_SENSITIVE_REQUEST_DATA_KEYS = ("query", "request_metadata", "response", "output")
+
+
 _SQL_OR_CONNECT = re.compile(r"^(select|insert|update|delete|connect)\b", re.IGNORECASE)
 _HTTP_SEND_RECEIVE = re.compile(r"http (send|receive)$", re.IGNORECASE)
 _DB_QUERY_SPAN = re.compile(r"^db\.query$", re.IGNORECASE)
@@ -84,4 +98,46 @@ def before_send_transaction_filter(
         filtered.append(span)
 
     event["spans"] = filtered
+    return event
+
+
+def _redact_llm_job_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Replaces end-user text fields in an LLM job's request_data with a
+    placeholder, leaving non-text fields (config, ids, callback_url) intact.
+    """
+    request_data = kwargs.get("request_data")
+    if not isinstance(request_data, dict):
+        return kwargs
+
+    redacted_request_data = dict(request_data)
+    for key in _SENSITIVE_REQUEST_DATA_KEYS:
+        if key in redacted_request_data:
+            redacted_request_data[key] = _REDACTED
+
+    redacted_kwargs = dict(kwargs)
+    redacted_kwargs["request_data"] = redacted_request_data
+    return redacted_kwargs
+
+
+def before_send_filter(
+    event: dict[str, Any], hint: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Strips end-user query/response text from LLM job celery-job context
+    before an event reaches Sentry.
+    """
+    extra = event.get("extra")
+    if not isinstance(extra, dict):
+        return event
+
+    celery_job = extra.get("celery-job")
+    if not isinstance(celery_job, dict):
+        return event
+
+    if celery_job.get("task_name") not in _LLM_JOB_TASK_NAMES:
+        return event
+
+    kwargs = celery_job.get("kwargs")
+    if isinstance(kwargs, dict):
+        celery_job["kwargs"] = _redact_llm_job_kwargs(kwargs)
+
     return event

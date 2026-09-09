@@ -240,6 +240,26 @@ def apply_guardrails(
     )
 
 
+def summarize_validator_results(outcome: GuardrailsOutcome) -> list[dict[str, Any]]:
+    """Per-validator name/outcome/text summary, extracted from the raw
+    guardrails service response, for use in llm_call metadata."""
+    data = outcome.raw.get("data") or {}
+    validator_results = data.get("validator_results") or []
+
+    summaries = []
+    for validator_result in validator_results:
+        summaries.append(
+            {
+                "name": validator_result.get("name"),
+                "outcome": validator_result.get("outcome"),
+                "error": validator_result.get("error"),
+                "input_text": validator_result.get("input_text"),
+                "output_text": validator_result.get("output_text"),
+            }
+        )
+    return summaries
+
+
 def run_guardrails_validation(
     input_text: str,
     guardrail_config: Sequence[Validator | dict[str, Any]],

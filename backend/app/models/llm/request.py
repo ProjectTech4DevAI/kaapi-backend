@@ -764,6 +764,16 @@ class LlmCall(SQLModel, table=True):
         ),
     )
 
+    metadata_: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            "metadata",
+            JSONB,
+            nullable=True,
+            comment="Future-proof extensibility catch-all (e.g. guardrail results)",
+        ),
+    )
+
     # Timestamps
     inserted_at: datetime = Field(
         default_factory=now,
