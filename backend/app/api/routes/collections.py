@@ -249,6 +249,13 @@ def collection_info(
     include_url: bool = Query(
         False, description="Include a signed URL to access the document"
     ),
+    download: bool = Query(
+        False,
+        description=(
+            "When true the signed URL forces a download under the document's "
+            "original filename; when false it opens inline in the browser"
+        ),
+    ),
     limit: int
     | None = Query(
         None,
@@ -275,7 +282,10 @@ def collection_info(
             )
 
         collection_with_docs.documents = build_document_schemas(
-            documents=documents, storage=storage, include_url=include_url
+            documents=documents,
+            storage=storage,
+            include_url=include_url,
+            download=download,
         )
 
     return APIResponse[CollectionWithDocsPublic].success_response(collection_with_docs)
