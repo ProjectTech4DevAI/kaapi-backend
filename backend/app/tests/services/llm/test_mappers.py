@@ -204,6 +204,28 @@ class TestMapKaapiToGoogleParams:
         assert len(warnings) == 1
         assert "max_num_results" in warnings[0]
 
+    def test_enum_json_schema_carries_only_the_camel_case_ordering_key(self):
+        """Vertex rejects a payload carrying both ordering spellings; the SDK dump
+        only emits the snake_case one for some schemas, and an enum triggers it."""
+        result, _ = map_kaapi_to_google_params(
+            {
+                "model": "gemini-2.5-pro",
+                "json_schema": {
+                    "type": "object",
+                    "properties": {
+                        "band": {"type": "string", "enum": ["low", "high"]},
+                        "score": {"type": "integer"},
+                    },
+                    "required": ["band", "score"],
+                },
+            },
+            completion_type="text",
+        )
+
+        google_schema = result["json_schema"]
+        assert "property_ordering" not in google_schema
+        assert google_schema["propertyOrdering"] == ["band", "score"]
+
     def test_stt_completion_with_instructions(self):
         """Test STT completion with instructions parameter."""
         kaapi_params = STTLLMParams(

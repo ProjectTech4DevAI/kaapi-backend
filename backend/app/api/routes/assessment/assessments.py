@@ -1,6 +1,6 @@
 """Parent-assessment endpoints (LEGACY RUN pipeline).
 
-Serves dataset-based RUN assessments only. The new API-client BATCH path
+Serves submission-based RUN assessments only. The new API-client BATCH path
 (`api.py`) delivers results by webhook and never surfaces here.
 """
 
@@ -28,7 +28,7 @@ from app.models.assessment import (
     AssessmentPublic,
     AssessmentResponse,
 )
-from app.models.evaluation import EvaluationDataset
+from app.models.assessment import AssessmentSubmission
 from app.services.assessment.service import retry_assessment as retry_assessment_service
 from app.services.assessment.utils import build_assessment_results_response
 from app.utils import APIResponse, load_description
@@ -47,12 +47,12 @@ def _build_assessment_public(
         session=session, assessment_id=assessment.id
     )
     counts = compute_run_counts(runs)
-    dataset = session.get(EvaluationDataset, assessment.dataset_id)
+    submission = session.get(AssessmentSubmission, assessment.submission_id)
     return AssessmentPublic(
         id=assessment.id,
         experiment_name=assessment.experiment_name,
-        dataset_id=assessment.dataset_id,
-        dataset_name=dataset.name if dataset else None,
+        submission_id=assessment.submission_id,
+        submission_name=submission.name if submission else None,
         status=assessment.status,
         counts=counts,
         run_stats=build_run_stats(runs),
@@ -76,7 +76,7 @@ def retry_assessment(
     session: SessionDep,
     auth_context: AuthContextDep,
 ) -> APIResponse[AssessmentResponse]:
-    """Retry a parent assessment using the same dataset/config inputs."""
+    """Retry a parent assessment using the same submission/config inputs."""
     assessment = get_assessment_by_id(
         session=session,
         assessment_id=assessment_id,

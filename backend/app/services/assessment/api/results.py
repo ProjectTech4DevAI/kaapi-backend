@@ -20,18 +20,13 @@ from app.models.assessment import (
     AssessmentCounts,
     AssessmentOutput,
     AssessmentResult,
-    BatchInput,
     BatchRunState,
     ParsedResult,
     PreFilter,
     PreFilterVerdict,
     Verdict,
 )
-from app.services.assessment.api.batch import (
-    ApiStage,
-    build_rows,
-    parse_batch_results,
-)
+from app.services.assessment.api.batch import ApiStage, parse_batch_results
 from app.services.assessment.utils.parsing import parse_stored_results
 
 logger = logging.getLogger(__name__)
@@ -95,12 +90,8 @@ def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatch
     executions = api.list_executions(session=session, assessment_id=assessment.id)
     bag = cast(BatchRunState, (executions[0].execution or {}) if executions else {})
 
-    batch_input = (
-        BatchInput.model_validate(assessment.input) if assessment.input else None
-    )
-    input_columns = bag.get("input_schema") or {}
-    rows, _, _ = build_rows(batch_input, input_columns) if batch_input else ([], [], [])
-    total_items = len(rows)
+    # Off the execution, not re-derived: the terminal path must not fetch rows to count them.
+    total_items = executions[0].total_items if executions else 0
 
     gate_passed = bag.get("gate_passed") or [True] * total_items
     verdicts = bag.get("verdicts") or {}

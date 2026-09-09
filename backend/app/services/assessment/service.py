@@ -2,6 +2,7 @@
 
 import logging
 from typing import Any
+from uuid import UUID
 
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
@@ -10,7 +11,7 @@ from sqlmodel import Session
 from app.crud.assessment import (
     create_assessment,
     create_assessment_run,
-    get_assessment_dataset_by_id,
+    get_submission_by_id,
     get_assessment_runs_for_assessment,
     recompute_assessment_status,
 )
@@ -51,7 +52,7 @@ _SUPPORTED_BATCH_PROVIDERS = {
 def _build_retry_request(
     *,
     experiment_name: str,
-    dataset_id: int,
+    submission_id: UUID,
     input_binding: dict[str, Any] | None,
     runs: list[AssessmentRun],
 ) -> AssessmentRunCreate:
@@ -87,7 +88,7 @@ def _build_retry_request(
 
     return AssessmentRunCreate(
         experiment_name=experiment_name,
-        dataset_id=dataset_id,
+        submission_id=submission_id,
         input_binding=binding,
         configs=configs,
         post_processing_config=input_binding.get("post_processing_config"),
@@ -108,16 +109,16 @@ def start_assessment(
     from app.celery.tasks.job_execution import run_assessment_pipeline
 
     logger.info(
-        "[start_assessment] Starting | experiment=%s | dataset_id=%s | configs=%s | org_id=%s",
+        "[start_assessment] Starting | experiment=%s | submission_id=%s | configs=%s | org_id=%s",
         request.experiment_name,
-        request.dataset_id,
+        request.submission_id,
         len(request.configs),
         organization_id,
     )
 
-    dataset = get_assessment_dataset_by_id(
+    submission = get_submission_by_id(
         session=session,
-        dataset_id=request.dataset_id,
+        submission_id=request.submission_id,
         organization_id=organization_id,
         project_id=project_id,
     )
@@ -177,7 +178,7 @@ def start_assessment(
     assessment = create_assessment(
         session=session,
         experiment_name=request.experiment_name,
-        dataset_id=request.dataset_id,
+        submission_id=request.submission_id,
         organization_id=organization_id,
         project_id=project_id,
         input_binding=assessment_input,
@@ -220,8 +221,8 @@ def start_assessment(
     return AssessmentRunResponse(
         assessment_id=assessment.id,
         experiment_name=request.experiment_name,
-        dataset_id=request.dataset_id,
-        dataset_name=dataset.name,
+        submission_id=request.submission_id,
+        submission_name=submission.name,
         num_configs=len(runs),
         runs=[
             AssessmentRunSummary(
@@ -248,7 +249,7 @@ def retry_assessment(
     )
     request = _build_retry_request(
         experiment_name=assessment.experiment_name,
-        dataset_id=assessment.dataset_id,
+        submission_id=assessment.submission_id,
         input_binding=assessment.input,
         runs=runs,
     )
@@ -277,7 +278,7 @@ def retry_assessment_run(
         )
     request = _build_retry_request(
         experiment_name=parent.experiment_name,
-        dataset_id=parent.dataset_id,
+        submission_id=parent.submission_id,
         input_binding=parent.input,
         runs=[run],
     )
@@ -319,9 +320,9 @@ def resume_assessment_run(
             status_code=404,
             detail=f"Parent assessment {run.assessment_id} not found",
         )
-    dataset = get_assessment_dataset_by_id(
+    submission = get_submission_by_id(
         session=session,
-        dataset_id=parent.dataset_id,
+        submission_id=parent.submission_id,
         organization_id=organization_id,
         project_id=project_id,
     )
@@ -349,8 +350,8 @@ def resume_assessment_run(
     return AssessmentRunResponse(
         assessment_id=parent.id,
         experiment_name=parent.experiment_name,
-        dataset_id=parent.dataset_id,
-        dataset_name=dataset.name if dataset else None,
+        submission_id=parent.submission_id,
+        submission_name=submission.name if submission else None,
         num_configs=1,
         runs=[
             AssessmentRunSummary(

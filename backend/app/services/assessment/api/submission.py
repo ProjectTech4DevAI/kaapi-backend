@@ -6,6 +6,7 @@ BATCH method is wired here; RESPONSE stays a route-level 501 stub (deferred).
 """
 
 import logging
+from uuid import UUID
 
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
@@ -13,6 +14,8 @@ from pydantic import ValidationError
 from sqlmodel import Session
 
 from app.crud.assessment import api
+from app.crud.assessment.batch import load_submission_file_rows
+from app.crud.assessment.submission import get_submission_by_id
 from app.crud.config import ConfigCrud, ConfigVersionCrud
 from app.models.assessment import (
     AssessmentCreate,
@@ -26,6 +29,7 @@ from app.models.assessment import (
 from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.config.config import ConfigTag
 from app.services.assessment.api import batch as batch_service
+from app.services.assessment.api.submission_store import upload_submission_rows
 from app.utils import validate_callback_url
 
 logger = logging.getLogger(__name__)
@@ -73,6 +77,41 @@ def _validate_rows_against_schema(
                             f"'{spec.get('type')}' column."
                         ),
                     )
+
+
+def _rows_from_submission(
+    *,
+    session: Session,
+    submission_doc_id: UUID,
+    organization_id: int,
+    project_id: int,
+) -> BatchInput:
+    """Read an uploaded submission's rows so the run continues as if they were inline."""
+    submission = get_submission_by_id(
+        session=session,
+        submission_id=submission_doc_id,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    try:
+        rows = load_submission_file_rows(session=session, submission=submission)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(
+            "[_rows_from_submission] Could not read submission | submission_id=%s",
+            submission_doc_id,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502, detail="Failed to read the submission file from storage."
+        ) from exc
+
+    if not rows:
+        raise HTTPException(
+            status_code=422, detail=f"Submission {submission_doc_id} has no rows."
+        )
+    return BatchInput(data=rows)
 
 
 def _resolve_config(
@@ -132,7 +171,7 @@ def submit(
     """Submit a BATCH assessment: persist state, seed the pipeline, dispatch the task."""
     from app.celery.tasks.job_execution import run_assessment_api_batch
 
-    method = derive_method(request.input, dataset_id=None)
+    method = derive_method(request.input, submission_id=None)
     if method != AssessmentMethod.BATCH:
         # RESPONSE is handled (stubbed) at the route; submit is BATCH-only for now.
         raise HTTPException(
@@ -147,6 +186,15 @@ def submit(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     batch_input: BatchInput = request.input
+    submission_id = batch_input.submission_doc_id
+    if submission_id is not None:
+        batch_input = _rows_from_submission(
+            session=session,
+            submission_doc_id=submission_id,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
+
     blob, provider, model = _resolve_config(
         session=session, request=request, project_id=project_id
     )
@@ -169,10 +217,28 @@ def submit(
     assessment = api.create_assessment(
         session=session,
         method=AssessmentMethod.BATCH,
-        input=batch_input.model_dump(mode="json"),
+        input=None,
+        submission_id=submission_id,
         organization_id=organization_id,
         project_id=project_id,
     )
+    # Row first: the object key needs its id, and a run without this file is unrunnable.
+    submission_url = upload_submission_rows(
+        session=session,
+        assessment_id=assessment.id,
+        project_id=project_id,
+        batch_input=batch_input,
+    )
+    if not submission_url:
+        api.update_status(
+            session=session, obj=assessment, status=AssessmentStatus.FAILED
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to store the assessment submission. Please retry.",
+        )
+    api.set_submission_input(session=session, assessment=assessment, url=submission_url)
+
     execution = api.create_execution(
         session=session,
         assessment_id=assessment.id,
@@ -204,7 +270,7 @@ def submit(
 
     trace_id = correlation_id.get() or ""
     try:
-        run_assessment_api_batch.delay(
+        dispatched = run_assessment_api_batch.delay(
             execution_id=execution.id,
             organization_id=organization_id,
             project_id=project_id,
@@ -228,9 +294,10 @@ def submit(
         ) from exc
     logger.info(
         "[submit] Dispatched BATCH assessment | assessment_id=%s | execution_id=%s | "
-        "provider=%s | stages=%s | rows=%s",
+        "task_id=%s | provider=%s | stages=%s | rows=%s",
         assessment.id,
         execution.id,
+        dispatched.id,
         provider,
         [s["stage"] for s in pipeline],
         total_items,

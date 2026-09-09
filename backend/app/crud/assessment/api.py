@@ -2,15 +2,18 @@
 
 Kept separate from the legacy RUN-pipeline crud (core/cron/processing/batch):
 writes only the new method-based columns and leaves the RUN-only `execution`
-and `dataset_id` fields NULL.
+and `submission_id` fields NULL.
 """
 
 import logging
 from typing import Any, TypeVar, cast
 from uuid import UUID
 
+from sqlalchemy import cast as sa_cast
+from sqlalchemy import update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm.attributes import flag_modified
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.util import now
 from app.models.assessment import (
@@ -31,13 +34,15 @@ def create_assessment(
     *,
     session: Session,
     method: AssessmentMethod,
-    input: dict[str, Any],
+    input: dict[str, Any] | None,
     organization_id: int,
     project_id: int,
+    submission_id: UUID | None = None,
 ) -> Assessment:
     assessment = Assessment(
         method=method,
         input=input,
+        submission_id=submission_id,
         status=AssessmentStatus.PENDING,
         organization_id=organization_id,
         project_id=project_id,
@@ -62,6 +67,21 @@ def set_assessment_job(
     session.refresh(assessment)
     logger.info(
         f"[set_assessment_job] Linked job | assessment_id: {assessment.id} | job_id: {job_id}"
+    )
+    return assessment
+
+
+def set_submission_input(
+    *, session: Session, assessment: Assessment, url: str
+) -> Assessment:
+    """Point the assessment at its stored submission rows."""
+    assessment.submission_input = url
+    assessment.updated_at = now()
+    session.add(assessment)
+    session.commit()
+    session.refresh(assessment)
+    logger.info(
+        f"[set_submission_input] Linked submission | assessment_id: {assessment.id} | url: {url}"
     )
     return assessment
 
@@ -127,6 +147,33 @@ def save_execution_state(
         f"stage: {state.get('stage')} | stage_status: {state.get('stage_status')}"
     )
     return execution
+
+
+def set_result_files(
+    *, session: Session, assessment: Assessment, files: dict[str, dict[str, Any]]
+) -> Assessment:
+    """Shallow-merge ``files`` into ``assessment.result_files``, one record per file kind.
+
+    The merge is server-side (``||``, right-hand side wins per key) because two drivers
+    can touch this row within the same second; a read-modify-write would drop the loser's
+    kinds instead of keeping both.
+    """
+    statement = (
+        update(Assessment)
+        .where(col(Assessment.id) == assessment.id)
+        .values(
+            result_files=col(Assessment.result_files).op("||")(sa_cast(files, JSONB)),
+            updated_at=now(),
+        )
+    )
+    session.exec(statement)
+    session.commit()
+    session.refresh(assessment)
+    logger.info(
+        f"[set_result_files] Merged result files | assessment_id: {assessment.id} | "
+        f"kinds: {sorted(files)}"
+    )
+    return assessment
 
 
 def update_status(

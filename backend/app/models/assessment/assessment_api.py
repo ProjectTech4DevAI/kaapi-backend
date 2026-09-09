@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Annotated, Any, NotRequired, TypedDict
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 from sqlmodel import SQLModel
 
 from app.models.assessment.assessment import (
@@ -35,13 +35,31 @@ Submission = dict[str, str]
 
 
 class BatchInput(SQLModel):
-    """BATCH input — a list of submission rows. The prompt template lives in the config."""
+    """BATCH input — rows inline, or a pointer to an uploaded submission file.
+
+    The two are mutually exclusive: exactly one must be given. The prompt template
+    lives in the config either way.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    data: list[Submission] = Field(
-        ..., min_length=1, description="Submission rows; one assessed item each"
+    data: list[Submission] | None = Field(
+        default=None,
+        min_length=1,
+        description="Submission rows; one assessed item each",
     )
+    submission_doc_id: UUID | None = Field(
+        default=None,
+        description="Id of an uploaded submission file to read the rows from",
+    )
+
+    @model_validator(mode="after")
+    def _exactly_one_row_source(self) -> "BatchInput":
+        if (self.data is None) == (self.submission_doc_id is None):
+            raise ValueError(
+                "Provide exactly one of 'data' (inline rows) or 'submission_doc_id'."
+            )
+        return self
 
 
 class Verdict(TypedDict):
@@ -75,6 +93,8 @@ class BatchRunState(TypedDict):
     # raw_output_url is Optional, so the map value types must admit None.
     stage_batches: dict[str, int | None]  # stage -> provider batch_job id
     stage_output_urls: dict[str, str | None]  # stage -> raw result url
+    # stage -> {row_index -> error}, captured at parse time (raw dumps are too big here)
+    stage_errors: NotRequired[dict[str, dict[str, str]]]
     verdicts: dict[str, dict[str, Verdict]]  # stage -> {item_idx -> verdict}
     counters: dict[str, dict[str, int]]  # stage -> {total,passed,rejected}
     gate_passed: list[bool]  # per-item still-eligible flag
@@ -93,16 +113,16 @@ AssessmentInput = ResponseInput | BatchInput
 
 
 def derive_method(
-    input_: AssessmentInput | None, dataset_id: int | None
+    input_: AssessmentInput | None, submission_id: UUID | None
 ) -> AssessmentMethod:
-    """Infer method: ResponseInput ⇒ RESPONSE, BatchInput ⇒ BATCH, else dataset_id ⇒ RUN."""
+    """Infer method: ResponseInput ⇒ RESPONSE, BatchInput ⇒ BATCH, else submission_id ⇒ RUN."""
     if isinstance(input_, ResponseInput):
         return AssessmentMethod.RESPONSE
     if isinstance(input_, BatchInput):
         return AssessmentMethod.BATCH
-    if dataset_id is not None:
+    if submission_id is not None:
         return AssessmentMethod.RUN
-    raise ValueError("[derive_method] Provide inline `input` or `dataset_id`")
+    raise ValueError("[derive_method] Provide inline `input` or `submission_id`")
 
 
 class AssessmentCreate(BaseModel):

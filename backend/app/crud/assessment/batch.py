@@ -1,6 +1,6 @@
 """Assessment batch JSONL construction and submission.
 
-Builds provider-specific JSONL files from dataset rows + config,
+Builds provider-specific JSONL files from submission rows + config,
 then submits them via the core batch infrastructure.
 """
 
@@ -26,9 +26,9 @@ from app.models.assessment import (
     Assessment,
     AssessmentAttachment,
     AssessmentRun,
+    AssessmentSubmission,
 )
 from app.models.batch_job import BatchJob, BatchJobType
-from app.models.evaluation import EvaluationDataset
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
 from app.models.llm.request import ConfigBlob
 from app.services.assessment.mappers import (
@@ -37,6 +37,7 @@ from app.services.assessment.mappers import (
     map_kaapi_to_openai_params,
     normalize_llm_text,
 )
+from app.services.assessment.submission import file_extension_of
 from app.services.assessment.utils.attachments import (
     attachment_type_for_row,
     build_anthropic_attachment_parts,
@@ -51,28 +52,23 @@ from app.utils import get_anthropic_client, get_openai_client
 logger = logging.getLogger(__name__)
 
 
-def _load_dataset_rows(
+def load_submission_file_rows(
+    *,
     session: Session,
-    dataset: EvaluationDataset,
+    submission: AssessmentSubmission,
 ) -> list[dict[str, str]]:
-    """Load dataset rows from object store.
+    """Read an uploaded submission file into row dicts keyed by column name."""
+    if not submission.object_store_url:
+        raise ValueError(f"Submission {submission.id} has no object_store_url")
 
-    Returns a list of dicts (one per row) with column-name keys.
-    """
-    if not dataset.object_store_url:
-        raise ValueError(f"Dataset {dataset.id} has no object_store_url")
-
-    storage = get_cloud_storage(session=session, project_id=dataset.project_id)
-
-    # Download the file content via stream()
-    body = storage.stream(dataset.object_store_url)
-    file_content = body.read()
+    storage = get_cloud_storage(session=session, project_id=submission.project_id)
+    file_content = storage.stream(submission.object_store_url).read()
     if not file_content:
-        raise ValueError(f"Failed to download dataset from {dataset.object_store_url}")
+        raise ValueError(
+            f"Failed to download submission from {submission.object_store_url}"
+        )
 
-    metadata = dataset.dataset_metadata or {}
-    file_ext = metadata.get("file_extension", ".csv")
-
+    file_ext = file_extension_of(submission.object_store_url)
     if file_ext == ".xls":
         raise ValueError(
             "Legacy Excel format (.xls) is not supported. Please upload .xlsx or .csv."
@@ -133,7 +129,7 @@ def _parse_excel_rows(content: bytes) -> list[dict[str, str]]:
         logger.warning(
             "[_parse_excel_rows] Failed to parse XLSX rows | %s", e, exc_info=True
         )
-        raise ValueError("Failed to parse XLSX dataset rows") from e
+        raise ValueError("Failed to parse XLSX submission rows") from e
     finally:
         if wb is not None:
             wb.close()
@@ -173,7 +169,7 @@ def build_openai_jsonl(
     openai_params: dict,
     row_indices: list[int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build OpenAI batch JSONL data from dataset rows.
+    """Build OpenAI batch JSONL data from submission rows.
 
     Each line follows the OpenAI batch format:
     {
@@ -239,7 +235,7 @@ def build_google_jsonl(
     google_params: dict,
     row_indices: list[int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build Google (Gemini) batch JSONL data from dataset rows.
+    """Build Google (Gemini) batch JSONL data from submission rows.
 
     Each line follows the Gemini batch format:
     {
@@ -318,7 +314,7 @@ def build_anthropic_jsonl(
     anthropic_params: dict,
     row_indices: list[int] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build Anthropic batch request data from dataset rows.
+    """Build Anthropic batch request data from submission rows.
 
     Each line follows the Anthropic Message Batches format:
     {
@@ -368,7 +364,7 @@ def submit_assessment_batch(
     session: Session,
     run: AssessmentRun,
     assessment: Assessment,
-    dataset: EvaluationDataset,
+    submission: AssessmentSubmission,
     config_blob: ConfigBlob,
     assessment_input: dict[str, Any],
     organization_id: int,
@@ -378,20 +374,10 @@ def submit_assessment_batch(
 ) -> BatchJob:
     """Build JSONL and submit a batch for one assessment run.
 
-    Args:
-        session: Database session
-        run: The AssessmentRun to process
-        dataset: The dataset to read rows from
-        config_blob: Resolved configuration blob
-        assessment_input: Parent InputBinding (prompt, text_columns, attachments)
-        organization_id: Organization ID
-        project_id: Project ID
-
-    Returns:
-        Created BatchJob record
+    Rows come from ``preloaded_rows`` when the caller already filtered them
+    (post-prefilter), else from the submission file.
     """
-    # `assessment_input` is the parent InputBinding (prompt/text_columns/attachments);
-    # system_instruction / output_schema now live in the resolved config blob.
+    # `assessment_input` is the parent InputBinding; the rest lives in the config blob.
     text_columns = assessment_input.get("text_columns", [])
     prompt_template = assessment_input.get("prompt")
     attachments_raw = assessment_input.get("attachments", [])
@@ -401,9 +387,9 @@ def submit_assessment_batch(
     if preloaded_rows is not None:
         rows = preloaded_rows
     else:
-        rows = _load_dataset_rows(session, dataset)
+        rows = load_submission_file_rows(session=session, submission=submission)
     if not rows:
-        raise ValueError(f"Dataset {dataset.id} has no rows")
+        raise ValueError(f"Submission {submission.id} has no rows")
 
     logger.info(
         "[submit_assessment_batch] Building JSONL | run_id=%s | rows=%s | provider=%s",

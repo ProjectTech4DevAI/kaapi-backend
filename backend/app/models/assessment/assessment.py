@@ -123,7 +123,8 @@ class RunExecution(BaseModel):
 
     stage: Stage | None = None
     stage_status: StageStatus | None = None
-    pipeline: dict[str, Any] | None = None
+    # Two writers, one column: RUN stores {"stages": [...]}, the BATCH API a bare list.
+    pipeline: dict[str, Any] | list[dict[str, str]] | None = None
     stage_batches: dict[str, int] | None = None
     prefilter_total_rows: int | None = None
     prefilter_total_passed: int | None = None
@@ -185,17 +186,43 @@ class Assessment(SQLModel, table=True):
         sa_column=Column(
             JSONB,
             nullable=True,
-            comment="Method-shaped: ResponseInput (RESPONSE) / BatchInput (BATCH) / InputBinding (RUN)",
+            comment="Method-shaped: ResponseInput (RESPONSE) / InputBinding (RUN); NULL for API-client BATCH, which uses submission_input",
         ),
     )
-    # NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
-    dataset_id: int | None = SQLField(
+    submission_input: str | None = SQLField(
         default=None,
-        foreign_key="evaluation_dataset.id",
+        sa_column_kwargs={
+            "comment": (
+                "Object-store url of the API-client BATCH submission rows "
+                "(submission.jsonl); the rows are never stored in this table"
+            )
+        },
+    )
+    # NOT NULL '{}': an empty map is a real state, not the siblings' "not applicable".
+    result_files: dict[str, Any] = SQLField(
+        default_factory=dict,
+        sa_column=Column(
+            JSONB,
+            nullable=False,
+            server_default=text("'{}'::jsonb"),
+            comment=(
+                "Result-file kind (results / errors / <stage>_results) to "
+                "{object_store_url} for every provider batch dump held; raw s3:// in the "
+                "column, presigned per delivery in the BATCH callback"
+            ),
+        ),
+    )
+    submission_id: UUID | None = SQLField(
+        default=None,
+        foreign_key="assessment_submission.id",
         nullable=True,
+        index=True,
         ondelete="SET NULL",
         sa_column_kwargs={
-            "comment": "External dataset (RUN); binding lives in `input`"
+            "comment": (
+                "Uploaded submission the rows came from; set by RUN and by a BATCH "
+                "submitted with `submission_doc_id`. NULL when BATCH sent rows inline"
+            )
         },
     )
 
@@ -333,7 +360,7 @@ class AssessmentExportRow(BaseModel):
 # NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
 class AssessmentRunCreate(BaseModel):
     experiment_name: str
-    dataset_id: int
+    submission_id: UUID
     input_binding: InputBinding
     configs: list[AssessmentConfigRef] = Field(min_length=1, max_length=4)
     post_processing_config: dict[str, Any] | None = None
@@ -388,8 +415,8 @@ class AssessmentRunPublic(BaseModel):
 class AssessmentRunResponse(BaseModel):
     assessment_id: UUID
     experiment_name: str | None = None
-    dataset_id: int | None = None
-    dataset_name: str | None = None
+    submission_id: UUID | None = None
+    submission_name: str | None = None
     num_configs: int
     runs: list[AssessmentRunSummary] = []
 
@@ -399,8 +426,8 @@ class AssessmentRunOverview(BaseModel):
     id: UUID
     experiment_name: str | None = None
     status: AssessmentStatus
-    dataset_id: int | None = None
-    dataset_name: str | None = None
+    submission_id: UUID | None = None
+    submission_name: str | None = None
     input_binding: InputBinding | None = None
     counts: AssessmentRunCounts = AssessmentRunCounts()
     run_stats: list[AssessmentRunStat] = []
@@ -408,23 +435,3 @@ class AssessmentRunOverview(BaseModel):
     project_id: int
     inserted_at: datetime
     updated_at: datetime
-
-
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
-class AssessmentDatasetPreview(BaseModel):
-    headers: list[str]
-    rows: list[list[str]]
-    returned_rows: int = 0
-    truncated: bool = False
-
-
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
-class AssessmentDatasetResponse(BaseModel):
-    dataset_id: int
-    dataset_name: str
-    description: str | None = None
-    total_items: int = 0
-    file_extension: str | None = None
-    object_store_url: str | None = None
-    signed_url: str | None = None
-    preview: AssessmentDatasetPreview | None = None
