@@ -40,9 +40,7 @@ class TestUpload:
 
         assert url == "s3://b/sub.jsonl"
         assert upload.call_args.kwargs["filename"] == "submission.jsonl"
-        assert (
-            upload.call_args.kwargs["subdirectory"] == f"assessment/{assessment_id}"
-        )
+        assert upload.call_args.kwargs["subdirectory"] == f"assessment/{assessment_id}"
 
     def test_returns_none_when_the_upload_fails(self) -> None:
         with patch(_STORAGE), patch(_UPLOAD, return_value=None):
@@ -60,9 +58,7 @@ class TestUpload:
 class TestLoad:
     def test_parses_the_stored_jsonl(self) -> None:
         storage = MagicMock()
-        storage.stream.return_value = io.BytesIO(
-            b'{"a": "1"}\n\n{"a": "2"}\n'
-        )
+        storage.stream.return_value = io.BytesIO(b'{"a": "1"}\n\n{"a": "2"}\n')
         with patch(_STORAGE, return_value=storage):
             result = load_submission_rows(
                 session=MagicMock(), assessment=_assessment("s3://b/sub.jsonl")
