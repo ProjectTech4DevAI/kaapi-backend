@@ -106,10 +106,7 @@ def _upstream_response(status_code: int, payload: Any) -> Response:
     return JSONResponse(status_code=status_code, content=payload, headers=headers)
 
 
-# ROUTE ORDERING: every fixed single-segment path below collides with the
-# GET /guardrails/{job_id} route declared after this section. FastAPI matches in
-# declaration order and does not fall through when {job_id} fails UUID parsing,
-# so these must stay above it.
+# ROUTE ORDERING: these fixed paths must stay above GET /guardrails/{job_id}.
 
 
 @router.get(

@@ -56,11 +56,6 @@ def proxy_guardrails_request(
     # Unset query params must be omitted, not sent as empty values.
     query = {k: v for k, v in (params or {}).items() if v is not None}
 
-    logger.info(
-        f"[proxy_guardrails_request] Forwarding to guardrails | method: {method}, "
-        f"url: {url}, organization_id: {organization_id}, project_id: {project_id}"
-    )
-
     try:
         with (
             tracer.start_as_current_span(
@@ -111,13 +106,15 @@ def proxy_guardrails_request(
         ) from None
 
 
+# 422 included: a missing/invalid tenant header is a backend bug, not a
+# transient outage, so it must not fall open like one.
+_AUTH_ERROR_STATUS_CODES = (401, 403, 422)
+
+
 def _is_auth_error(e: Exception) -> TypeGuard[httpx.HTTPStatusError]:
-    # 422 included: a missing/invalid tenant header is a backend bug, not a
-    # transient outage, so it must not fall open like one.
-    return isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (
-        401,
-        403,
-        422,
+    return (
+        isinstance(e, httpx.HTTPStatusError)
+        and e.response.status_code in _AUTH_ERROR_STATUS_CODES
     )
 
 
@@ -344,10 +341,6 @@ def run_guardrails_validation(
         if _is_auth_error(e):
             # Auth failure means a broken deploy (token/IP mismatch), not a
             # transient outage — fail the job instead of silently bypassing.
-            logger.error(
-                f"[run_guardrails_validation] Guardrails auth failed. "
-                f"job_id={job_id}, elapsed_ms={elapsed_ms}, error={e}"
-            )
             status_code = e.response.status_code
             return {
                 "success": False,

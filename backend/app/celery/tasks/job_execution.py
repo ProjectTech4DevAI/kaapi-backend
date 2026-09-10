@@ -70,13 +70,8 @@ def _run_with_otel_parent(
 ) -> T:  # noqa: UP047 (black doesn't support PEP 695 generics yet)
     """Attach the extracted parent context and execute `fn` under it.
 
-    opentelemetry-instrumentation-celery's own extraction (CeleryGetter)
-    reads headers via getattr(task.request, key), but propagation headers
-    live in task.request.headers — so it never finds them and its `run/...`
-    span is always an unparented root. We extract from `.headers` ourselves
-    (see _extract_parent_context) and attach that as current before running
-    the task body, so spans created inside `fn` correctly nest under the
-    enqueueing request's trace instead of starting a disconnected one.
+    Needed because otel's Celery instrumentation misses propagation headers
+    under `task.request.headers`, leaving `run/...` spans unparented.
     """
     parent_ctx = _extract_parent_context(task_instance)
     parent_span_ctx = trace.get_current_span(parent_ctx).get_span_context()

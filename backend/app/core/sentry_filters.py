@@ -4,10 +4,8 @@ from typing import Any
 
 _REDACTED = "[REDACTED]"
 
-# sentry_sdk's CeleryIntegration attaches the task's raw args/kwargs to every
-# event captured during that task as extra["celery-job"]. For these tasks,
-# kwargs["request_data"] carries the caller's raw query text and (for chain
-# jobs) prior block responses -- none of that should reach Sentry.
+# LLM job kwargs land in Sentry via sentry_sdk's CeleryIntegration; these keys
+# carry end-user text and must be redacted before that happens.
 _LLM_JOB_TASK_NAMES = {
     "app.celery.tasks.job_execution.run_llm_job",
     "app.celery.tasks.job_execution.run_llm_chain_job",
