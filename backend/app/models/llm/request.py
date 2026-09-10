@@ -589,6 +589,10 @@ class LLMCallRequest(SQLModel):
         default=False,
         description="Whether to include the raw LLM provider response in the output",
     )
+    include_guardrail_metadata: bool = Field(
+        default=False,
+        description="Include per-validator guardrail metadata (input/output text, pass/fail) in the response",
+    )
     request_metadata: dict[str, Any] | None = Field(
         default=None,
         description=(

@@ -371,6 +371,7 @@ def apply_input_guardrails(
     job_id: UUID,
     project_id: int,
     organization_id: int,
+    include_guardrail_metadata: bool = False,
 ) -> tuple[QueryParams, str | None, str | None, dict[str, Any] | None]:
     """Apply input guardrails from a config_blob. Shared with llm-call and llm-chain.
 
@@ -396,7 +397,8 @@ def apply_input_guardrails(
         organization_id=organization_id,
     )
     metadata = None
-    if outcome.applied:
+    # outocome.applied if true i.e guarrails not bypassed.
+    if outcome.applied and include_guardrail_metadata:
         metadata = {
             "input_guardrail": {
                 "input_from_user": original_input_text,
@@ -417,10 +419,6 @@ def apply_input_guardrails(
     # No-op paths (no validators, bypassed) leave the query untouched.
     if outcome.applied and outcome.safe_text is not None:
         if not outcome.safe_text.strip():
-            # A fix-mode validator that supplies no fix_value (e.g. topic_relevance
-            # with no built-in fix) falls back to "" — forwarding that to the LLM
-            # provider fails with a confusing provider-side error instead of a
-            # clear guardrails-blocked one.
             logger.warning(
                 f"[apply_input_guardrails] Guardrails reduced input to empty text; "
                 f"blocking request | job_id={job_id}"
@@ -443,6 +441,7 @@ def apply_output_guardrails(
     project_id: int,
     organization_id: int,
     input_text: str | None = None,
+    include_guardrail_metadata: bool = False,
 ) -> tuple[BlockResult, str | None]:
     """Apply output guardrails from a config_blob. Shared by /llm/call and /llm/chain.
 
@@ -469,7 +468,7 @@ def apply_output_guardrails(
         output_text=original_output_text,
     )
 
-    if outcome.applied:
+    if outcome.applied and include_guardrail_metadata:
         existing_metadata = result.metadata or {}
         existing_metadata["output_guardrail"] = {
             "output_from_llm": original_output_text,
@@ -562,6 +561,7 @@ def execute_llm_call(
     request_metadata: dict | None,
     langfuse_credentials: dict | None,
     include_provider_raw_response: bool = False,
+    include_guardrail_metadata: bool = False,
     chain_id: UUID | None = None,
     detected_language: str | None = None,
 ) -> BlockResult:
@@ -654,6 +654,7 @@ def execute_llm_call(
                     job_id=job_id,
                     project_id=project_id,
                     organization_id=organization_id,
+                    include_guardrail_metadata=include_guardrail_metadata,
                 )
                 if input_guardrail_metadata:
                     if request_metadata is None:
@@ -918,6 +919,7 @@ def execute_llm_call(
                         project_id=project_id,
                         organization_id=organization_id,
                         input_text=original_input_value,
+                        include_guardrail_metadata=include_guardrail_metadata,
                     )
                     if output_error:
                         out_guard_span.set_status(
@@ -1311,6 +1313,7 @@ def execute_llm_call(
                     project_id=project_id,
                     organization_id=organization_id,
                     input_text=original_input_value,
+                    include_guardrail_metadata=include_guardrail_metadata,
                 )
                 if output_error:
                     out_guard_span.set_status(
@@ -1423,6 +1426,7 @@ def execute_job(
                 request_metadata=request.request_metadata,
                 langfuse_credentials=langfuse_credentials,
                 include_provider_raw_response=request.include_provider_raw_response,
+                include_guardrail_metadata=request.include_guardrail_metadata,
             )
 
             logger.info(

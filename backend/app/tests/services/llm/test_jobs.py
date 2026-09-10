@@ -1406,6 +1406,7 @@ class TestExecuteJob:
                     }
                 },
                 "include_provider_raw_response": False,
+                "include_guardrail_metadata": True,
                 "callback_url": None,
             }
             result = self._execute_job(job_for_execution, db, request_data)
@@ -1422,6 +1423,73 @@ class TestExecuteJob:
         assert validators[0]["outcome"] == "FAIL"
         assert validators[0]["input_text"] == unsafe_input
         assert validators[0]["output_text"] == sanitized_input
+
+    def test_guardrails_metadata_omitted_by_default(
+        self, db, job_env, job_for_execution
+    ):
+        """Guardrails still sanitize the input, but input_guardrail metadata is
+        left out unless include_guardrail_metadata is explicitly set."""
+        env = job_env
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        unsafe_input = "My credit card is 4111 1111 1111 1111"
+        sanitized_input = "My credit card is [REDACTED]"
+
+        with (
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
+        ):
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": sanitized_input,
+                    "rephrase_needed": False,
+                    "validator_results": [
+                        {
+                            "name": "PIIRemover",
+                            "type": "pii_remover",
+                            "stage": "input",
+                            "order": 1,
+                            "outcome": "FAIL",
+                            "error": "PII detected in the text.",
+                            "input_text": unsafe_input,
+                            "output_text": sanitized_input,
+                        }
+                    ],
+                },
+            }
+            mock_fetch_configs.return_value = (
+                [{"type": "pii_remover", "stage": "input"}],
+                [],
+            )
+
+            request_data = {
+                "query": {"input": unsafe_input},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4o"},
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [],
+                    }
+                },
+                "include_provider_raw_response": False,
+                "callback_url": None,
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"]
+        assert not result["metadata"] or "input_guardrail" not in result["metadata"]
 
     def test_guardrails_skip_input_validation_for_audio_input(
         self, db, job_env, job_for_execution
@@ -1585,6 +1653,7 @@ class TestExecuteJob:
                         ],
                     }
                 },
+                "include_guardrail_metadata": True,
             }
             result = self._execute_job(job_for_execution, db, request_data)
 
