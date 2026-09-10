@@ -9,6 +9,7 @@ from app.api.permissions import Permission, require_permission
 from app.core.config import settings
 from app.crud.evaluations import process_all_pending_evaluations
 from app.services.job_monitoring import monitor_pending_jobs
+from app.services.llm.retention import redact_aged_llm_calls
 from app.crud.stats import StatRow, get_daily_stats
 from app.services.stats import format_sections, post_to_discord
 
@@ -55,6 +56,17 @@ PENDING_JOBS_CRON_MONITOR_CONFIG: MonitorConfig = {
     "checkin_margin": 2,
     "max_runtime": 2 * settings.PENDING_JOB_MONITOR_INTERVAL_MINUTES,
     "failure_issue_threshold": 2,
+    "recovery_threshold": 1,
+}
+
+
+LLM_CALL_RETENTION_CRON_MONITOR_CONFIG: MonitorConfig = {
+    "schedule": {"type": "crontab", "value": "0 3 * * *"},
+    "timezone": "UTC",
+    "checkin_margin": 5,
+    # Generous ceiling: with no index on updated_at the batch scan is full-table.
+    "max_runtime": 30,
+    "failure_issue_threshold": 1,
     "recovery_threshold": 1,
 }
 
@@ -152,6 +164,36 @@ def daily_stats_cron_job(session: SessionDep) -> dict[str, list[StatRow]]:
     except Exception as e:
         logger.error(
             f"[daily_stats_cron_job] Error executing cron job: {e}",
+            exc_info=True,
+        )
+        sentry_sdk.capture_exception(e)
+        raise
+
+
+@router.get(
+    "/cron/llm-call-retention",
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+)
+@sentry_sdk.monitor(
+    monitor_slug="llm-call-retention-cron-job",
+    monitor_config=LLM_CALL_RETENTION_CRON_MONITOR_CONFIG,
+)
+def llm_call_retention_cron_job(session: SessionDep) -> dict:
+    logger.info("[llm_call_retention_cron_job] Cron job invoked")
+
+    try:
+        result = redact_aged_llm_calls(session=session)
+        logger.info(
+            f"[llm_call_retention_cron_job] Completed: "
+            f"rows_redacted={result['rows_redacted']}, "
+            f"batches_run={result['batches_run']}, "
+            f"cutoff={result['cutoff']}"
+        )
+        return result
+    except Exception as e:
+        logger.error(
+            f"[llm_call_retention_cron_job] Error executing cron job: {e}",
             exc_info=True,
         )
         sentry_sdk.capture_exception(e)

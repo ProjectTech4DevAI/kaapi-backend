@@ -1,9 +1,11 @@
 import logging
 import base64
 import json
+from datetime import datetime
 from uuid import UUID
 from typing import Any, Literal
 
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.core.util import now
@@ -333,6 +335,51 @@ def get_llm_call_by_id(
         statement = statement.where(LlmCall.project_id == project_id)
 
     return session.exec(statement).first()
+
+
+# `llm_call.input` is NOT NULL at the DB level, so redaction writes this
+# sentinel rather than NULL (which would raise NotNullViolation on every row).
+REDACTED_INPUT_SENTINEL = "[redacted]"
+
+REDACT_LLM_CALL_BATCH_SQL = text(
+    """
+    WITH batch AS (
+        SELECT id FROM llm_call
+        WHERE updated_at <= :cutoff
+          -- Skips already-redacted rows, so repeated runs are idempotent.
+          AND (input <> :redacted_sentinel OR content -> 'content' ->> 'value' IS NOT NULL)
+        ORDER BY updated_at
+        LIMIT :batch_size
+        FOR UPDATE SKIP LOCKED
+    )
+    UPDATE llm_call
+    SET input = :redacted_sentinel,
+        -- create_missing=false so legacy rows lacking that path aren't given a fabricated one.
+        content = jsonb_set(content, '{content,value}', 'null'::jsonb, false)
+    WHERE id IN (SELECT id FROM batch)
+    """
+)
+
+
+def redact_llm_call_batch(
+    *, session: Session, cutoff: datetime, batch_size: int
+) -> int:
+    result = session.connection().execute(
+        REDACT_LLM_CALL_BATCH_SQL,
+        {
+            "cutoff": cutoff,
+            "batch_size": batch_size,
+            "redacted_sentinel": REDACTED_INPUT_SENTINEL,
+        },
+    )
+    session.commit()
+
+    logger.info(
+        f"[redact_llm_call_batch] Redacted batch | rows: {result.rowcount} | "
+        f"cutoff: {cutoff.isoformat()} | batch_size: {batch_size}"
+    )
+
+    return result.rowcount
 
 
 def get_llm_calls_by_job_id(
