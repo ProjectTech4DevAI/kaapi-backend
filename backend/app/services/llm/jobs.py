@@ -399,8 +399,8 @@ def apply_input_guardrails(
     if outcome.applied:
         metadata = {
             "input_guardrail": {
-                "user_input": original_input_text,
-                "input_sent_to_llm": outcome.safe_text,
+                "input_from_user": original_input_text,
+                "input_to_llm": outcome.safe_text,
                 "validators": summarize_validator_results(outcome),
             }
         }
@@ -472,8 +472,8 @@ def apply_output_guardrails(
     if outcome.applied:
         existing_metadata = result.metadata or {}
         existing_metadata["output_guardrail"] = {
-            "llm_output_pre_guardrail": original_output_text,
-            "response_to_user": outcome.safe_text,
+            "output_from_llm": original_output_text,
+            "output_to_user": outcome.safe_text,
             "validators": summarize_validator_results(outcome),
         }
         result.metadata = existing_metadata

@@ -1413,8 +1413,8 @@ class TestExecuteJob:
         assert result["success"]
 
         input_guardrail_metadata = result["metadata"]["input_guardrail"]
-        assert input_guardrail_metadata["user_input"] == unsafe_input
-        assert input_guardrail_metadata["input_sent_to_llm"] == sanitized_input
+        assert input_guardrail_metadata["input_from_user"] == unsafe_input
+        assert input_guardrail_metadata["input_to_llm"] == sanitized_input
 
         validators = input_guardrail_metadata["validators"]
         assert len(validators) == 1
@@ -1591,8 +1591,8 @@ class TestExecuteJob:
         assert result["success"]
 
         output_guardrail_metadata = result["metadata"]["output_guardrail"]
-        assert output_guardrail_metadata["llm_output_pre_guardrail"] == raw_llm_output
-        assert output_guardrail_metadata["response_to_user"] == sanitized_output
+        assert output_guardrail_metadata["output_from_llm"] == raw_llm_output
+        assert output_guardrail_metadata["output_to_user"] == sanitized_output
 
         validators = output_guardrail_metadata["validators"]
         assert len(validators) == 1
