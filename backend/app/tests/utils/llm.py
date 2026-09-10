@@ -1,8 +1,13 @@
+from datetime import datetime
+from typing import Any
+from uuid import UUID
+
 from sqlmodel import Session
 
 from app.crud import JobCrud
 from app.crud.llm import create_llm_call, update_llm_call_response
 from app.models import JobType, Job
+from app.models.llm import LlmCall
 from app.models.llm.response import LLMCallResponse
 from app.models.llm.request import (
     ConfigBlob,
@@ -10,8 +15,43 @@ from app.models.llm.request import (
     QueryParams,
     build_kaapi_completion_config,
 )
-from app.tests.utils.utils import get_project
+from app.tests.utils.utils import get_project, get_organization
 from app.models.llm import LLMCallRequest
+
+
+def create_aged_llm_call(
+    db: Session,
+    *,
+    updated_at: datetime,
+    job_id: UUID,
+    input: str = "what is the capital of France?",
+    content: dict[str, Any] | None = None,
+) -> LlmCall:
+    """Persist an LlmCall with an explicit `updated_at`, for retention tests."""
+    project = get_project(db, "Dalgo")
+    organization = get_organization(db)
+
+    llm_call = LlmCall(
+        job_id=job_id,
+        project_id=project.id,
+        organization_id=organization.id,
+        input=input,
+        input_type="text",
+        output_type="text",
+        provider="openai",
+        model="gpt-4o",
+        content=content,
+    )
+    db.add(llm_call)
+    db.commit()
+
+    # updated_at has a server/model default, so it is overwritten after insert.
+    llm_call.updated_at = updated_at
+    db.add(llm_call)
+    db.commit()
+    db.refresh(llm_call)
+
+    return llm_call
 
 
 def create_llm_job(db: Session) -> Job:

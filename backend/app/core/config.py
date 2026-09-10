@@ -197,8 +197,6 @@ class Settings(BaseSettings):
     EVAL_FAST_STALL_THRESHOLD_MINUTES: int = 15
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
-    # Rolling retention window for llm_call payload redaction: rows older than this
-    # keep their metadata but lose `input` and the inner `content` value.
     DELETE_ROLLING_WINDOW_HOURS: int = 168
 
     @computed_field  # type: ignore[prop-decorator]

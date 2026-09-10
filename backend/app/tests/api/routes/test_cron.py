@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -5,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.api.routes import cron
 from app.core.config import settings
+from app.models.llm.response import LlmCallRedactionResult
 from app.tests.utils.auth import TestAuthContext
 
 
@@ -326,6 +328,63 @@ def test_daily_stats_cron_job_captures_and_reraises_on_error() -> None:
     sentry.capture_exception.assert_called_once()
 
 
+def test_llm_call_retention_cron_job_success(
+    client: TestClient,
+    superuser_api_key: TestAuthContext,
+) -> None:
+    """Returns the redaction summary produced by the retention service."""
+    result = LlmCallRedactionResult(
+        rows_redacted=4137,
+        batches_run=3,
+        cutoff=datetime(2026, 2, 22, 12, 0, 0),
+    )
+    with patch(
+        "app.api.routes.cron.redact_aged_llm_calls",
+        return_value=result,
+    ) as redact:
+        response = client.get(
+            f"{settings.API_V1_STR}/cron/llm-call-retention",
+            headers={"X-API-KEY": superuser_api_key.key},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "rows_redacted": 4137,
+        "batches_run": 3,
+        "cutoff": "2026-02-22T12:00:00",
+    }
+    redact.assert_called_once()
+
+
+def test_llm_call_retention_cron_job_requires_superuser(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """Non-superuser cannot access the llm_call retention cron endpoint."""
+    response = client.get(
+        f"{settings.API_V1_STR}/cron/llm-call-retention",
+        headers={"X-API-KEY": user_api_key.key},
+    )
+
+    assert response.status_code == 403
+    assert "Insufficient permissions" in response.json()["error"]
+
+
+def test_llm_call_retention_cron_job_captures_and_reraises_on_error() -> None:
+    """On failure the job reports to Sentry and re-raises."""
+    with (
+        patch(
+            "app.api.routes.cron.redact_aged_llm_calls",
+            side_effect=RuntimeError("boom"),
+        ),
+        patch("app.api.routes.cron.sentry_sdk") as sentry,
+    ):
+        with pytest.raises(RuntimeError):
+            cron.llm_call_retention_cron_job(session=MagicMock())
+
+    sentry.capture_exception.assert_called_once()
+
+
 def test_evaluation_cron_job_not_in_schema(
     client: TestClient,
 ) -> None:
@@ -340,6 +399,7 @@ def test_evaluation_cron_job_not_in_schema(
     assert f"{settings.API_V1_STR}/cron/evaluations" not in paths
     assert f"{settings.API_V1_STR}/cron/pending-jobs" not in paths
     assert f"{settings.API_V1_STR}/cron/daily-stats" not in paths
+    assert f"{settings.API_V1_STR}/cron/llm-call-retention" not in paths
 
 
 def test_cron_intervals_match_to_prevent_sentry_monitor_drift() -> None:

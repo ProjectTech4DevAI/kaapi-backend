@@ -5,14 +5,14 @@ from sqlmodel import Session
 from app.core.config import settings
 from app.core.util import now
 from app.crud.llm import redact_llm_call_batch
+from app.models.llm.response import LlmCallRedactionResult
 
 logger = logging.getLogger(__name__)
 
-# Rows updated per statement; small enough to keep each row-lock window short.
 LLM_CALL_REDACTION_BATCH_SIZE = 2000
 
 
-def redact_aged_llm_calls(*, session: Session) -> dict[str, int | str]:
+def redact_aged_llm_calls(*, session: Session) -> LlmCallRedactionResult:
     cutoff = now() - settings.DELETE_ROLLING_WINDOW_TIMEDELTA
 
     logger.info(
@@ -44,8 +44,8 @@ def redact_aged_llm_calls(*, session: Session) -> dict[str, int | str]:
         f"batches_run: {batches_run} | cutoff: {cutoff.isoformat()}"
     )
 
-    return {
-        "rows_redacted": total_redacted,
-        "batches_run": batches_run,
-        "cutoff": cutoff.isoformat(),
-    }
+    return LlmCallRedactionResult(
+        rows_redacted=total_redacted,
+        batches_run=batches_run,
+        cutoff=cutoff,
+    )

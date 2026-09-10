@@ -337,8 +337,6 @@ def get_llm_call_by_id(
     return session.exec(statement).first()
 
 
-# `llm_call.input` is NOT NULL at the DB level, so redaction writes this
-# sentinel rather than NULL (which would raise NotNullViolation on every row).
 REDACTED_INPUT_SENTINEL = "[redacted]"
 
 REDACT_LLM_CALL_BATCH_SQL = text(
@@ -346,7 +344,6 @@ REDACT_LLM_CALL_BATCH_SQL = text(
     WITH batch AS (
         SELECT id FROM llm_call
         WHERE updated_at <= :cutoff
-          -- Skips already-redacted rows, so repeated runs are idempotent.
           AND (input <> :redacted_sentinel OR content -> 'content' ->> 'value' IS NOT NULL)
         ORDER BY updated_at
         LIMIT :batch_size
@@ -354,8 +351,11 @@ REDACT_LLM_CALL_BATCH_SQL = text(
     )
     UPDATE llm_call
     SET input = :redacted_sentinel,
-        -- create_missing=false so legacy rows lacking that path aren't given a fabricated one.
-        content = jsonb_set(content, '{content,value}', 'null'::jsonb, false)
+        content = CASE
+            WHEN jsonb_typeof(content) = 'object'
+            THEN jsonb_set(content, '{content,value}', 'null'::jsonb, false)
+            ELSE content
+        END
     WHERE id IN (SELECT id FROM batch)
     """
 )
