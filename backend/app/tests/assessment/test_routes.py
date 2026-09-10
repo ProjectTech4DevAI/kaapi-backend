@@ -16,7 +16,7 @@ from app.api.routes.assessment.assessments import (
     retry_assessment,
 )
 from app.api.routes.assessment.datasets import (
-    _dataset_to_response,
+    _submission_to_response,
     delete_dataset,
     get_dataset,
     list_datasets,
@@ -47,13 +47,13 @@ def _auth_context() -> SimpleNamespace:
     )
 
 
-def _dataset() -> SimpleNamespace:
+def _submission() -> SimpleNamespace:
     return SimpleNamespace(
-        id=7,
+        id=UUID(int=7),
         name="ds",
         description="d",
-        dataset_metadata={"total_items_count": 2, "file_extension": ".csv"},
-        object_store_url="s3://x",
+        total_items=2,
+        object_store_url="s3://x/ds.csv",
     )
 
 
@@ -61,7 +61,7 @@ def _assessment() -> SimpleNamespace:
     return SimpleNamespace(
         id=10,
         experiment_name="exp",
-        dataset_id=7,
+        submission_id=UUID(int=7),
         status="processing",
         organization_id=1,
         project_id=1,
@@ -111,9 +111,9 @@ def _row(execution_id: int = 22) -> AssessmentExportRow:
 
 
 class TestRouteHelpers:
-    def test_dataset_to_response(self) -> None:
-        resp = _dataset_to_response(_dataset(), signed_url="signed")
-        assert resp.dataset_id == 7
+    def test_submission_to_response(self) -> None:
+        resp = _submission_to_response(_submission(), signed_url="signed")
+        assert resp.submission_id == UUID(int=7)
         assert resp.signed_url == "signed"
 
 
@@ -123,8 +123,8 @@ class TestRouteHelpers:
 class TestDatasetRoutes:
     def test_list_datasets(self) -> None:
         with patch(
-            "app.api.routes.assessment.datasets.list_assessment_datasets",
-            return_value=[_dataset()],
+            "app.api.routes.assessment.datasets.list_submissions",
+            return_value=[_submission()],
         ):
             resp = list_datasets(session=MagicMock(), auth_context=_auth_context())
         assert resp.success is True
@@ -132,7 +132,7 @@ class TestDatasetRoutes:
 
     def test_get_dataset_not_found(self) -> None:
         with patch(
-            "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",
+            "app.api.routes.assessment.datasets.get_submission_by_id",
             side_effect=HTTPException(
                 status_code=404,
                 detail="Dataset 1 not found or not accessible",
@@ -145,8 +145,8 @@ class TestDatasetRoutes:
         storage = MagicMock()
         storage.get_signed_url.return_value = "signed-url"
         with patch(
-            "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",
-            return_value=_dataset(),
+            "app.api.routes.assessment.datasets.get_submission_by_id",
+            return_value=_submission(),
         ), patch(
             "app.api.routes.assessment.datasets.get_cloud_storage", return_value=storage
         ):
@@ -162,10 +162,10 @@ class TestDatasetRoutes:
 
     def test_get_dataset_with_limit_rows_includes_preview(self) -> None:
         with patch(
-            "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",
-            return_value=_dataset(),
+            "app.api.routes.assessment.datasets.get_submission_by_id",
+            return_value=_submission(),
         ), patch(
-            "app.api.routes.assessment.datasets.preview_assessment_dataset",
+            "app.api.routes.assessment.datasets.preview_submission",
             return_value=(["a", "b"], [["1", "2"], ["3", "4"]]),
         ) as preview_mock:
             resp = get_dataset(
@@ -183,10 +183,10 @@ class TestDatasetRoutes:
 
     def test_get_dataset_without_limit_rows_skips_preview(self) -> None:
         with patch(
-            "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",
-            return_value=_dataset(),
+            "app.api.routes.assessment.datasets.get_submission_by_id",
+            return_value=_submission(),
         ), patch(
-            "app.api.routes.assessment.datasets.preview_assessment_dataset"
+            "app.api.routes.assessment.datasets.preview_submission"
         ) as preview_mock:
             resp = get_dataset(7, session=MagicMock(), auth_context=_auth_context())
         preview_mock.assert_not_called()
@@ -195,20 +195,20 @@ class TestDatasetRoutes:
 
     def test_delete_dataset_success_and_error(self) -> None:
         with patch(
-            "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",
-            return_value=_dataset(),
+            "app.api.routes.assessment.datasets.get_submission_by_id",
+            return_value=_submission(),
         ), patch(
-            "app.api.routes.assessment.datasets.delete_assessment_dataset",
+            "app.api.routes.assessment.datasets.delete_submission",
             return_value=None,
         ):
             resp = delete_dataset(7, session=MagicMock(), auth_context=_auth_context())
         assert resp.success is True
 
         with patch(
-            "app.api.routes.assessment.datasets.get_assessment_dataset_by_id",
-            return_value=_dataset(),
+            "app.api.routes.assessment.datasets.get_submission_by_id",
+            return_value=_submission(),
         ), patch(
-            "app.api.routes.assessment.datasets.delete_assessment_dataset",
+            "app.api.routes.assessment.datasets.delete_submission",
             return_value="cannot delete",
         ):
             with pytest.raises(HTTPException, match="cannot delete"):
@@ -222,7 +222,7 @@ class TestRunRoutes:
     def test_create_assessment_runs(self) -> None:
         request = AssessmentRunCreate(
             experiment_name="exp",
-            dataset_id=7,
+            submission_id=UUID(int=7),
             input_binding=InputBinding(prompt="p", text_columns=[], attachments=[]),
             configs=[
                 AssessmentConfigRef(
@@ -233,8 +233,8 @@ class TestRunRoutes:
         result = SimpleNamespace(
             assessment_id=10,
             experiment_name="exp",
-            dataset_id=7,
-            dataset_name="ds",
+            submission_id=UUID(int=7),
+            submission_name="ds",
             num_configs=1,
             runs=[],
         )
@@ -250,8 +250,8 @@ class TestRunRoutes:
         result = SimpleNamespace(
             assessment_id=10,
             experiment_name="exp",
-            dataset_id=7,
-            dataset_name="ds",
+            submission_id=UUID(int=7),
+            submission_name="ds",
             num_configs=1,
             runs=[],
         )

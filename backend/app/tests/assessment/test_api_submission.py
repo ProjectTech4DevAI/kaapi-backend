@@ -71,6 +71,15 @@ class TestSubmit:
         with patch("app.services.assessment.api.submission.validate_callback_url"):
             yield
 
+    @pytest.fixture(autouse=True)
+    def _stub_submission_upload(self):
+        # Submit stores the rows in object storage; these cases are not about that.
+        with patch(
+            "app.services.assessment.api.submission.upload_submission_rows",
+            return_value="s3://bucket/submission.jsonl",
+        ):
+            yield
+
     def test_creates_assessment_run_and_dispatches(self, db) -> None:
         auth = get_user_test_auth_context(db)
         config = _assessment_config(db, auth.project_id)
@@ -319,6 +328,10 @@ class TestCallbackUrlValidation:
                 "app.services.assessment.api.submission.validate_callback_url"
             ) as validate,
             patch("app.celery.tasks.job_execution.run_assessment_api_batch") as task,
+            patch(
+                "app.services.assessment.api.submission.upload_submission_rows",
+                return_value="s3://bucket/submission.jsonl",
+            ),
         ):
             response = self._submit(db, auth, config, "https://example.com/hook")
         validate.assert_called_once_with("https://example.com/hook")
@@ -329,7 +342,13 @@ class TestCallbackUrlValidation:
 class TestCreateAssessmentRoute:
     @pytest.fixture(autouse=True)
     def _bypass_callback_check(self):
-        with patch("app.services.assessment.api.submission.validate_callback_url"):
+        with (
+            patch("app.services.assessment.api.submission.validate_callback_url"),
+            patch(
+                "app.services.assessment.api.submission.upload_submission_rows",
+                return_value="s3://bucket/submission.jsonl",
+            ),
+        ):
             yield
 
     def test_batch_input_dispatches_and_returns_202_body(

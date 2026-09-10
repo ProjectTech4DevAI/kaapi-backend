@@ -6,6 +6,7 @@ the transactional ``db`` session with only external provider/webhook seams mocke
 """
 
 import json
+from uuid import uuid4
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -66,6 +67,26 @@ OUTPUT_SCHEMA = {
 
 # Pre-filter criteria now live in params.instructions (mandatory), no top-level prompt/content.
 TOPIC_CRITERIA = "Is this on topic?"
+
+
+_SEEDED_ROWS: dict = {}
+
+
+@pytest.fixture(autouse=True)
+def _serve_seeded_submission_rows():
+    """Submission rows live in object storage; serve the seeded ones instead."""
+
+    def _load(*, session, assessment):
+        return BatchInput(data=_SEEDED_ROWS[assessment.id])
+
+    with patch(
+        "app.services.assessment.api.submission_store.load_submission_rows", _load
+    ):
+        yield
+
+
+def _register_rows(assessment, data) -> None:
+    _SEEDED_ROWS[assessment.id] = data
 
 
 def _blob_dict(
@@ -524,14 +545,14 @@ def _make_batch_job(db, *, org_id, project_id, **kwargs) -> BatchJob:
 
 
 def _seed_assessment(db, *, org_id, project_id, config_id, bag, data, status=None):
-    batch_input = BatchInput(data=data)
     assessment = api.create_assessment(
         session=db,
         method=AssessmentMethod.BATCH,
-        input=batch_input.model_dump(mode="json"),
+        input=None,
         organization_id=org_id,
         project_id=project_id,
     )
+    _register_rows(assessment, data)
     execution = api.create_execution(
         session=db,
         assessment_id=assessment.id,
@@ -813,7 +834,7 @@ class TestPollOutcome:
             "app.services.assessment.api.batch.poll_batch_status",
             return_value={},
         ):
-            outcome, results = _poll_outcome(db, self._provider(), job)
+            outcome, results = _poll_outcome(db, self._provider(), job, uuid4())
         assert outcome == "processing"
         assert results is None
 
@@ -829,7 +850,7 @@ class TestPollOutcome:
             "app.services.assessment.api.batch.poll_batch_status",
             return_value={},
         ):
-            outcome, _ = _poll_outcome(db, self._provider(), job)
+            outcome, _ = _poll_outcome(db, self._provider(), job, uuid4())
         assert outcome == "failed"
 
     def test_success_but_all_failed_counts(self, db) -> None:
@@ -845,7 +866,7 @@ class TestPollOutcome:
             "app.services.assessment.api.batch.poll_batch_status",
             return_value={"request_counts": {"completed": 0, "failed": 3}},
         ):
-            outcome, _ = _poll_outcome(db, self._provider(), job)
+            outcome, _ = _poll_outcome(db, self._provider(), job, uuid4())
         assert outcome == "failed"
 
     def test_success_output_not_ready(self, db) -> None:
@@ -860,7 +881,7 @@ class TestPollOutcome:
             "app.services.assessment.api.batch.poll_batch_status",
             return_value={"request_counts": {"completed": 1}},
         ):
-            outcome, _ = _poll_outcome(db, self._provider(), job)
+            outcome, _ = _poll_outcome(db, self._provider(), job, uuid4())
         assert outcome == "processing"
 
 
@@ -1073,10 +1094,11 @@ class TestSubmitStageEmptySubset:
         assessment = api.create_assessment(
             session=db,
             method=AssessmentMethod.BATCH,
-            input=batch_input.model_dump(mode="json"),
+            input=None,
             organization_id=auth.organization_id,
             project_id=auth.project_id,
         )
+        _register_rows(assessment, batch_input.data)
         execution = api.create_execution(
             session=db,
             assessment_id=assessment.id,
@@ -1087,8 +1109,8 @@ class TestSubmitStageEmptySubset:
         ok = _submit_stage(
             session=db,
             execution=execution,
+            assessment=assessment,
             blob=blob,
-            batch_input=batch_input,
             bag=bag,
             stage=ApiStage.ASSESSMENT.value,
             organization_id=auth.organization_id,
@@ -1752,10 +1774,11 @@ class TestBuildResult:
         assessment = api.create_assessment(
             session=db,
             method=AssessmentMethod.BATCH,
-            input=batch_input.model_dump(mode="json"),
+            input=None,
             organization_id=auth.organization_id,
             project_id=auth.project_id,
         )
+        _register_rows(assessment, batch_input.data)
         execution = api.create_execution(
             session=db,
             assessment_id=assessment.id,

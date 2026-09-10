@@ -156,14 +156,12 @@ class TestRecordStageDump:
             assessment=assessment,
             stage=ApiStage.TOPIC_RELEVANCE.value,
             url="s3://bucket/batch-1170/output.jsonl",
-            count=998,
         )
 
         db.refresh(assessment)
         assert assessment.result_files == {
             "topic_relevance_results": {
-                "url": "s3://bucket/batch-1170/output.jsonl",
-                "count": 998,
+                "object_store_url": "s3://bucket/batch-1170/output.jsonl",
             }
         }
 
@@ -176,7 +174,6 @@ class TestRecordStageDump:
             assessment=assessment,
             stage=ApiStage.ASSESSMENT.value,
             url=None,
-            count=0,
         )
 
         db.refresh(assessment)
@@ -190,7 +187,7 @@ class TestBuildAndUploadErrors:
         uploads = _Uploads()
 
         with _storage_patch(), _upload_patch(uploads):
-            url, count = build_and_upload_errors(
+            url = build_and_upload_errors(
                 session=db,
                 execution=execution,
                 assessment=assessment,
@@ -198,12 +195,10 @@ class TestBuildAndUploadErrors:
                 failure_message=None,
             )
 
-        assert (url, count) == ("s3://bucket/errors.jsonl", 0)
+        assert url == "s3://bucket/errors.jsonl"
         assert uploads.rows == []
         assert uploads.calls[0]["filename"] == "errors.jsonl"
-        assert (
-            uploads.calls[0]["subdirectory"] == f"assessment/execution-{execution.id}"
-        )
+        assert uploads.calls[0]["subdirectory"] == f"assessment/{assessment.id}"
 
     def test_row_errors_are_flattened_per_stage(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -214,15 +209,13 @@ class TestBuildAndUploadErrors:
         )
 
         with _storage_patch(), _upload_patch(uploads):
-            _, count = build_and_upload_errors(
+            build_and_upload_errors(
                 session=db,
                 execution=execution,
                 assessment=assessment,
                 bag=bag,
                 failure_message=None,
             )
-
-        assert count == 1
         assert uploads.rows == [
             {
                 "type": "row_error",
@@ -254,15 +247,13 @@ class TestBuildAndUploadErrors:
                 return_value=provider,
             ),
         ):
-            _, count = build_and_upload_errors(
+            build_and_upload_errors(
                 session=db,
                 execution=execution,
                 assessment=assessment,
                 bag=_bag(stage_batches={ApiStage.ASSESSMENT.value: job.id}),
                 failure_message=None,
             )
-
-        assert count == 2
         assert [row["type"] for row in uploads.rows] == [
             "provider_error_file",
             "provider_error_file",
@@ -290,15 +281,13 @@ class TestBuildAndUploadErrors:
                 return_value=provider,
             ),
         ):
-            _, count = build_and_upload_errors(
+            build_and_upload_errors(
                 session=db,
                 execution=execution,
                 assessment=assessment,
                 bag=_bag(stage_batches={ApiStage.ASSESSMENT.value: job.id}),
                 failure_message=None,
             )
-
-        assert count == 1
         row = uploads.rows[0]
         assert row["type"] == "provider_error_file_unavailable"
         assert row["provider_error_file_id"] == "file-err-2"
@@ -311,15 +300,13 @@ class TestBuildAndUploadErrors:
         uploads = _Uploads()
 
         with _storage_patch(), _upload_patch(uploads):
-            _, count = build_and_upload_errors(
+            build_and_upload_errors(
                 session=db,
                 execution=execution,
                 assessment=assessment,
                 bag=_bag(stage_batches={ApiStage.ASSESSMENT.value: job.id}),
                 failure_message=None,
             )
-
-        assert count == 0
 
     def test_storage_outage_yields_no_url(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -329,7 +316,7 @@ class TestBuildAndUploadErrors:
             "app.services.assessment.api.result_files.get_cloud_storage",
             side_effect=RuntimeError("s3 unreachable"),
         ):
-            url, count = build_and_upload_errors(
+            url = build_and_upload_errors(
                 session=db,
                 execution=execution,
                 assessment=assessment,
@@ -338,7 +325,6 @@ class TestBuildAndUploadErrors:
             )
 
         assert url is None
-        assert count == 1
 
 
 class TestFinalizeResultFiles:
@@ -361,8 +347,7 @@ class TestFinalizeResultFiles:
         db.refresh(assessment)
         assert set(assessment.result_files) == {"errors"}
         assert assessment.result_files["errors"] == {
-            "url": "s3://bucket/errors.jsonl",
-            "count": 1,
+            "object_store_url": "s3://bucket/errors.jsonl",
         }
         assert uploads.rows == [
             {
@@ -382,7 +367,6 @@ class TestFinalizeResultFiles:
             assessment=assessment,
             stage=ApiStage.ASSESSMENT.value,
             url="s3://bucket/batch-1173/output.jsonl",
-            count=2,
         )
         uploads = _Uploads()
 
@@ -400,8 +384,8 @@ class TestFinalizeResultFiles:
 
         db.refresh(assessment)
         assert assessment.result_files == {
-            "results": {"url": "s3://bucket/batch-1173/output.jsonl", "count": 2},
-            "errors": {"url": "s3://bucket/errors.jsonl", "count": 0},
+            "results": {"object_store_url": "s3://bucket/batch-1173/output.jsonl"},
+            "errors": {"object_store_url": "s3://bucket/errors.jsonl"},
         }
 
     def test_prefilter_and_assessment_dumps_coexist(self, db) -> None:
@@ -434,7 +418,7 @@ class TestFinalizeResultFiles:
             "results",
             "errors",
         }
-        assert assessment.result_files["topic_relevance_results"]["count"] == 2
+        assert "topic_relevance_results" in assessment.result_files
 
     def test_a_second_tick_does_not_duplicate_or_lose_records(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -496,15 +480,15 @@ class TestBuildCallbackMetadata:
         storage.get_signed_url.side_effect = sign
         return storage
 
-    def test_every_kind_is_signed_and_keeps_its_count(self, db) -> None:
+    def test_every_kind_is_signed(self, db) -> None:
         auth = get_user_test_auth_context(db)
         assessment, _ = _seed(db, auth)
         api.set_result_files(
             session=db,
             assessment=assessment,
             files={
-                "results": {"url": "s3://bucket/out.jsonl", "count": 998},
-                "errors": {"url": "s3://bucket/errors.jsonl", "count": 389},
+                "results": {"object_store_url": "s3://bucket/out.jsonl"},
+                "errors": {"object_store_url": "s3://bucket/errors.jsonl"},
             },
         )
 
@@ -512,10 +496,8 @@ class TestBuildCallbackMetadata:
             metadata = build_callback_metadata(session=db, assessment=assessment)
 
         assert metadata["result_files"]["results"] == {
-            "url": f"https://signed.example/s3://bucket/out.jsonl?exp={ONE_DAY_SECONDS}",
-            "count": 998,
+            "signed_url": f"https://signed.example/s3://bucket/out.jsonl?exp={ONE_DAY_SECONDS}",
         }
-        assert metadata["result_files"]["errors"]["count"] == 389
 
     def test_expires_at_is_one_day_out(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -534,8 +516,8 @@ class TestBuildCallbackMetadata:
             session=db,
             assessment=assessment,
             files={
-                "results": {"url": "s3://bucket/out.jsonl", "count": 998},
-                "errors": {"url": "s3://bucket/errors.jsonl", "count": 389},
+                "results": {"object_store_url": "s3://bucket/out.jsonl"},
+                "errors": {"object_store_url": "s3://bucket/errors.jsonl"},
             },
         )
 
@@ -551,7 +533,7 @@ class TestBuildCallbackMetadata:
         api.set_result_files(
             session=db,
             assessment=assessment,
-            files={"results": {"url": "s3://bucket/out.jsonl", "count": 1}},
+            files={"results": {"object_store_url": "s3://bucket/out.jsonl"}},
         )
 
         with patch(

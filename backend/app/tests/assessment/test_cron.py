@@ -1,6 +1,7 @@
 """Tests for assessment/cron.py helper functions."""
 
 from datetime import datetime
+from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,7 +12,12 @@ from app.crud.assessment.cron import (
     _log_config_progress,
     poll_all_pending_assessment_evaluations,
 )
-from app.models.assessment import AssessmentMethod, AssessmentStatus, StageStatus
+from app.models.assessment import (
+    AssessmentMethod,
+    AssessmentStatus,
+    AssessmentSubmission,
+    StageStatus,
+)
 from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.config.config import ConfigTag
 from app.tests.utils.auth import get_user_test_auth_context
@@ -244,13 +250,20 @@ class TestPollerAgainstRealRows:
     """The poller's method boundary and its failure classification, on real rows."""
 
     def _run_assessment(self, db, auth):
-        dataset = create_test_evaluation_dataset(
-            db, organization_id=auth.organization_id, project_id=auth.project_id
+        submission = AssessmentSubmission(
+            name=f"sub-{uuid4().hex[:8]}",
+            object_store_url="s3://bucket/sub.csv",
+            total_items=1,
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
         )
+        db.add(submission)
+        db.commit()
+        db.refresh(submission)
         return assessment_core.create_assessment(
             session=db,
             experiment_name="exp",
-            dataset_id=dataset.id,
+            submission_id=submission.id,
             organization_id=auth.organization_id,
             project_id=auth.project_id,
         )
