@@ -323,10 +323,15 @@ class TestExecuteJob:
     def mock_llm_call_crud(self):
         with (
             patch("app.services.llm.jobs.create_llm_call") as mock_create_llm_call,
-            patch("app.services.llm.jobs.update_llm_call_response"),
+            patch(
+                "app.services.llm.jobs.update_llm_call_response"
+            ) as mock_update_llm_call_response,
         ):
             mock_create_llm_call.return_value = MagicMock(id=uuid4())
-            yield
+            yield {
+                "create_llm_call": mock_create_llm_call,
+                "update_llm_call_response": mock_update_llm_call_response,
+            }
 
     @pytest.fixture
     def job_for_execution(self, db: Session):
@@ -914,6 +919,94 @@ class TestExecuteJob:
         assert not result["success"]
         assert "Output blocked by guardrails" in result["error"]
 
+    def test_proxy_output_guardrails_success_persists_sanitized_content(
+        self, db, job_env, job_for_execution, mock_llm_call_crud
+    ):
+        """Successful output-guardrail sanitisation in the proxy branch is
+        re-persisted onto the LlmCall row via update_llm_call_response
+        (jobs.py:929-939)."""
+        request_data = {
+            "query": {"input": "hi"},
+            "config": {
+                "blob": {
+                    "completion": {
+                        "type": "proxy",
+                        "provider": None,
+                        "params": {
+                            "client_llm_url": "https://api.tap.example/v1/predictions"
+                        },
+                    },
+                    "input_guardrails": [],
+                    "output_guardrails": [
+                        {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                    ],
+                }
+            },
+            "include_provider_raw_response": False,
+            "callback_url": None,
+        }
+
+        fake_resp = MagicMock()
+        fake_resp.raise_for_status = MagicMock()
+        fake_resp.json.return_value = {
+            "id": "resp_abc",
+            "model": "gpt-5",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        {"type": "output_text", "text": "Aadhar no 123-45-6789"}
+                    ],
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
+        }
+        fake_client = MagicMock()
+        fake_client.__enter__.return_value = fake_client
+        fake_client.__exit__.return_value = None
+        fake_client.post.return_value = fake_resp
+
+        with (
+            patch(
+                "app.services.llm.jobs.get_provider_credential",
+                return_value={"api_key": "tap-token"},
+            ),
+            patch("app.services.llm.jobs.httpx.Client", return_value=fake_client),
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+        ):
+            mock_fetch_configs.return_value = (
+                [],
+                [{"type": "pii_remover", "stage": "output"}],
+            )
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": "Aadhar [REDACTED]",
+                    "rephrase_needed": False,
+                },
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"]
+        assert (
+            result["data"]["response"]["output"]["content"]["value"]
+            == "Aadhar [REDACTED]"
+        )
+
+        mock_update = mock_llm_call_crud["update_llm_call_response"]
+        assert mock_update.call_count == 2
+        _, guardrail_persist_kwargs = mock_update.call_args_list[-1]
+        assert (
+            guardrail_persist_kwargs["content"]["content"]["value"]
+            == "Aadhar [REDACTED]"
+        )
+
     def test_metadata_in_callback_response(
         self, db, job_env, job_for_execution, request_data
     ):
@@ -1344,6 +1437,153 @@ class TestExecuteJob:
 
         assert result["success"]
 
+    def test_guardrails_metadata_reports_per_validator_text_for_input_guardrail(
+        self, db, job_env, job_for_execution
+    ):
+        """metadata.input_guardrail should surface the original text, what
+        was sent to the LLM, and each validator's own before/after text --
+        not just the raw kaapi-guardrails response wrapper.
+        """
+        env = job_env
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        unsafe_input = "My credit card is 4111 1111 1111 1111"
+        sanitized_input = "My credit card is [REDACTED]"
+
+        with (
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
+        ):
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": sanitized_input,
+                    "rephrase_needed": False,
+                    "validator_results": [
+                        {
+                            "name": "PIIRemover",
+                            "type": "pii_remover",
+                            "stage": "input",
+                            "order": 1,
+                            "outcome": "FAIL",
+                            "error": "PII detected in the text.",
+                            "input_text": unsafe_input,
+                            "output_text": sanitized_input,
+                        }
+                    ],
+                },
+            }
+            mock_fetch_configs.return_value = (
+                [{"type": "pii_remover", "stage": "input"}],
+                [],
+            )
+
+            request_data = {
+                "query": {"input": unsafe_input},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4o"},
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [],
+                    }
+                },
+                "include_provider_raw_response": False,
+                "include_guardrail_metadata": True,
+                "callback_url": None,
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"]
+
+        input_guardrail_metadata = result["metadata"]["input_guardrail"]
+        assert input_guardrail_metadata["input_from_user"] == unsafe_input
+        assert input_guardrail_metadata["input_to_llm"] == sanitized_input
+
+        validators = input_guardrail_metadata["validators"]
+        assert len(validators) == 1
+        assert validators[0]["name"] == "PIIRemover"
+        assert validators[0]["outcome"] == "FAIL"
+        assert validators[0]["input_text"] == unsafe_input
+        assert validators[0]["output_text"] == sanitized_input
+
+    def test_guardrails_metadata_omitted_by_default(
+        self, db, job_env, job_for_execution
+    ):
+        """Guardrails still sanitize the input, but input_guardrail metadata is
+        left out unless include_guardrail_metadata is explicitly set."""
+        env = job_env
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        unsafe_input = "My credit card is 4111 1111 1111 1111"
+        sanitized_input = "My credit card is [REDACTED]"
+
+        with (
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
+        ):
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": sanitized_input,
+                    "rephrase_needed": False,
+                    "validator_results": [
+                        {
+                            "name": "PIIRemover",
+                            "type": "pii_remover",
+                            "stage": "input",
+                            "order": 1,
+                            "outcome": "FAIL",
+                            "error": "PII detected in the text.",
+                            "input_text": unsafe_input,
+                            "output_text": sanitized_input,
+                        }
+                    ],
+                },
+            }
+            mock_fetch_configs.return_value = (
+                [{"type": "pii_remover", "stage": "input"}],
+                [],
+            )
+
+            request_data = {
+                "query": {"input": unsafe_input},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4o"},
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [],
+                    }
+                },
+                "include_provider_raw_response": False,
+                "callback_url": None,
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"]
+        assert not result["metadata"] or "input_guardrail" not in result["metadata"]
+
     def test_guardrails_skip_input_validation_for_audio_input(
         self, db, job_env, job_for_execution
     ):
@@ -1443,6 +1683,86 @@ class TestExecuteJob:
 
         assert "REDACTED" in result["data"]["response"]["output"]["content"]["value"]
 
+    def test_guardrails_metadata_reports_per_validator_text_for_output_guardrail(
+        self, db, job_env, job_for_execution
+    ):
+        """metadata.output_guardrail should surface the raw LLM output
+        (pre-guardrail), the final response text, and each validator's own
+        before/after text -- not just the raw kaapi-guardrails response
+        wrapper.
+        """
+        env = job_env
+
+        raw_llm_output = "Aadhar no 123-45-6789"
+        sanitized_output = "Aadhar [REDACTED]"
+        env["mock_llm_response"].response.output.content.value = raw_llm_output
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with (
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
+        ):
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": sanitized_output,
+                    "rephrase_needed": False,
+                    "validator_results": [
+                        {
+                            "name": "PIIRemover",
+                            "type": "pii_remover",
+                            "stage": "output",
+                            "order": 1,
+                            "outcome": "FAIL",
+                            "error": "PII detected in the text.",
+                            "input_text": raw_llm_output,
+                            "output_text": sanitized_output,
+                        }
+                    ],
+                },
+            }
+            mock_fetch_configs.return_value = (
+                [],
+                [{"type": "pii_remover", "stage": "output"}],
+            )
+
+            request_data = {
+                "query": {"input": "hello"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4o"},
+                        },
+                        "input_guardrails": [],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
+                    }
+                },
+                "include_guardrail_metadata": True,
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"]
+
+        output_guardrail_metadata = result["metadata"]["output_guardrail"]
+        assert output_guardrail_metadata["output_from_llm"] == raw_llm_output
+        assert output_guardrail_metadata["output_to_user"] == sanitized_output
+
+        validators = output_guardrail_metadata["validators"]
+        assert len(validators) == 1
+        assert validators[0]["name"] == "PIIRemover"
+        assert validators[0]["outcome"] == "FAIL"
+        assert validators[0]["input_text"] == raw_llm_output
+        assert validators[0]["output_text"] == sanitized_output
+
     def test_guardrails_output_validation_sends_input_output_pair(
         self, db, job_env, job_for_execution
     ):
@@ -1496,6 +1816,65 @@ class TestExecuteJob:
         _, kwargs = mock_guardrails.call_args
         assert kwargs.get("output_text") == llm_output
         assert mock_guardrails.call_args[0][0] == user_query
+
+    def test_guardrails_output_persists_sanitized_content_via_update_llm_call_response(
+        self, db, job_env, job_for_execution, mock_llm_call_crud
+    ):
+        """Successful output-guardrail sanitisation on the non-proxy branch
+        is re-persisted onto the LlmCall row via update_llm_call_response
+        (jobs.py:1323-1331)."""
+        env = job_env
+        env["mock_llm_response"].response.output.content.value = "Aadhar no 123-45-6789"
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with (
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
+        ):
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": "Aadhar [REDACTED]",
+                    "rephrase_needed": False,
+                },
+            }
+            mock_fetch_configs.return_value = (
+                [],
+                [{"type": "pii_remover", "stage": "output"}],
+            )
+
+            request_data = {
+                "query": {"input": "hello"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4o"},
+                        },
+                        "input_guardrails": [],
+                        "output_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_2}
+                        ],
+                    }
+                },
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert result["success"]
+
+        mock_update = mock_llm_call_crud["update_llm_call_response"]
+        assert mock_update.call_count == 2
+        _, guardrail_persist_kwargs = mock_update.call_args_list[-1]
+        assert (
+            guardrail_persist_kwargs["content"]["content"]["value"]
+            == "Aadhar [REDACTED]"
+        )
 
     def test_guardrails_bypass_does_not_modify_output(
         self, db, job_env, job_for_execution

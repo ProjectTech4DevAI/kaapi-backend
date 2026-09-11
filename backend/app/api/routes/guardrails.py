@@ -106,7 +106,7 @@ def _upstream_response(status_code: int, payload: Any) -> Response:
     return JSONResponse(status_code=status_code, content=payload, headers=headers)
 
 
-# ROUTE ORDERING: these fixed paths must stay above GET /guardrails/{job_id} — FastAPI matches in declaration order.
+# ROUTE ORDERING: these fixed paths must stay above GET /guardrails/{job_id}.
 
 
 @router.get(

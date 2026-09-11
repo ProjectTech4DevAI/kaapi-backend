@@ -20,8 +20,10 @@ from app.models.llm.request import (
     Validator,
 )
 from app.services.llm.guardrails import (
+    GuardrailsOutcome,
     list_validators_config,
     run_guardrails_validation,
+    summarize_validator_results,
 )
 from app.tests.utils.utils import get_project
 
@@ -372,6 +374,57 @@ def test_list_validators_config_network_error_fails_open(mock_client_cls) -> Non
 
     assert input_guardrails == []
     assert output_guardrails == []
+
+
+def test_summarize_validator_results_extracts_per_validator_fields() -> None:
+    outcome = GuardrailsOutcome(
+        safe_text="My credit card is [REDACTED]",
+        error=None,
+        bypassed=False,
+        rephrase_needed=False,
+        raw={
+            "success": True,
+            "data": {
+                "safe_text": "My credit card is [REDACTED]",
+                "validator_results": [
+                    {
+                        "name": "PIIRemover",
+                        "type": "pii_remover",
+                        "stage": "input",
+                        "order": 1,
+                        "outcome": "FAIL",
+                        "error": "PII detected in the text.",
+                        "input_text": "My credit card is 4111 1111 1111 1111",
+                        "output_text": "My credit card is [REDACTED]",
+                    }
+                ],
+            },
+        },
+    )
+
+    summaries = summarize_validator_results(outcome)
+
+    assert summaries == [
+        {
+            "name": "PIIRemover",
+            "outcome": "FAIL",
+            "error": "PII detected in the text.",
+            "input_text": "My credit card is 4111 1111 1111 1111",
+            "output_text": "My credit card is [REDACTED]",
+        }
+    ]
+
+
+def test_summarize_validator_results_empty_when_raw_has_no_validator_results() -> None:
+    outcome = GuardrailsOutcome(
+        safe_text="hello",
+        error=None,
+        bypassed=True,
+        rephrase_needed=False,
+        raw={},
+    )
+
+    assert summarize_validator_results(outcome) == []
 
 
 _SAFE_TEXT = "Please rephrase: content not allowed."

@@ -13,7 +13,7 @@ from kombu import Exchange, Queue
 
 from app.core.config import settings
 from app.core.logger import configure_logging
-from app.core.sentry_filters import before_send_transaction_filter
+from app.core.sentry_filters import before_send_filter, before_send_transaction_filter
 
 logger = logging.getLogger(__name__)
 _telemetry_initialized = False
@@ -46,6 +46,7 @@ def _initialize_worker_observability() -> None:
             traces_sample_rate=1.0,
             max_request_body_size="never",
             enable_logs=True,
+            before_send=before_send_filter,
             before_send_transaction=before_send_transaction_filter,
             integrations=[
                 LoggingIntegration(
