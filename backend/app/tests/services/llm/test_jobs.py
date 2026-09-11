@@ -1692,6 +1692,60 @@ class TestExecuteJob:
         assert "Unsafe content" in result["error"]
         env["provider"].execute.assert_not_called()
 
+    def test_guardrails_stripping_input_to_empty_blocks_job(
+        self, db, job_env, job_for_execution
+    ):
+        env = job_env
+
+        with (
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation"
+            ) as mock_guardrails,
+            patch(
+                "app.services.llm.guardrails.list_validators_config"
+            ) as mock_fetch_configs,
+        ):
+            # fix-mode validator with no fix_value reduces the input to whitespace
+            mock_guardrails.return_value = {
+                "success": True,
+                "bypassed": False,
+                "data": {
+                    "safe_text": "   ",
+                    "rephrase_needed": False,
+                },
+            }
+            mock_fetch_configs.return_value = (
+                [{"type": "topic_relevance", "stage": "input"}],
+                [],
+            )
+
+            request_data = {
+                "query": {"input": "what is the weather today"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4o"},
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [],
+                    }
+                },
+            }
+            result = self._execute_job(job_for_execution, db, request_data)
+
+        assert not result["success"]
+        assert (
+            result["error"]
+            == "Input guardrails rejected the request and left no usable content."
+        )
+        env["provider"].execute.assert_not_called()
+        db.refresh(job_for_execution)
+        assert job_for_execution.status == JobStatus.FAILED
+
     def test_guardrails_rephrase_needed_allows_job_with_sanitized_input(
         self, db, job_env, job_for_execution
     ):
