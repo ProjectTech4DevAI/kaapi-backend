@@ -8,6 +8,7 @@ persists the result as a new config_version.
 import copy
 import json
 import logging
+from collections import Counter
 from uuid import UUID
 
 import anthropic
@@ -25,6 +26,7 @@ from app.core.storage_utils import load_json_from_object_store
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.core import get_evaluation_run_by_id
 from app.crud.evaluations.score import (
+    COSINE_SCORE_NAME,
     GROUND_TRUTH_SCORE_NAME,
     KNOWLEDGE_BASE_SCORE_NAME,
     PROMPT_SCORE_NAME,
@@ -53,6 +55,21 @@ logger = logging.getLogger(__name__)
 
 # Headroom for a full prompt rewrite + JSON wrapper; too low truncates into invalid JSON.
 _LLM_MAX_TOKENS = 16384
+
+# Byte budget for the projected trace payload. A byte-level BPE never emits more
+# than one token per UTF-8 byte, so this cannot breach the provider's 1M input
+# window; budgeting bytes rather than characters is also what charges a script
+# that encodes wide (Devanagari at 3 bytes/char) for what it actually costs.
+_TRACE_PAYLOAD_MAX_BYTES = 400_000
+_TRACE_FIELD_MAX_CHARS = 2_000
+_TRUNCATION_MARKER = " …[truncated]"
+
+# Repeats of one question are cut before whole rows: a question the model never
+# sees at all is a bigger loss than the 5th repeat of one it does.
+_MIN_REPEATS_PER_QUESTION = 3
+
+# Sorts unscoreable rows (value = "N/A") last, behind every real score.
+_UNSCOREABLE_SORT_VALUE = float("inf")
 
 # JSON keys expected in the LLM's structured response.
 _LLM_KEY_INSTRUCTIONS = "improved_instructions"
@@ -646,6 +663,99 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
         ) from exc
 
 
+def _truncate(text: object) -> str:
+    """Clamp one trace field; long judge rationales are the main source of bloat."""
+    value = "" if text is None else str(text)
+    if len(value) <= _TRACE_FIELD_MAX_CHARS:
+        return value
+    return value[:_TRACE_FIELD_MAX_CHARS] + _TRUNCATION_MARKER
+
+
+def _project_trace(trace: dict, *, is_judge_run: bool) -> dict:
+    """Keep only the fields the brief tells the model to read."""
+    projected: dict = {
+        "question": _truncate(trace.get("question")),
+        "ground_truth_answer": _truncate(trace.get("ground_truth_answer")),
+        "llm_answer": _truncate(trace.get("llm_answer")),
+        "scores": [
+            {
+                "name": score.get("name"),
+                "value": score.get("value"),
+                **({"unscoreable": True} if score.get("unscoreable") else {}),
+                **(
+                    {"comment": _truncate(score.get("comment"))} if is_judge_run else {}
+                ),
+            }
+            for score in trace.get("scores") or []
+        ],
+    }
+    if not is_judge_run and trace.get("category"):
+        projected["category"] = trace["category"]
+    return projected
+
+
+def _limit_repeats(rows: list[dict]) -> list[dict]:
+    """Keep at most `_MIN_REPEATS_PER_QUESTION` traces per question, in file order.
+
+    A trace with no `question_id` is keyed uniquely, so datasets uploaded before
+    ids existed are not collapsed into one group and cut down to a handful of rows.
+    """
+    kept: list[dict] = []
+    seen: Counter[object] = Counter()
+    for index, row in enumerate(rows):
+        question_id = row.get("question_id")
+        key = question_id if question_id or question_id == 0 else f"__row_{index}"
+        if seen[key] >= _MIN_REPEATS_PER_QUESTION:
+            continue
+        seen[key] += 1
+        kept.append(row)
+    return kept
+
+
+def _primary_score(trace: dict, *, score_name: str) -> float:
+    """The metric the brief calls the primary signal; +inf when it is unusable."""
+    for score in trace.get("scores") or []:
+        if score.get("name") != score_name or score.get("unscoreable"):
+            continue
+        value = score.get("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        return float(value)
+    return _UNSCOREABLE_SORT_VALUE
+
+
+def _pack_traces(rows: list[dict], *, is_judge_run: bool) -> list[dict]:
+    """Project rows into the byte budget, worst-scoring first."""
+    score_name = GROUND_TRUTH_SCORE_NAME if is_judge_run else COSINE_SCORE_NAME
+    kept: list[dict] = []
+    used = 0
+    for row in sorted(rows, key=lambda r: _primary_score(r, score_name=score_name)):
+        projected = _project_trace(row, is_judge_run=is_judge_run)
+        size = len(json.dumps(projected, ensure_ascii=False).encode())
+        if kept and used + size > _TRACE_PAYLOAD_MAX_BYTES:
+            break
+        kept.append(projected)
+        used += size
+    return kept
+
+
+def _select_traces(rows: list[dict], *, is_judge_run: bool) -> tuple[list[dict], int]:
+    """Fit the run's traces into the byte budget; returns (kept, total).
+
+    Worst-first both selects and orders — the brief tells the model to focus on the
+    failing rows, so those are the ones a cap has to keep. Repeats are only capped
+    when the whole run does not fit.
+    """
+    kept = _pack_traces(rows, is_judge_run=is_judge_run)
+    if len(kept) < len(rows):
+        kept = _pack_traces(_limit_repeats(rows), is_judge_run=is_judge_run)
+        logger.warning(
+            f"[_select_traces] Trimmed traces to fit the prompt budget | "
+            f"kept={len(kept)} total={len(rows)} is_judge_run={is_judge_run}"
+        )
+    return kept, len(rows)
+
+
 def _draft_improved_prompt(
     *,
     current_instructions: str,
@@ -730,11 +840,23 @@ def _draft_improved_prompt(
         f"sentence (≤ {_RATIONALE_MAX_LENGTH} characters): what you changed and why."
     )
     target_config = _target_config_from_params(config_params)
+    raw_rows = traces if isinstance(traces, list) else traces.get("traces") or []
+    rows = [row for row in raw_rows if isinstance(row, dict)]
+    selected_traces, total_traces = _select_traces(rows, is_judge_run=is_judge_run)
+    trace_scope = (
+        ""
+        if len(selected_traces) == total_traces
+        else (
+            f" You are seeing {len(selected_traces)} of {total_traces} traces — the "
+            "lowest-scoring rows; the rest are omitted."
+        )
+    )
 
     user_message_text = (
         "You are a prompt engineer. Below is a JSON array of evaluation traces"
-        f"{trace_description}\n\n"
-        f"## Evaluation traces\n```\n{json.dumps(traces)}\n```\n\n"
+        f"{trace_description}{trace_scope}\n\n"
+        "## Evaluation traces\n```\n"
+        f"{json.dumps(selected_traces, ensure_ascii=False)}\n```\n\n"
         f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
         "## Target configuration (read-only — do NOT change any of these)\n"
         f"```\n{json.dumps(target_config)}\n```\n\n"

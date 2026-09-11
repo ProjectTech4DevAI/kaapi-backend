@@ -42,16 +42,21 @@ from sqlmodel import Session, select
 
 from app.core.config import settings
 from app.crud.config.version import ConfigVersionCrud
+from app.crud.evaluations.score import GROUND_TRUTH_SCORE_NAME
 from app.crud.jobs import JobCrud
 from app.models import EvaluationDataset, EvaluationRun
 from app.models.config.config import ConfigTag
 from app.models.job import Job, JobStatus, JobType
 from app.services.evaluations.prompt_improvement import (
+    _MIN_REPEATS_PER_QUESTION,
+    _UNSCOREABLE_SORT_VALUE,
     _UPSTREAM_ERROR_DETAIL_MAX_LENGTH,
     AI_GENERATED_MARKER,
     COMMIT_MESSAGE_MAX_LENGTH,
     _anthropic_error_detail,
     _call_prompt_drafting_llm,
+    _draft_improved_prompt,
+    _primary_score,
     execute_prompt_improvement,
     start_prompt_improvement_job,
     validate_improve_prompt,
@@ -1073,3 +1078,133 @@ class TestPromptDraftingErrorLadder:
 
         assert "ANTHROPIC_API_KEY" in str(raised.value)
         assert "anthropic_response" not in str(raised.value)
+
+
+class TestTraceBudget:
+    """Oversized runs must be trimmed to fit the model's input window, keeping the
+    rows the brief actually asks the model to fix."""
+
+    @staticmethod
+    def _judge_trace(question_id: int, ground_truth_value: float | str) -> dict:
+        unscoreable = ground_truth_value == "N/A"
+        return {
+            "trace_id": f"t{question_id}",
+            "question_id": question_id,
+            "question": f"Q{question_id} " + "क" * 3000,
+            "ground_truth_answer": "A" * 5000,
+            "llm_answer": "B" * 5000,
+            "scores": [
+                {
+                    "name": GROUND_TRUTH_SCORE_NAME,
+                    "value": ground_truth_value,
+                    "data_type": "NUMERIC",
+                    "comment": "C" * 8000,
+                    **({"unscoreable": True} if unscoreable else {}),
+                }
+            ],
+        }
+
+    @staticmethod
+    def _repeated_run(questions: int, repeats: int) -> list[dict]:
+        """A judged run of `questions` questions scored `repeats` times each."""
+        return [
+            TestTraceBudget._judge_trace(question_id, 2.0)
+            for question_id in range(questions)
+            for _ in range(repeats)
+        ]
+
+    @staticmethod
+    def _capture_brief(traces: list) -> str:
+        """Return the brief the drafting call would have received."""
+        captured: dict[str, str] = {}
+
+        def fake_call(*, user_message_text: str) -> tuple[str, str]:
+            captured["text"] = user_message_text
+            return "improved", "why"
+
+        with patch(f"{_SERVICE}._call_prompt_drafting_llm", side_effect=fake_call):
+            assert _draft_improved_prompt(
+                current_instructions="be helpful",
+                config_params={"model": "gpt-4o"},
+                traces=traces,
+                is_judge_run=True,
+            ) == ("improved", "why")
+        return captured["text"]
+
+    def test_oversized_traces_are_capped_worst_first(self) -> None:
+        # The uniquely BEST row is first in input order and the uniquely WORST is
+        # last, so an unsorted (or reversed) selection fails both assertions.
+        # Untrimmed this payload is ~1.3M chars.
+        traces = [
+            self._judge_trace(1000, 5.0),
+            *(self._judge_trace(i, 3.0) for i in range(1, 60)),
+            self._judge_trace(999, "N/A"),
+            self._judge_trace(0, 0.0),
+        ]
+
+        text = self._capture_brief(traces)
+
+        assert len(text) < 450_000
+        assert "Q0 " in text
+        assert "Q1000 " not in text
+        # Fields the brief never names are not shipped.
+        assert "trace_id" not in text
+        assert f"of {len(traces)} traces" in text
+
+    def test_small_run_is_sent_whole_without_a_scope_note(self) -> None:
+        text = self._capture_brief([self._judge_trace(1, 5.0)])
+
+        assert " traces —" not in text
+
+    def test_repeats_are_capped_before_any_question_is_dropped(self) -> None:
+        # Over budget at 5 repeats per question, under it at the floor of 3.
+        questions = 8
+        traces = self._repeated_run(questions=questions, repeats=5)
+
+        text = self._capture_brief(traces)
+
+        # Every question is still represented, three times each — no question was
+        # dropped to make room.
+        for question_id in range(questions):
+            assert text.count(f"Q{question_id} ") == _MIN_REPEATS_PER_QUESTION
+
+    def test_rows_are_dropped_when_the_repeat_floor_is_not_enough(self) -> None:
+        questions = 15
+        traces = self._repeated_run(questions=questions, repeats=5)
+
+        text = self._capture_brief(traces)
+
+        kept = sum(text.count(f"Q{question_id} ") for question_id in range(questions))
+        assert 0 < kept < questions * _MIN_REPEATS_PER_QUESTION
+        assert f"of {len(traces)} traces" in text
+
+    def test_traces_without_question_ids_still_get_trimmed(self) -> None:
+        """v1 traces from older datasets can carry no `question_id`.
+
+        Those must never be grouped as repeats of one another, so capping repeats is
+        a no-op for them and the byte budget is the only thing that trims the brief.
+        """
+        questions = 40
+        traces = [self._judge_trace(i, 2.0) for i in range(questions)]
+        for trace in traces:
+            del trace["question_id"]
+
+        text = self._capture_brief(traces)
+
+        kept = sum(text.count(f"Q{i} ") for i in range(questions))
+        assert 0 < kept < questions
+
+    def test_unscoreable_score_sorts_behind_every_real_score(self) -> None:
+        """`value` is the string "N/A" on unscoreable rows; mixed str/float must not
+        raise, and those rows must rank last."""
+        unscoreable = self._judge_trace(1, "N/A")
+        best = self._judge_trace(2, 5.0)
+
+        assert _primary_score(
+            unscoreable, score_name=GROUND_TRUTH_SCORE_NAME
+        ) > _primary_score(best, score_name=GROUND_TRUTH_SCORE_NAME)
+        # A missing metric is treated the same way.
+        assert (
+            _primary_score({"scores": []}, score_name=GROUND_TRUTH_SCORE_NAME)
+            == _UNSCOREABLE_SORT_VALUE
+        )
