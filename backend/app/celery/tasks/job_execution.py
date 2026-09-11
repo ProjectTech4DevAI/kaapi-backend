@@ -13,7 +13,8 @@ Higher priority drains first; within the same priority, delivery is FIFO.
 """
 
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, TypeVar
 
 from asgi_correlation_id import correlation_id
 from celery import Task, current_task
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
 # Sentinel correlation id used when no trace id is propagated from the
 # enqueueing request. Matches the codebase-wide "N/A" default (see
 # app/core/logger.py and app/celery/utils.py).
@@ -43,7 +46,7 @@ def _set_trace(trace_id: str) -> None:
     logger.info(f"[_set_trace] Set correlation ID: {trace_id}")
 
 
-def _extract_parent_context(task_instance) -> otel_context.Context:
+def _extract_parent_context(task_instance: Task) -> otel_context.Context:
     """Extract OTel parent context from Celery headers if available."""
     headers = getattr(task_instance.request, "headers", None) or {}
     carrier: dict[str, str] = {}
@@ -62,20 +65,20 @@ def _extract_parent_context(task_instance) -> otel_context.Context:
     return extract(carrier)
 
 
-def _run_with_otel_parent(task_instance, fn):
-    """Attach extracted parent context and execute function.
+def _run_with_otel_parent(
+    task_instance: Task, fn: Callable[[], T]
+) -> T:  # noqa: UP047 (black doesn't support PEP 695 generics yet)
+    """Attach the extracted parent context and execute `fn` under it.
 
-    When Celery auto-instrumentation is active, there is already a current
-    `run/...` span. Re-attaching extracted parent context here would make
-    service spans become siblings of `run/...` instead of children.
-
-    We only attach extracted context as a fallback when no active span exists.
+    opentelemetry-instrumentation-celery's CeleryGetter misses propagation
+    headers (they live under `.headers`, not top-level task attrs), so its
+    span is always unparented; we extract and attach the context ourselves.
     """
-    current_ctx = trace.get_current_span().get_span_context()
-    if current_ctx and current_ctx.is_valid:
+    parent_ctx = _extract_parent_context(task_instance)
+    parent_span_ctx = trace.get_current_span(parent_ctx).get_span_context()
+    if not (parent_span_ctx and parent_span_ctx.is_valid):
         return fn()
 
-    parent_ctx = _extract_parent_context(task_instance)
     token = otel_context.attach(parent_ctx)
     try:
         return fn()
