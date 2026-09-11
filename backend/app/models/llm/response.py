@@ -23,7 +23,6 @@ class LlmCallRedactionResult(SQLModel):
     """Outcome of a single llm_call retention redaction run."""
 
     rows_redacted: int
-    batches_run: int
     cutoff: datetime
 
 

@@ -182,7 +182,6 @@ def llm_call_retention_cron_job(session: SessionDep) -> LlmCallRedactionResult:
         logger.info(
             f"[llm_call_retention_cron_job] Completed: "
             f"rows_redacted={result.rows_redacted}, "
-            f"batches_run={result.batches_run}, "
             f"cutoff={result.cutoff}"
         )
         return result

@@ -337,46 +337,33 @@ def get_llm_call_by_id(
     return session.exec(statement).first()
 
 
-REDACTED_INPUT_SENTINEL = "[redacted]"
+REDACTED_SENTINEL = "[redacted]"
 
-REDACT_LLM_CALL_BATCH_SQL = text(
+REDACT_LLM_CALLS_SQL = text(
     """
-    WITH batch AS (
-        SELECT id FROM llm_call
-        WHERE updated_at <= :cutoff
-          AND (input <> :redacted_sentinel OR content -> 'content' ->> 'value' IS NOT NULL)
-        ORDER BY updated_at
-        LIMIT :batch_size
-        FOR UPDATE SKIP LOCKED
-    )
     UPDATE llm_call
     SET input = :redacted_sentinel,
         content = CASE
             WHEN jsonb_typeof(content) = 'object'
-            THEN jsonb_set(content, '{content,value}', 'null'::jsonb, false)
+            THEN jsonb_set(content, '{content,value}', to_jsonb(CAST(:redacted_sentinel AS text)), false)
             ELSE content
         END
-    WHERE id IN (SELECT id FROM batch)
+    WHERE updated_at <= :cutoff
+      AND (input <> :redacted_sentinel OR content -> 'content' ->> 'value' IS DISTINCT FROM :redacted_sentinel)
     """
 )
 
 
-def redact_llm_call_batch(
-    *, session: Session, cutoff: datetime, batch_size: int
-) -> int:
+def redact_llm_calls(*, session: Session, cutoff: datetime) -> int:
     result = session.connection().execute(
-        REDACT_LLM_CALL_BATCH_SQL,
-        {
-            "cutoff": cutoff,
-            "batch_size": batch_size,
-            "redacted_sentinel": REDACTED_INPUT_SENTINEL,
-        },
+        REDACT_LLM_CALLS_SQL,
+        {"cutoff": cutoff, "redacted_sentinel": REDACTED_SENTINEL},
     )
     session.commit()
 
     logger.info(
-        f"[redact_llm_call_batch] Redacted batch | rows: {result.rowcount} | "
-        f"cutoff: {cutoff.isoformat()} | batch_size: {batch_size}"
+        f"[redact_llm_calls] Redacted rows | rows: {result.rowcount} | "
+        f"cutoff: {cutoff.isoformat()}"
     )
 
     return result.rowcount

@@ -335,7 +335,6 @@ def test_llm_call_retention_cron_job_success(
     """Returns the redaction summary produced by the retention service."""
     result = LlmCallRedactionResult(
         rows_redacted=4137,
-        batches_run=3,
         cutoff=datetime(2026, 2, 22, 12, 0, 0),
     )
     with patch(
@@ -350,7 +349,6 @@ def test_llm_call_retention_cron_job_success(
     assert response.status_code == 200
     assert response.json() == {
         "rows_redacted": 4137,
-        "batches_run": 3,
         "cutoff": "2026-02-22T12:00:00",
     }
     redact.assert_called_once()
