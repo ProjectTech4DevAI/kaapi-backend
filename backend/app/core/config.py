@@ -204,10 +204,6 @@ class Settings(BaseSettings):
     def DELETE_ROLLING_WINDOW_TIMEDELTA(self) -> timedelta:
         return timedelta(hours=self.DELETE_ROLLING_WINDOW_HOURS)
 
-    # AI-assisted prompt improvement settings.
-    # See docs/srd-ai-prompt-improvement.md for the full design rationale.
-    # Platform-owned Anthropic key shared by every org/project for this feature,
-    # so prompt improvement works without per-project credentials.
     ANTHROPIC_API_KEY: str = ""
     PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"
 
