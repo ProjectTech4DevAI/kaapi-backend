@@ -5,8 +5,8 @@ upload (docs/srd-three-metric-evaluation-verdict.md, FR-19/FR-20):
 
 - FR-19: 200, row created with null langfuse id, CSV stored in S3, Langfuse never
   called.
-- FR-20: response + persisted metadata carry the run-time-duplication marker and
-  original/total item counts.
+- FR-20: response + persisted metadata carry the original/total item counts and
+  the stored duplication factor.
 
 Object storage and Langfuse are the external boundaries and are mocked; the
 dataset row lands in the real (transactional) DB.
@@ -20,7 +20,6 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.crud.evaluations.dataset import (
-    DATASET_META_DUPLICATE_AT_RUNTIME,
     DATASET_META_DUPLICATION_FACTOR,
     DATASET_META_ORIGINAL_ITEMS,
     DATASET_META_TOTAL_ITEMS,
@@ -45,7 +44,7 @@ class TestUploadDatasetV2Route:
         user_api_key_header: dict[str, str],
         db: Session,
     ) -> None:
-        """FR-19/FR-20: 200, null langfuse id, S3 stored, run-time-dup metadata."""
+        """FR-19/FR-20: 200, null langfuse id, S3 stored, factor/count metadata."""
         name = f"v2-route-{random_lower_string()}"
         with (
             patch(f"{_DATASET}.get_cloud_storage", return_value=MagicMock()),
@@ -79,7 +78,6 @@ class TestUploadDatasetV2Route:
         assert persisted is not None
         assert persisted.langfuse_dataset_id is None
         meta = persisted.dataset_metadata
-        assert meta[DATASET_META_DUPLICATE_AT_RUNTIME] is True
         assert meta[DATASET_META_DUPLICATION_FACTOR] == 5
         assert meta[DATASET_META_ORIGINAL_ITEMS] == 3
         assert meta[DATASET_META_TOTAL_ITEMS] == 15

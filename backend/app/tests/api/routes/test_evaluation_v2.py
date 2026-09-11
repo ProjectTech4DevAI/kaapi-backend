@@ -18,7 +18,6 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.crud.evaluations.dataset import (
-    DATASET_META_DUPLICATE_AT_RUNTIME,
     DATASET_META_DUPLICATION_FACTOR,
     DATASET_META_ORIGINAL_ITEMS,
     DATASET_META_TOTAL_ITEMS,
@@ -49,7 +48,7 @@ def _make_dataset(*, db: Session, user_api_key: TestAuthContext) -> EvaluationDa
 def _make_runtime_dup_dataset(
     *, db: Session, user_api_key: TestAuthContext, duplication_factor: int = 5
 ) -> EvaluationDataset:
-    """A v2 runtime-duplicated dataset: null Langfuse id, S3 url, runtime marker."""
+    """A v2 runtime-duplicated dataset: null Langfuse id, S3 url, stored factor."""
     original = 3
     return create_evaluation_dataset(
         session=db,
@@ -58,7 +57,6 @@ def _make_runtime_dup_dataset(
             DATASET_META_ORIGINAL_ITEMS: original,
             DATASET_META_TOTAL_ITEMS: original * duplication_factor,
             DATASET_META_DUPLICATION_FACTOR: duplication_factor,
-            DATASET_META_DUPLICATE_AT_RUNTIME: True,
         },
         object_store_url="s3://bucket/datasets/v2.csv",
         langfuse_dataset_id=None,
