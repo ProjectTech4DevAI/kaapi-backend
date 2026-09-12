@@ -9,11 +9,11 @@ from sqlmodel import Session
 from app.celery.tasks.job_execution import run_assessment_pipeline
 from app.core.db import engine
 from app.crud.assessment import (
-    get_assessment_dataset_by_id,
+    get_submission_by_id,
     recompute_assessment_status,
     update_assessment_run_status,
 )
-from app.crud.assessment.batch import _load_dataset_rows, submit_assessment_batch
+from app.crud.assessment.batch import load_submission_file_rows, submit_assessment_batch
 from app.crud.assessment.core import _read_exec, _write_exec
 from app.crud.assessment.processing import parse_assessment_output
 from app.crud.evaluations.core import resolve_evaluation_config
@@ -108,13 +108,13 @@ def _dispatch(run_id: int, organization_id: int, project_id: int) -> None:
 def _resolve_run_context(
     session: Session, run: AssessmentRun, organization_id: int, project_id: int
 ):
-    """Load the assessment, dataset, and resolved config; ``error`` set on failure."""
+    """Load the assessment, submission, and resolved config; ``error`` set on failure."""
     assessment = session.get(Assessment, run.assessment_id)
     if assessment is None:
         return None, None, None, "Parent assessment not found."
-    dataset = get_assessment_dataset_by_id(
+    submission = get_submission_by_id(
         session=session,
-        dataset_id=assessment.dataset_id,
+        submission_id=assessment.submission_id,
         organization_id=organization_id,
         project_id=project_id,
     )
@@ -126,8 +126,8 @@ def _resolve_run_context(
         tag=ConfigTag.ASSESSMENT,
     )
     if error or config_blob is None:
-        return assessment, dataset, None, f"Config resolution failed: {error}"
-    return assessment, dataset, config_blob, None
+        return assessment, submission, None, f"Config resolution failed: {error}"
+    return assessment, submission, config_blob, None
 
 
 def _accepted_indices(
@@ -201,7 +201,7 @@ def _orchestrate(run_id: int, organization_id: int, project_id: int) -> None:
 def _submit_stage(
     session: Session, run: AssessmentRun, organization_id: int, project_id: int
 ) -> None:
-    assessment, dataset, config_blob, error = _resolve_run_context(
+    assessment, submission, config_blob, error = _resolve_run_context(
         session, run, organization_id, project_id
     )
     if error:
@@ -212,7 +212,7 @@ def _submit_stage(
         recompute_assessment_status(session=session, assessment_id=run.assessment_id)
         return
 
-    all_rows = _load_dataset_rows(session, dataset)
+    all_rows = load_submission_file_rows(session=session, submission=submission)
     if not all_rows:
         _write_exec(run, stage_status=StageStatus.FAILED)
         update_assessment_run_status(
@@ -269,7 +269,7 @@ def _submit_stage(
             session=session,
             run=run,
             assessment=assessment,
-            dataset=dataset,
+            submission=submission,
             config_blob=config_blob,
             assessment_input=assessment_input,
             organization_id=organization_id,

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 from asgi_correlation_id import correlation_id
 from celery import Task, current_task
+from gevent import Timeout
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.propagate import extract
@@ -357,7 +358,13 @@ def run_assessment_pipeline(
     )
 
 
-@celery_app.task(bind=True, queue="default", priority=2)
+@celery_app.task(
+    bind=True,
+    queue="default",
+    priority=2,
+    autoretry_for=(Exception, Timeout),
+    retry_backoff=True,
+)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_assessment_api_batch")
 def run_assessment_api_batch(
     self,
@@ -369,9 +376,7 @@ def run_assessment_api_batch(
 ):
     """Drive one tick of the BATCH API-client staged pipeline.
 
-    Self-re-enqueues (``apply_async(countdown=...)``) while a stage batch is still
-    in flight or a next stage was just submitted, and stops once the run finalises
-    or fails. Idempotent — the service keys off the stage_status in the exec bag.
+    Self-re-enqueues while a stage is in flight; idempotent, so a raised tick is retried.
     """
     from app.services.assessment.api.batch import (
         POLL_COUNTDOWN_SECONDS,

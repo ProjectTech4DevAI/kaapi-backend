@@ -1,16 +1,19 @@
 """Assessment API-client CRUD — method-based Assessment / AssessmentRun writes.
 
-Kept separate from the legacy RUN-pipeline crud (core/cron/processing/batch):
+Kept separate from the UI-only crud (core/cron/processing/batch):
 writes only the new method-based columns and leaves the RUN-only `execution`
-and `dataset_id` fields NULL.
+and `submission_id` fields NULL.
 """
 
 import logging
 from typing import Any, TypeVar, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
+from sqlalchemy import cast as sa_cast
+from sqlalchemy import update
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm.attributes import flag_modified
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.util import now
 from app.models.assessment import (
@@ -18,6 +21,7 @@ from app.models.assessment import (
     AssessmentMethod,
     AssessmentRun,
     AssessmentStatus,
+    AssessmentSubmission,
     BatchRunState,
 )
 
@@ -31,13 +35,22 @@ def create_assessment(
     *,
     session: Session,
     method: AssessmentMethod,
-    input: dict[str, Any],
+    input: dict[str, Any] | None,
     organization_id: int,
     project_id: int,
+    assessment_id: UUID | None = None,
+    submission_id: UUID | None = None,
+    submission_input: str | None = None,
+    experiment_name: str | None = None,
 ) -> Assessment:
+    """Insert the parent row; pass ``assessment_id`` when the object key already used it."""
     assessment = Assessment(
+        id=assessment_id or uuid4(),
         method=method,
         input=input,
+        submission_id=submission_id,
+        submission_input=submission_input,
+        experiment_name=experiment_name,
         status=AssessmentStatus.PENDING,
         organization_id=organization_id,
         project_id=project_id,
@@ -129,6 +142,37 @@ def save_execution_state(
     return execution
 
 
+def set_result_files(
+    *, session: Session, assessment: Assessment, files: dict[str, dict[str, Any]]
+) -> Assessment:
+    """Shallow-merge ``files`` into ``assessment.result_files``, one record per file kind.
+
+    The merge is server-side (``||``, right-hand side wins per key) because two drivers
+    can touch this row within the same second; a read-modify-write would drop the loser's
+    kinds instead of keeping both.
+    """
+    statement = (
+        update(Assessment)
+        .where(col(Assessment.id) == assessment.id)
+        .values(
+            result_files=col(Assessment.result_files).op("||")(sa_cast(files, JSONB)),
+            updated_at=now(),
+        )
+    )
+    try:
+        session.exec(statement)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    session.refresh(assessment)
+    logger.info(
+        f"[set_result_files] Merged result files | assessment_id: {assessment.id} | "
+        f"kinds: {sorted(files)}"
+    )
+    return assessment
+
+
 def update_status(
     *, session: Session, obj: StatusModel, status: AssessmentStatus
 ) -> StatusModel:
@@ -142,6 +186,51 @@ def update_status(
         f"[update_status] Updated | {type(obj).__name__}: {obj.id} | status: {status}"
     )
     return obj
+
+
+def list_assessments_with_execution(
+    *,
+    session: Session,
+    organization_id: int,
+    project_id: int,
+    config_id: UUID | None = None,
+    config_version: int | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[tuple[Assessment, AssessmentRun | None, str | None]]:
+    """BATCH assessments newest-first, each with its execution and submission name.
+
+    BATCH only: it has exactly one execution, so the join yields one row per assessment;
+    a RUN parent has one run per config and would repeat. Outer joins so an inline BATCH
+    (no submission) and a failed execution insert still list.
+    """
+    statement = (
+        select(Assessment, AssessmentRun, AssessmentSubmission.name)
+        .join(
+            AssessmentRun,
+            col(AssessmentRun.assessment_id) == col(Assessment.id),
+            isouter=True,
+        )
+        .join(
+            AssessmentSubmission,
+            col(AssessmentSubmission.id) == col(Assessment.submission_id),
+            isouter=True,
+        )
+        .where(Assessment.method == AssessmentMethod.BATCH)
+        .where(Assessment.organization_id == organization_id)
+        .where(Assessment.project_id == project_id)
+    )
+    if config_id is not None:
+        statement = statement.where(AssessmentRun.config_id == config_id)
+        if config_version is not None:
+            statement = statement.where(AssessmentRun.config_version == config_version)
+
+    statement = (
+        statement.order_by(col(Assessment.inserted_at).desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(session.exec(statement).all())
 
 
 def list_executions(*, session: Session, assessment_id: UUID) -> list[AssessmentRun]:

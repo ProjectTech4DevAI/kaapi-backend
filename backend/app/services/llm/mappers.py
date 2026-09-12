@@ -36,6 +36,10 @@ ELEVENLABS_DEFAULTS_BY_TYPE = {
     "tts": DEFAULT_ELEVENLABS_TTS_MODEL,
 }
 
+# Vertex rejects a payload carrying both spellings (the SDK dump emits snake_case).
+_SDK_ORDERING_KEY = "property_ordering"
+_ORDERING_KEY = "propertyOrdering"
+
 logger = logging.getLogger(__name__)
 
 
@@ -127,8 +131,9 @@ def _convert_json_schema_to_google(schema: dict[str, Any]) -> dict[str, Any]:
         else normalized_schema
     )
 
-    if "properties" in google_schema and "propertyOrdering" not in google_schema:
-        google_schema["propertyOrdering"] = list(
+    google_schema.pop(_SDK_ORDERING_KEY, None)
+    if "properties" in google_schema and _ORDERING_KEY not in google_schema:
+        google_schema[_ORDERING_KEY] = list(
             normalized_schema.get("required", [])
         ) or list(google_schema["properties"].keys())
 

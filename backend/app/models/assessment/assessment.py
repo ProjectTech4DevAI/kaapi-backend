@@ -1,7 +1,7 @@
-"""Assessment DB tables, shared enums, and legacy Assessment Run UI models.
+"""Assessment DB tables, shared enums, and the UI-only Assessment Run models.
 
 Tables + ``AssessmentStatus``/``AssessmentMethod`` enums are shared by every method; the
-rest is the legacy RUN surface. API-client models live in ``assessment_api.py``.
+rest is the UI-only RUN surface. API-client models live in ``assessment_api.py``.
 """
 
 from datetime import datetime
@@ -52,9 +52,9 @@ class AssessmentStatus(StrEnum):
         return frozenset({cls.COMPLETED, cls.COMPLETED_WITH_ERRORS, cls.FAILED})
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class Stage(StrEnum):
-    """Legacy RUN pipeline stages, in order."""
+    """RUN pipeline stages, in order; only used for UI."""
 
     PRE_FILTER_TOPIC_RELEVANCE = "PRE_FILTER_TOPIC_RELEVANCE"
     PRE_FILTER_DUPLICATE_DETECTION = "PRE_FILTER_DUPLICATE_DETECTION"
@@ -63,7 +63,7 @@ class Stage(StrEnum):
     FAILED = "FAILED"
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class StageStatus(StrEnum):
     PENDING = "PENDING"
     PROCESSING = "PROCESSING"
@@ -72,13 +72,13 @@ class StageStatus(StrEnum):
 
 
 class AssessmentConfigRef(BaseModel):
-    """Pin to a saved config version; shared by the API create and the legacy run create."""
+    """Pin to a saved config version; shared by the API create and the UI run create."""
 
     id: UUID
     version: int = Field(ge=1)
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class AssessmentAttachment(BaseModel):
     """External-dataset attachment column config (RUN / BATCH-by-ref)."""
 
@@ -106,7 +106,7 @@ class AssessmentAttachment(BaseModel):
         return self
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class InputBinding(BaseModel):
     """External-dataset column mapping + prompt template."""
 
@@ -117,13 +117,14 @@ class InputBinding(BaseModel):
     attachments: list[AssessmentAttachment] = Field(default_factory=list)
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class RunExecution(BaseModel):
-    """Legacy RUN pipeline runtime state (assessment_run.execution)."""
+    """RUN pipeline runtime state (assessment_run.execution); only used for UI."""
 
     stage: Stage | None = None
     stage_status: StageStatus | None = None
-    pipeline: dict[str, Any] | None = None
+    # Two writers, one column: RUN stores {"stages": [...]}, the BATCH API a bare list.
+    pipeline: dict[str, Any] | list[dict[str, str]] | None = None
     stage_batches: dict[str, int] | None = None
     prefilter_total_rows: int | None = None
     prefilter_total_passed: int | None = None
@@ -185,17 +186,43 @@ class Assessment(SQLModel, table=True):
         sa_column=Column(
             JSONB,
             nullable=True,
-            comment="Method-shaped: ResponseInput (RESPONSE) / BatchInput (BATCH) / InputBinding (RUN)",
+            comment="Method-shaped: ResponseInput (RESPONSE) / InputBinding (RUN); NULL for API-client BATCH, which uses submission_input",
         ),
     )
-    # NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
-    dataset_id: int | None = SQLField(
+    submission_input: str | None = SQLField(
         default=None,
-        foreign_key="evaluation_dataset.id",
+        sa_column_kwargs={
+            "comment": (
+                "Object-store url of the API-client BATCH submission rows "
+                "(submission.jsonl); the rows are never stored in this table"
+            )
+        },
+    )
+    # NOT NULL '{}': an empty map is a real state, not the siblings' "not applicable".
+    result_files: dict[str, Any] = SQLField(
+        default_factory=dict,
+        sa_column=Column(
+            JSONB,
+            nullable=False,
+            server_default=text("'{}'::jsonb"),
+            comment=(
+                "Result-file kind (results / errors / <stage>_results) to "
+                "{object_store_url} for every provider batch dump held; raw s3:// in the "
+                "column, presigned per delivery in the BATCH callback"
+            ),
+        ),
+    )
+    submission_id: UUID | None = SQLField(
+        default=None,
+        foreign_key="assessment_submission.id",
         nullable=True,
+        index=True,
         ondelete="SET NULL",
         sa_column_kwargs={
-            "comment": "External dataset (RUN); binding lives in `input`"
+            "comment": (
+                "Uploaded submission the rows came from; set by RUN and by a BATCH "
+                "submitted with `submission_doc_id`. NULL when BATCH sent rows inline"
+            )
         },
     )
 
@@ -249,7 +276,7 @@ class AssessmentRun(SQLModel, table=True):
             "comment": "BATCH job; RUN tracks its batches inside execution"
         },
     )
-    # Staged-batch runtime bag (RunExecution shape). Used by the legacy RUN UI
+    # Staged-batch runtime bag (RunExecution shape). Used by the RUN UI
     # pipeline AND by the new BATCH API-client path when the config carries
     # pre-filters — both drive stage/verdict/gate state through this JSONB.
     execution: dict[str, Any] | None = SQLField(
@@ -277,7 +304,7 @@ class AssessmentRun(SQLModel, table=True):
     )
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class AssessmentExecutionPublic(BaseModel):
     config_id: UUID
     config_version: int
@@ -288,17 +315,29 @@ class AssessmentExecutionPublic(BaseModel):
     updated_at: datetime
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class AssessmentResponse(BaseModel):
     assessment_id: UUID
     executions: list[AssessmentExecutionPublic] = []
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class AssessmentPublic(BaseModel):
+    """Console list/detail row. Declares everything `_build_assessment_public` passes.
+
+    The `method` field lets a client tell a RUN row from a BATCH one, which decides
+    where its results are read from.
+    """
+
     id: UUID
     experiment_name: str | None = None
+    method: AssessmentMethod
     status: AssessmentStatus
+    submission_id: UUID | None = None
+    submission_name: str | None = None
+    counts: "AssessmentRunCounts | None" = None
+    run_stats: list["AssessmentRunStat"] = []
+    error_message: str | None = None
     executions: list[AssessmentExecutionPublic] = []
     organization_id: int
     project_id: int
@@ -306,7 +345,7 @@ class AssessmentPublic(BaseModel):
     updated_at: datetime
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class AssessmentExportRow(BaseModel):
     """Flattened result row for CSV/XLSX/JSON export."""
 
@@ -330,16 +369,16 @@ class AssessmentExportRow(BaseModel):
     updated_at: datetime
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class AssessmentRunCreate(BaseModel):
     experiment_name: str
-    dataset_id: int
+    submission_id: UUID
     input_binding: InputBinding
     configs: list[AssessmentConfigRef] = Field(min_length=1, max_length=4)
     post_processing_config: dict[str, Any] | None = None
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class AssessmentRunCounts(BaseModel):
     total: int = 0
     pending: int = 0
@@ -348,7 +387,7 @@ class AssessmentRunCounts(BaseModel):
     failed: int = 0
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class AssessmentRunStat(BaseModel):
     run_id: int
     config_id: UUID | None
@@ -359,7 +398,7 @@ class AssessmentRunStat(BaseModel):
     updated_at: datetime | None = None
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class AssessmentRunSummary(BaseModel):
     run_id: int
     assessment_id: UUID
@@ -368,7 +407,7 @@ class AssessmentRunSummary(BaseModel):
     status: AssessmentStatus
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class AssessmentRunPublic(BaseModel):
     id: int
     assessment_id: UUID
@@ -384,23 +423,23 @@ class AssessmentRunPublic(BaseModel):
     updated_at: datetime
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class AssessmentRunResponse(BaseModel):
     assessment_id: UUID
     experiment_name: str | None = None
-    dataset_id: int | None = None
-    dataset_name: str | None = None
+    submission_id: UUID | None = None
+    submission_name: str | None = None
     num_configs: int
     runs: list[AssessmentRunSummary] = []
 
 
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
+# NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class AssessmentRunOverview(BaseModel):
     id: UUID
     experiment_name: str | None = None
     status: AssessmentStatus
-    dataset_id: int | None = None
-    dataset_name: str | None = None
+    submission_id: UUID | None = None
+    submission_name: str | None = None
     input_binding: InputBinding | None = None
     counts: AssessmentRunCounts = AssessmentRunCounts()
     run_stats: list[AssessmentRunStat] = []
@@ -408,23 +447,3 @@ class AssessmentRunOverview(BaseModel):
     project_id: int
     inserted_at: datetime
     updated_at: datetime
-
-
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
-class AssessmentDatasetPreview(BaseModel):
-    headers: list[str]
-    rows: list[list[str]]
-    returned_rows: int = 0
-    truncated: bool = False
-
-
-# NOTE: Legacy, this is for Assessment Run UI only. The new Assessment pipeline does not use this.
-class AssessmentDatasetResponse(BaseModel):
-    dataset_id: int
-    dataset_name: str
-    description: str | None = None
-    total_items: int = 0
-    file_extension: str | None = None
-    object_store_url: str | None = None
-    signed_url: str | None = None
-    preview: AssessmentDatasetPreview | None = None

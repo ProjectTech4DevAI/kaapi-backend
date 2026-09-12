@@ -63,13 +63,24 @@ def build_pipeline(assessment_input: dict[str, Any]) -> dict[str, Any]:
     return {"stages": stages}
 
 
-def ordered_stages(pipeline: dict[str, Any] | None) -> list[str]:
-    """The stage names in execution order."""
-    return [s["stage"] for s in (pipeline or {}).get("stages", [])]
+def ordered_stages(pipeline: dict[str, Any] | list[dict[str, str]] | None) -> list[str]:
+    """The stage names in execution order, for the legacy RUN pipeline shape only.
+
+    The BATCH API path writes a bare list into the same JSONB column, so name the bad
+    shape here instead of failing with an AttributeError inside the caller.
+    """
+    if pipeline is None:
+        return []
+    if not isinstance(pipeline, dict):
+        raise ValueError(
+            f"[ordered_stages] Expected the RUN pipeline mapping "
+            f"{{'stages': [...]}}, got {type(pipeline).__name__}"
+        )
+    return [s["stage"] for s in pipeline.get("stages", [])]
 
 
 def next_stage(
-    pipeline: dict[str, Any] | None, current: str | None = None
+    pipeline: dict[str, Any] | list[dict[str, str]] | None, current: str | None = None
 ) -> str | None:
     """First stage when ``current`` is None, else the stage after it (None if last)."""
     stages = ordered_stages(pipeline)

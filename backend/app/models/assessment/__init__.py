@@ -1,19 +1,14 @@
 """Assessment models package.
 
-Split across two files so the API-client surface is separate from the legacy UI one:
-  - ``assessment.py``      — the shared DB tables/enums + the legacy Assessment Run UI models.
-  - ``assessment_api.py``  — the API-client request/response models for ``/assessments``.
-
-Everything is re-exported here, so ``from app.models.assessment import X`` resolves a
-symbol from either file, unchanged for every existing importer.
+Split by surface: ``assessment.py`` (shared tables/enums + legacy RUN UI),
+``assessment_api.py`` (``/assessments`` request/response), ``submission.py`` (uploaded
+submission files). All re-exported here, so ``from app.models.assessment import X`` works.
 """
 
 from app.models.assessment.assessment import (
     Assessment,
     AssessmentAttachment,
     AssessmentConfigRef,
-    AssessmentDatasetPreview,
-    AssessmentDatasetResponse,
     AssessmentExecutionPublic,
     AssessmentExportRow,
     AssessmentMethod,
@@ -38,11 +33,14 @@ from app.models.assessment.assessment_api import (
     AssessmentCallback,
     AssessmentCounts,
     AssessmentCreate,
+    AssessmentDetailResponse,
     AssessmentInput,
     AssessmentOutput,
     AssessmentResult,
     AssessmentResultData,
+    AssessmentResultRow,
     AssessmentSubmitResponse,
+    AssessmentSummary,
     Attachment,
     BatchInput,
     BatchRunState,
@@ -53,6 +51,11 @@ from app.models.assessment.assessment_api import (
     Submission,
     Verdict,
     derive_method,
+)
+from app.models.assessment.submission import (
+    AssessmentSubmission,
+    AssessmentSubmissionPreview,
+    AssessmentSubmissionResponse,
 )
 
 __all__ = [
@@ -79,8 +82,10 @@ __all__ = [
     "AssessmentRunPublic",
     "AssessmentRunResponse",
     "AssessmentRunOverview",
-    "AssessmentDatasetPreview",
-    "AssessmentDatasetResponse",
+    # uploaded submission files
+    "AssessmentSubmission",
+    "AssessmentSubmissionPreview",
+    "AssessmentSubmissionResponse",
     # API-client surface
     "Attachment",
     "ResponseInput",
@@ -98,7 +103,10 @@ __all__ = [
     "PreFilter",
     "AssessmentOutput",
     "AssessmentResult",
+    "AssessmentResultRow",
     "AssessmentCounts",
     "AssessmentBatchResult",
     "AssessmentResultData",
+    "AssessmentDetailResponse",
+    "AssessmentSummary",
 ]
