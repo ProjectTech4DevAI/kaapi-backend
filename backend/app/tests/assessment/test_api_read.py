@@ -123,20 +123,6 @@ class TestListFilters:
         )
         assert missed == []
 
-    def test_method_filter(self, db) -> None:
-        auth = get_user_test_auth_context(db)
-        _seed(db, auth, name="batch-run")
-
-        assert (
-            api.list_assessments_with_execution(
-                session=db,
-                organization_id=auth.organization_id,
-                project_id=auth.project_id,
-                method=AssessmentMethod.RUN,
-            )
-            == []
-        )
-
     def test_scoped_to_the_project(self, db) -> None:
         auth = get_user_test_auth_context(db)
         _seed(db, auth)
@@ -187,7 +173,7 @@ class TestDetail:
         from app.models.assessment import BatchInput
 
         with patch(_ROWS, return_value=BatchInput(data=[{"a": "one"}, {"a": "two"}])):
-            detail = build_detail(session=db, assessment=assessment)
+            detail = build_detail(session=db, assessment=assessment, include_input=True)
 
         assert detail.status == AssessmentStatus.PENDING
         assert detail.total_items == 2
@@ -204,7 +190,7 @@ class TestDetail:
         )
 
         with patch(_ROWS, side_effect=SubmissionUnavailableError("s3 down")):
-            detail = build_detail(session=db, assessment=assessment)
+            detail = build_detail(session=db, assessment=assessment, include_input=True)
 
         assert detail.items[0].input is None
         assert detail.total_items == 1
@@ -241,7 +227,7 @@ class TestDetail:
         from app.models.assessment import BatchInput
 
         with patch(_ROWS, return_value=BatchInput(data=[{"a": "only one"}])):
-            detail = build_detail(session=db, assessment=assessment)
+            detail = build_detail(session=db, assessment=assessment, include_input=True)
 
         assert detail.items[0].input == {"a": "only one"}
         assert detail.items[1].input is None

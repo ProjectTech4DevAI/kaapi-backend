@@ -87,26 +87,25 @@ def _validate_rows_against_schema(
                 ),
             )
         for column, spec in input_schema.items():
-            declared = (spec or {}).get("type")
-            if declared in _ATTACHMENT_TYPES:
+            column_type = (spec or {}).get("type")
+            if column_type in _ATTACHMENT_TYPES:
                 value = row.get(column, "")
                 if not value.startswith(_URL_PREFIXES):
                     raise HTTPException(
                         status_code=422,
                         detail=(
                             f"input.data[{idx}] column '{column}' must be a URL for a "
-                            f"'{declared}' column."
+                            f"'{column_type}' column."
                         ),
                     )
-                # Catch a mistyped column here: the provider only reports it much
-                # later, as an opaque "file format is invalid or unsupported".
+                # The provider only reports a mistyped column later, as an opaque format error.
                 actual = _url_attachment_type(value)
-                if actual is not None and actual != declared:
+                if actual is not None and actual != column_type:
                     raise HTTPException(
                         status_code=422,
                         detail=(
                             f"input.data[{idx}] column '{column}' is declared "
-                            f"'{declared}' but its URL points to a '{actual}' file. "
+                            f"'{column_type}' but its URL points to a '{actual}' file. "
                             f"Change the column type to '{actual}'."
                         ),
                     )

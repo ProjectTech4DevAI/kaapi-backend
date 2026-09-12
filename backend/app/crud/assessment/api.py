@@ -159,8 +159,12 @@ def set_result_files(
             updated_at=now(),
         )
     )
-    session.exec(statement)
-    session.commit()
+    try:
+        session.exec(statement)
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     session.refresh(assessment)
     logger.info(
         f"[set_result_files] Merged result files | assessment_id: {assessment.id} | "

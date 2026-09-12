@@ -268,7 +268,6 @@ def finalize_result_files(
         if files:
             api.set_result_files(session=session, assessment=assessment, files=files)
     except Exception:
-        session.rollback()
         logger.error(
             "[finalize_result_files] Could not persist result files | "
             "assessment_id=%s | execution_id=%s",
