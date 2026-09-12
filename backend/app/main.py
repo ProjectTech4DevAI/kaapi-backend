@@ -109,4 +109,5 @@ instrument_app(app)
 async def health() -> dict[str, str | float]:
     return {
         "status": "ok",
+        "sha": settings.GIT_SHA,
     }

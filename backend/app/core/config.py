@@ -46,6 +46,7 @@ class Settings(BaseSettings):
 
     PROJECT_NAME: str
     API_VERSION: str = "0.5.0"
+    GIT_SHA: str = "unknown"
     SENTRY_DSN: HttpUrl | None = None
     DISCORD_STATS_WEBHOOK_URL: HttpUrl | None = None
     POSTGRES_SERVER: str
