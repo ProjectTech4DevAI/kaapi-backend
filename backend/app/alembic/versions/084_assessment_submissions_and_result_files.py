@@ -1,20 +1,21 @@
 """Assessment submissions table, submission/result-file pointers, provider error file id
 
-Revision ID: 083
-Revises: 082
+Revision ID: 084
+Revises: 083
 Create Date: 2026-09-09 00:00:00.000000
 
 Assessment submissions leave `evaluation_dataset`, whose type-agnostic name uniqueness
 let an eval dataset block an assessment one. Multi-MB payloads leave Postgres too:
 `submission_input` and `result_files` hold s3:// urls, and `provider_error_file_id`
+keeps OpenAI's error dump fetchable after the poll that surfaced it.
 """
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "083"
-down_revision = "082"
+revision = "084"
+down_revision = "083"
 branch_labels = None
 depends_on = None
 
