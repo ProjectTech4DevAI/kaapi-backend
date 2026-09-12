@@ -6,6 +6,7 @@ BATCH method is wired here; RESPONSE stays a route-level 501 stub (deferred).
 """
 
 import logging
+from urllib.parse import urlparse
 from uuid import UUID
 
 from asgi_correlation_id import correlation_id
@@ -37,6 +38,25 @@ logger = logging.getLogger(__name__)
 # Attachment cell values are provided as URLs (base64 is unsupported for batch).
 _URL_PREFIXES = ("http://", "https://", "gs://")
 _ATTACHMENT_TYPES = ("image", "pdf")
+_EXTENSION_TYPES = {
+    ".pdf": "pdf",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".gif": "image",
+    ".webp": "image",
+}
+
+
+def _url_attachment_type(url: str) -> str | None:
+    """The kind a URL's own extension implies, or None when it names no extension.
+
+    Presigned URLs carry a query string, so only the path is read.
+    """
+    path = urlparse(url).path.lower()
+    return next(
+        (kind for ext, kind in _EXTENSION_TYPES.items() if path.endswith(ext)), None
+    )
 
 
 def _validate_rows_against_schema(
@@ -67,14 +87,27 @@ def _validate_rows_against_schema(
                 ),
             )
         for column, spec in input_schema.items():
-            if (spec or {}).get("type") in _ATTACHMENT_TYPES:
+            declared = (spec or {}).get("type")
+            if declared in _ATTACHMENT_TYPES:
                 value = row.get(column, "")
                 if not value.startswith(_URL_PREFIXES):
                     raise HTTPException(
                         status_code=422,
                         detail=(
                             f"input.data[{idx}] column '{column}' must be a URL for a "
-                            f"'{spec.get('type')}' column."
+                            f"'{declared}' column."
+                        ),
+                    )
+                # Catch a mistyped column here: the provider only reports it much
+                # later, as an opaque "file format is invalid or unsupported".
+                actual = _url_attachment_type(value)
+                if actual is not None and actual != declared:
+                    raise HTTPException(
+                        status_code=422,
+                        detail=(
+                            f"input.data[{idx}] column '{column}' is declared "
+                            f"'{declared}' but its URL points to a '{actual}' file. "
+                            f"Change the column type to '{actual}'."
                         ),
                     )
 
@@ -178,12 +211,13 @@ def submit(
             status_code=501, detail="Only BATCH input is wired in the assessment API."
         )
 
-    # Delivery is webhook-only, so reject an unusable callback_url up front (HTTPS +
-    # SSRF/private-IP guard) instead of after a full batch run is already paid for.
-    try:
-        validate_callback_url(str(request.callback_url))
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # Reject an unusable callback_url up front (HTTPS + SSRF/private-IP guard) instead
+    # of after a full batch run is already paid for. Absent means the client polls.
+    if request.callback_url is not None:
+        try:
+            validate_callback_url(str(request.callback_url))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     batch_input: BatchInput = request.input
     submission_id = batch_input.submission_doc_id
@@ -219,6 +253,7 @@ def submit(
         method=AssessmentMethod.BATCH,
         input=None,
         submission_id=submission_id,
+        experiment_name=request.experiment_name,
         organization_id=organization_id,
         project_id=project_id,
     )
@@ -260,7 +295,7 @@ def submit(
         "provider": provider,
         "model": model,
         "input_schema": input_columns or None,
-        "callback_url": str(request.callback_url),
+        "callback_url": str(request.callback_url) if request.callback_url else None,
         "request_metadata": request.request_metadata,
     }
     api.save_execution_state(session=session, execution=execution, state=bag)

@@ -78,6 +78,19 @@ def load_submission_file_rows(
     return _parse_csv_rows(file_content)
 
 
+def _named_cells(row: dict[str | None, str | None]) -> dict[str, str]:
+    """Keep only columns the sheet actually names.
+
+    A spreadsheet's trailing blank columns are padding, not data — naming them
+    ``col_<n>`` would surface them as undeclared columns and 422 the run.
+    """
+    return {
+        str(key).strip(): value or ""
+        for key, value in row.items()
+        if key is not None and str(key).strip()
+    }
+
+
 def _parse_csv_rows(content: bytes) -> list[dict[str, str]]:
     """Parse CSV content into list of row dicts."""
     for encoding in ("utf-8-sig", "utf-8", "latin-1"):
@@ -90,7 +103,11 @@ def _parse_csv_rows(content: bytes) -> list[dict[str, str]]:
         text = content.decode("utf-8", errors="replace")
 
     reader = csv.DictReader(io.StringIO(text))
-    return [row for row in reader if any(v and v.strip() for v in row.values())]
+    return [
+        _named_cells(row)
+        for row in reader
+        if any(value and str(value).strip() for value in row.values())
+    ]
 
 
 def _parse_excel_rows(content: bytes) -> list[dict[str, str]]:
@@ -108,8 +125,8 @@ def _parse_excel_rows(content: bytes) -> list[dict[str, str]]:
             return []
 
         columns = [
-            str(col_header) if col_header is not None else f"col_{idx}"
-            for idx, col_header in enumerate(header)
+            str(col_header).strip() if col_header is not None else ""
+            for col_header in header
         ]
         result = []
         for row in rows_iter:
@@ -117,7 +134,7 @@ def _parse_excel_rows(content: bytes) -> list[dict[str, str]]:
                 row_dict = {
                     columns[idx]: str(cell) if cell is not None else ""
                     for idx, cell in enumerate(row)
-                    if idx < len(columns)
+                    if idx < len(columns) and columns[idx]
                 }
                 result.append(row_dict)
 

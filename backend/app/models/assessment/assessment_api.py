@@ -1,7 +1,7 @@
 """API-client request/response models for ``POST /assessments``.
 
-Method (RESPONSE vs BATCH) inferred from input shape. Shared enums, tables, and legacy
-RUN models live in ``assessment.py``.
+Method (RESPONSE vs BATCH) inferred from input shape. Shared enums, tables, and the
+UI-only RUN models live in ``assessment.py``.
 """
 
 from datetime import datetime
@@ -101,7 +101,7 @@ class BatchRunState(TypedDict):
     provider: str
     model: str
     input_schema: dict[str, Any] | None
-    callback_url: str
+    callback_url: str | None  # None when the client polls instead of receiving a push
     request_metadata: dict[str, Any] | None
     error: NotRequired[str]  # only set on failure (_fail)
 
@@ -130,8 +130,15 @@ class AssessmentCreate(BaseModel):
 
     config: AssessmentConfigRef
     input: AssessmentInput
-    callback_url: HttpUrl = Field(
-        ..., description="Webhook the result is POSTed to on completion (required)"
+    experiment_name: str | None = Field(
+        default=None, description="Run label shown in the console"
+    )
+    callback_url: HttpUrl | None = Field(
+        default=None,
+        description=(
+            "Webhook the result is POSTed to on completion; omit to poll "
+            "GET /assessments/{assessment_id} instead"
+        ),
     )
     request_metadata: dict[str, Any] | None = Field(
         default=None,
@@ -194,6 +201,52 @@ class AssessmentBatchResult(BaseModel):
     total_items: int
     counts: AssessmentCounts = AssessmentCounts()
     items: list[AssessmentResult] = []
+
+
+class AssessmentResultRow(AssessmentResult):
+    """One row as the poll endpoint returns it: the webhook item plus its origin.
+
+    ``output`` is byte-identical to the webhook's, so one client parser handles both.
+    ``input`` is null when the stored submission rows could not be read.
+    """
+
+    row_index: int
+    input: Submission | None = None
+
+
+class AssessmentSummary(BaseModel):
+    """One row of the assessment list: everything readable without touching storage.
+
+    Deliberately carries no per-row counts — those need the provider dump streamed
+    back, which a list (and a poll on it) must not pay for. Use the detail endpoint.
+    """
+
+    assessment_id: UUID
+    method: AssessmentMethod
+    status: AssessmentStatus
+    experiment_name: str | None = None
+    submission_id: UUID | None = None
+    submission_name: str | None = None
+    config: AssessmentConfigRef | None = None
+    total_items: int = 0
+    # This run's own stages, in order — a run with no pre-filter has one entry.
+    stages: list[str] = []
+    stage: str | None = None
+    stage_status: str | None = None
+    error: str | None = None
+    inserted_at: datetime
+    updated_at: datetime
+
+
+class AssessmentDetailResponse(AssessmentSummary):
+    """Poll response: the summary plus every row produced so far.
+
+    Safe to read mid-run — rows the provider has not returned yet carry
+    ``output.assessment = null``.
+    """
+
+    counts: AssessmentCounts = AssessmentCounts()
+    items: list[AssessmentResultRow] = []
 
 
 # The `data` body of a response, keyed by inference method: a single AssessmentResult

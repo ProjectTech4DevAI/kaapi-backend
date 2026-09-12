@@ -51,6 +51,7 @@ def _build_assessment_public(
     return AssessmentPublic(
         id=assessment.id,
         experiment_name=assessment.experiment_name,
+        method=assessment.method,
         submission_id=assessment.submission_id,
         submission_name=submission.name if submission else None,
         status=assessment.status,

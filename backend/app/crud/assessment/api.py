@@ -1,6 +1,6 @@
 """Assessment API-client CRUD — method-based Assessment / AssessmentRun writes.
 
-Kept separate from the legacy RUN-pipeline crud (core/cron/processing/batch):
+Kept separate from the UI-only crud (core/cron/processing/batch):
 writes only the new method-based columns and leaves the RUN-only `execution`
 and `submission_id` fields NULL.
 """
@@ -21,6 +21,7 @@ from app.models.assessment import (
     AssessmentMethod,
     AssessmentRun,
     AssessmentStatus,
+    AssessmentSubmission,
     BatchRunState,
 )
 
@@ -38,11 +39,13 @@ def create_assessment(
     organization_id: int,
     project_id: int,
     submission_id: UUID | None = None,
+    experiment_name: str | None = None,
 ) -> Assessment:
     assessment = Assessment(
         method=method,
         input=input,
         submission_id=submission_id,
+        experiment_name=experiment_name,
         status=AssessmentStatus.PENDING,
         organization_id=organization_id,
         project_id=project_id,
@@ -189,6 +192,53 @@ def update_status(
         f"[update_status] Updated | {type(obj).__name__}: {obj.id} | status: {status}"
     )
     return obj
+
+
+def list_assessments_with_execution(
+    *,
+    session: Session,
+    organization_id: int,
+    project_id: int,
+    method: AssessmentMethod | None = None,
+    config_id: UUID | None = None,
+    config_version: int | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> list[tuple[Assessment, AssessmentRun | None, str | None]]:
+    """Assessments newest-first, each with its execution and submission name.
+
+    Outer joins throughout: an inline BATCH has no submission, and an assessment
+    whose execution insert failed should still list. ``config_id``/``config_version``
+    filter on the execution, which is where the config pin lives.
+    """
+    statement = (
+        select(Assessment, AssessmentRun, AssessmentSubmission.name)
+        .join(
+            AssessmentRun,
+            col(AssessmentRun.assessment_id) == col(Assessment.id),
+            isouter=True,
+        )
+        .join(
+            AssessmentSubmission,
+            col(AssessmentSubmission.id) == col(Assessment.submission_id),
+            isouter=True,
+        )
+        .where(Assessment.organization_id == organization_id)
+        .where(Assessment.project_id == project_id)
+    )
+    if method is not None:
+        statement = statement.where(Assessment.method == method)
+    if config_id is not None:
+        statement = statement.where(AssessmentRun.config_id == config_id)
+        if config_version is not None:
+            statement = statement.where(AssessmentRun.config_version == config_version)
+
+    statement = (
+        statement.order_by(col(Assessment.inserted_at).desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return list(session.exec(statement).all())
 
 
 def list_executions(*, session: Session, assessment_id: UUID) -> list[AssessmentRun]:
