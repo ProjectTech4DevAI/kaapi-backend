@@ -7,7 +7,7 @@ BATCH method is wired here; RESPONSE stays a route-level 501 stub (deferred).
 
 import logging
 from urllib.parse import urlparse
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
@@ -248,31 +248,29 @@ def submit(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     total_items = len(rows)
 
-    assessment = api.create_assessment(
-        session=session,
-        method=AssessmentMethod.BATCH,
-        input=None,
-        submission_id=submission_id,
-        experiment_name=request.experiment_name,
-        organization_id=organization_id,
-        project_id=project_id,
-    )
-    # Row first: the object key needs its id, and a run without this file is unrunnable.
+    assessment_id = uuid4()
     submission_url = upload_submission_rows(
         session=session,
-        assessment_id=assessment.id,
+        assessment_id=assessment_id,
         project_id=project_id,
         batch_input=batch_input,
     )
     if not submission_url:
-        api.update_status(
-            session=session, obj=assessment, status=AssessmentStatus.FAILED
-        )
         raise HTTPException(
             status_code=503,
             detail="Failed to store the assessment submission. Please retry.",
         )
-    api.set_submission_input(session=session, assessment=assessment, url=submission_url)
+    assessment = api.create_assessment(
+        session=session,
+        assessment_id=assessment_id,
+        method=AssessmentMethod.BATCH,
+        input=None,
+        submission_id=submission_id,
+        submission_input=submission_url,
+        experiment_name=request.experiment_name,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
 
     execution = api.create_execution(
         session=session,

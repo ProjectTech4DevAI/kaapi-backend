@@ -7,7 +7,7 @@ and `submission_id` fields NULL.
 
 import logging
 from typing import Any, TypeVar, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import cast as sa_cast
 from sqlalchemy import update
@@ -38,13 +38,18 @@ def create_assessment(
     input: dict[str, Any] | None,
     organization_id: int,
     project_id: int,
+    assessment_id: UUID | None = None,
     submission_id: UUID | None = None,
+    submission_input: str | None = None,
     experiment_name: str | None = None,
 ) -> Assessment:
+    """Insert the parent row; pass ``assessment_id`` when the object key already used it."""
     assessment = Assessment(
+        id=assessment_id or uuid4(),
         method=method,
         input=input,
         submission_id=submission_id,
+        submission_input=submission_input,
         experiment_name=experiment_name,
         status=AssessmentStatus.PENDING,
         organization_id=organization_id,
@@ -70,21 +75,6 @@ def set_assessment_job(
     session.refresh(assessment)
     logger.info(
         f"[set_assessment_job] Linked job | assessment_id: {assessment.id} | job_id: {job_id}"
-    )
-    return assessment
-
-
-def set_submission_input(
-    *, session: Session, assessment: Assessment, url: str
-) -> Assessment:
-    """Point the assessment at its stored submission rows."""
-    assessment.submission_input = url
-    assessment.updated_at = now()
-    session.add(assessment)
-    session.commit()
-    session.refresh(assessment)
-    logger.info(
-        f"[set_submission_input] Linked submission | assessment_id: {assessment.id} | url: {url}"
     )
     return assessment
 
@@ -199,17 +189,16 @@ def list_assessments_with_execution(
     session: Session,
     organization_id: int,
     project_id: int,
-    method: AssessmentMethod | None = None,
     config_id: UUID | None = None,
     config_version: int | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[tuple[Assessment, AssessmentRun | None, str | None]]:
-    """Assessments newest-first, each with its execution and submission name.
+    """BATCH assessments newest-first, each with its execution and submission name.
 
-    Outer joins throughout: an inline BATCH has no submission, and an assessment
-    whose execution insert failed should still list. ``config_id``/``config_version``
-    filter on the execution, which is where the config pin lives.
+    BATCH only: it has exactly one execution, so the join yields one row per assessment;
+    a RUN parent has one run per config and would repeat. Outer joins so an inline BATCH
+    (no submission) and a failed execution insert still list.
     """
     statement = (
         select(Assessment, AssessmentRun, AssessmentSubmission.name)
@@ -223,11 +212,10 @@ def list_assessments_with_execution(
             col(AssessmentSubmission.id) == col(Assessment.submission_id),
             isouter=True,
         )
+        .where(Assessment.method == AssessmentMethod.BATCH)
         .where(Assessment.organization_id == organization_id)
         .where(Assessment.project_id == project_id)
     )
-    if method is not None:
-        statement = statement.where(Assessment.method == method)
     if config_id is not None:
         statement = statement.where(AssessmentRun.config_id == config_id)
         if config_version is not None:

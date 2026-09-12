@@ -20,7 +20,7 @@ from enum import StrEnum
 from typing import Any, cast
 from uuid import UUID
 
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 
 from app.core.batch import (
     BATCH_KEY,
@@ -898,9 +898,16 @@ def run_batch_stage(
     from app.services.assessment.api.submission_store import SubmissionUnavailableError
 
     with Session(engine) as session:
-        execution = session.get(AssessmentRun, execution_id)
+        execution = session.exec(
+            select(AssessmentRun)
+            .where(col(AssessmentRun.id) == execution_id)
+            .with_for_update(skip_locked=True)
+        ).first()
         if execution is None:
-            logger.error("[run_batch_stage] execution_id=%s not found", execution_id)
+            logger.warning(
+                "[run_batch_stage] execution_id=%s missing or held by another tick",
+                execution_id,
+            )
             return {"requeue": False}
         assessment = session.get(Assessment, execution.assessment_id)
         if assessment is None:

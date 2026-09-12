@@ -1,7 +1,7 @@
 """CRUD operations for uploaded assessment submissions."""
 
 import logging
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
@@ -34,10 +34,12 @@ def create_submission(
     total_items: int,
     organization_id: int,
     project_id: int,
+    submission_id: UUID | None = None,
     description: str | None = None,
 ) -> AssessmentSubmission:
-    """Record an uploaded submission file."""
+    """Record an uploaded submission file; pass ``submission_id`` when the key used it."""
     submission = AssessmentSubmission(
+        id=submission_id or uuid4(),
         name=name,
         description=description,
         object_store_url=object_store_url,

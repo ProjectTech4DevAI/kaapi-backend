@@ -7,8 +7,10 @@ returned yet (`output.assessment` is `null`) and for rows a pre-filter gated out
 Each row carries:
 
 - `row_index` — position in the original submission; the stable correlator.
-- `input` — the submitted row, echoed back. `null` if the stored submission could not
-  be read from object storage.
+- `input` — the submitted row, echoed back only when `include_input=true`. That flag
+  re-reads the stored submission from object storage on every call, so leave it off in
+  a tight poll loop and set it once the run is terminal. `null` if the stored submission
+  could not be read.
 - `output` — identical in shape to the webhook payload's item, so one parser serves both.
 - `error` — the provider's error for that row, when it failed.
 

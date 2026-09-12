@@ -45,6 +45,7 @@ from app.services.assessment.utils.attachments import (
     resolve_attachment_values,
     rewrite_gcs_attachment_urls,
 )
+from app.services.assessment.utils.sheets import clean_sheet
 from app.services.llm.mappers import kaapi_params_as_dict
 from app.services.llm.providers.registry import LLMProvider
 from app.utils import get_anthropic_client, get_openai_client
@@ -111,7 +112,7 @@ def _parse_csv_rows(content: bytes) -> list[dict[str, str]]:
 
 
 def _parse_excel_rows(content: bytes) -> list[dict[str, str]]:
-    """Parse Excel content into list of row dicts."""
+    """Parse Excel content into row dicts; blank rows and empty columns are dropped."""
     wb = None
     try:
         wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
@@ -124,21 +125,8 @@ def _parse_excel_rows(content: bytes) -> list[dict[str, str]]:
         if header is None:
             return []
 
-        columns = [
-            str(col_header).strip() if col_header is not None else ""
-            for col_header in header
-        ]
-        result = []
-        for row in rows_iter:
-            if row and any(cell is not None for cell in row):
-                row_dict = {
-                    columns[idx]: str(cell) if cell is not None else ""
-                    for idx, cell in enumerate(row)
-                    if idx < len(columns) and columns[idx]
-                }
-                result.append(row_dict)
-
-        return result
+        headers, rows = clean_sheet(header, rows_iter)
+        return [dict(zip(headers, row, strict=True)) for row in rows]
     except InvalidFileException as e:
         logger.warning("[_parse_excel_rows] Invalid XLSX file content: %s", e)
         raise

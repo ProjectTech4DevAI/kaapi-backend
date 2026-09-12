@@ -78,22 +78,19 @@ def list_assessments(
         Query(description="Only runs pinned to this config; omit for every run"),
     ] = None,
     version: Annotated[
-        int, Query(ge=1, description="Config version, applied only with config_id")
-    ] = 1,
-    method: Annotated[
-        AssessmentMethod | None, Query(description="Filter by inference method")
+        int | None,
+        Query(ge=1, description="Config version; omit for every version of config_id"),
     ] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> APIResponse[list[AssessmentSummary]]:
-    """Assessments newest-first, optionally narrowed to one config version."""
+    """BATCH assessments newest-first, optionally narrowed to one config or version."""
     rows = api_crud.list_assessments_with_execution(
         session=session,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
-        method=method,
         config_id=config_id,
-        config_version=version if config_id else None,
+        config_version=version,
         limit=limit,
         offset=offset,
     )
@@ -115,6 +112,10 @@ def get_assessment_detail(
     assessment_id: UUID,
     session: SessionDep,
     auth_context: AuthContextDep,
+    include_input: Annotated[
+        bool,
+        Query(description="Echo each row's submitted columns (one extra storage read)"),
+    ] = False,
 ) -> APIResponse[AssessmentDetailResponse]:
     """Status plus every row produced so far; safe to poll while the run is in flight."""
     assessment = get_assessment_by_id(
@@ -133,5 +134,7 @@ def get_assessment_detail(
         )
 
     return APIResponse.success_response(
-        data=results.build_detail(session=session, assessment=assessment)
+        data=results.build_detail(
+            session=session, assessment=assessment, include_input=include_input
+        )
     )

@@ -8,6 +8,7 @@ import csv
 import io
 import logging
 from pathlib import Path
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlmodel import Session
@@ -16,6 +17,7 @@ from app.core.cloud import get_cloud_storage
 from app.core.storage_utils import upload_to_object_store
 from app.crud.assessment.submission import create_submission, get_submission_by_name
 from app.models.assessment import AssessmentSubmission
+from app.services.assessment.utils.sheets import clean_sheet
 from app.services.evaluations.validators import sanitize_dataset_name
 
 logger = logging.getLogger(__name__)
@@ -47,8 +49,9 @@ def _upload_file_to_object_store(
     file_content: bytes,
     file_ext: str,
     submission_name: str,
+    submission_id: UUID,
 ) -> str | None:
-    """Upload the raw file to object store, preserving original format."""
+    """Upload the raw file as-is under a key no other submission can share."""
     filename = f"{submission_name}.{file_ext.lstrip('.')}"
     content_type = _MIME_TYPES.get(file_ext, "application/octet-stream")
 
@@ -58,7 +61,7 @@ def _upload_file_to_object_store(
             storage=storage,
             content=file_content,
             filename=filename,
-            subdirectory=SUBMISSIONS_SUBDIRECTORY,
+            subdirectory=f"{SUBMISSIONS_SUBDIRECTORY}/{submission_id}",
             content_type=content_type,
         )
     except Exception as e:
@@ -105,9 +108,7 @@ def _count_excel_rows(content: bytes) -> int:
         if header is None:
             return 0
 
-        return sum(
-            1 for row in rows_iter if row and any(cell is not None for cell in row)
-        )
+        return len(clean_sheet(header, rows_iter)[1])
     except InvalidFileException as e:
         logger.warning("[_count_excel_rows] Invalid XLSX file content: %s", e)
         raise
@@ -173,17 +174,8 @@ def _preview_excel(content: bytes, limit: int) -> tuple[list[str], list[list[str
             return [], []
 
         rows_iter = ws.iter_rows(values_only=True)
-        header = next(rows_iter, None) or ()
-        headers = [_stringify(cell) for cell in header]
-
-        rows: list[list[str]] = []
-        for row in rows_iter:
-            if not row or not any(cell is not None for cell in row):
-                continue
-            rows.append([_stringify(cell) for cell in row])
-            if len(rows) >= limit:
-                break
-        return headers, rows
+        headers, rows = clean_sheet(next(rows_iter, None) or (), rows_iter)
+        return headers, rows[:limit]
     finally:
         if wb is not None:
             wb.close()
@@ -264,7 +256,6 @@ def upload_submission(
             f"[upload_submission] Name sanitized | '{original_name}' -> '{submission_name}'"
         )
 
-    # Before the upload: the key is the name, so a late reject would have overwritten it.
     if get_submission_by_name(
         session=session,
         name=submission_name,
@@ -300,12 +291,14 @@ def upload_submission(
         f"org_id={organization_id} | project_id={project_id}"
     )
 
+    submission_id = uuid4()
     object_store_url = _upload_file_to_object_store(
         session=session,
         project_id=project_id,
         file_content=file_content,
         file_ext=file_ext,
         submission_name=submission_name,
+        submission_id=submission_id,
     )
     if not object_store_url:
         logger.error(
@@ -319,6 +312,7 @@ def upload_submission(
 
     submission = create_submission(
         session=session,
+        submission_id=submission_id,
         name=submission_name,
         description=description,
         object_store_url=object_store_url,

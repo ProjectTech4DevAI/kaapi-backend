@@ -211,9 +211,13 @@ def build_summary(
 
 
 def build_detail(
-    *, session: Session, assessment: Assessment
+    *, session: Session, assessment: Assessment, include_input: bool = False
 ) -> AssessmentDetailResponse:
-    """Poll payload: run status plus every row produced so far, input columns attached."""
+    """Poll payload: run status plus every row produced so far.
+
+    ``include_input`` echoes the submitted columns; it costs a storage read, so a tight
+    poll loop leaves it off.
+    """
     executions = api.list_executions(session=session, assessment_id=assessment.id)
     execution = executions[0] if executions else None
     submission = (
@@ -223,7 +227,7 @@ def build_detail(
     )
 
     result = build_result(session=session, assessment=assessment, execution=execution)
-    rows = _submission_rows(session, assessment)
+    rows = _submission_rows(session, assessment) if include_input else []
 
     items = [
         AssessmentResultRow(
