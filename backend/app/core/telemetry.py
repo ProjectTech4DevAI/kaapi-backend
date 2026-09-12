@@ -14,6 +14,7 @@ from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry.instrumentation.utils import _SUPPRESS_HTTP_INSTRUMENTATION_KEY
+from opentelemetry.propagate import set_global_textmap
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 
@@ -192,9 +193,14 @@ def setup_telemetry(service_name: str | None = None) -> None:
 
     # Bridge OTel spans into Sentry as Sentry transactions and spans, with full attribute and error capture.
     if settings.SENTRY_DSN:
-        from sentry_sdk.integrations.opentelemetry import SentrySpanProcessor
+        from sentry_sdk.integrations.opentelemetry import (
+            SentryPropagator,
+            SentrySpanProcessor,
+        )
 
         tracer_provider.add_span_processor(SentrySpanProcessor())
+        # Downstream services extract sentry-trace, not W3C traceparent.
+        set_global_textmap(SentryPropagator())
 
     trace.set_tracer_provider(tracer_provider)
 

@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logger import configure_logging
 from app.core.middleware import StripTrailingSlashMiddleware, http_request_logger
-from app.core.sentry_filters import before_send_transaction_filter
+from app.core.sentry_filters import before_send_filter, before_send_transaction_filter
 from app.core.telemetry import instrument_app, setup_telemetry
 from app.load_env import load_environment
 
@@ -34,7 +34,11 @@ if settings.SENTRY_DSN:
         release=settings.API_VERSION,
         instrumenter="otel",
         traces_sample_rate=1.0,
+        # LLM input/output is end-user text; never attach request/response
+        # bodies to error events or trace transactions.
+        max_request_body_size="never",
         enable_logs=True,
+        before_send=before_send_filter,
         before_send_transaction=before_send_transaction_filter,
         integrations=[
             LoggingIntegration(
