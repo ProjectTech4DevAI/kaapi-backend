@@ -19,6 +19,7 @@ ENDPOINTS = [
     "/api/v1/cron/evaluations",
     "/api/v1/cron/pending-jobs",
     "/api/v1/cron/daily-stats",
+    "/api/v1/cron/llm-call-retention",
 ]
 REQUEST_TIMEOUT = 30  # Timeout for requests in seconds
 
