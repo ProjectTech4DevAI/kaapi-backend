@@ -225,7 +225,7 @@ class Settings(BaseSettings):
     # Cron skips loops dispatched inside this window; keep >= CELERY_TASK_TIME_LIMIT + queue wait.
     EVAL_ITERATION_DISPATCH_COOLDOWN_MINUTES: int = 10
     # Loops PROCESSING past this are reaped as zombies (failure callback fired) — keep well above max rounds x round duration.
-    EVAL_ITERATION_STALL_THRESHOLD_HOURS: int = 72
+    EVAL_ITERATION_STALL_THRESHOLD_HOURS: int = 24
 
     EVAL_JUDGE_MODEL: str = "gpt-5.6-luna"
 
