@@ -222,14 +222,9 @@ class Settings(BaseSettings):
     EVAL_ITERATION_CEILING_DELTA_THRESHOLD: float = 0.05
     # Consecutive low-delta rounds required before the loop stops as ceiling_reached.
     EVAL_ITERATION_CEILING_CONSECUTIVE_ROUNDS: int = 3
-    # A loop whose last resume was dispatched inside this window is assumed to
-    # still be running, so the cron tick skips it. Floor is CELERY_TASK_TIME_LIMIT
-    # (the hard kill), plus room for the task to sit in the queue first.
+    # Cron skips loops dispatched inside this window; keep >= CELERY_TASK_TIME_LIMIT + queue wait.
     EVAL_ITERATION_DISPATCH_COOLDOWN_MINUTES: int = 10
-    # A loop still PROCESSING this long after kickoff is reaped as a zombie and
-    # its callback fired. Must comfortably exceed
-    # EVAL_ITERATION_MAX_ROUNDS_HARD_CAP x worst-case round duration — a false
-    # positive kills a live loop and POSTs a failure webhook to the customer.
+    # Loops PROCESSING past this are reaped as zombies (failure callback fired) — keep well above max rounds x round duration.
     EVAL_ITERATION_STALL_THRESHOLD_HOURS: int = 72
 
     EVAL_JUDGE_MODEL: str = "gpt-5.6-luna"
