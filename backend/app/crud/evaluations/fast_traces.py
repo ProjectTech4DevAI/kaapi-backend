@@ -65,8 +65,6 @@ def _kb_placeholder_score(
     *, spec: JudgeMetricSpec, sorted_chunks: list[dict[str, Any]]
 ) -> TraceScore:
     """Human-readable N/A for a row the knowledge_base metric was dropped on."""
-    # ponytail: empty chunks under auto tool_choice ~= not queried; a "was queried"
-    # flag would disambiguate an empty-store hit, not worth plumbing.
     reason = _KB_NOT_QUERIED if not sorted_chunks else _KB_SCORE_UNAVAILABLE
     return {
         "name": spec.score_name,

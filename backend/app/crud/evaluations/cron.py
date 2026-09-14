@@ -73,8 +73,6 @@ def dispatch_fast_evaluation_barriers(session: Session) -> dict[str, Any]:
             for chunk_index in missing:
                 start_fast_evaluation_chunk(eval_run_id=run.id, chunk_index=chunk_index)
             chunks_reenqueued += len(missing)
-            # Bump updated_at to reset the stall window.
-            # ponytail: no retry budget — a dead chunk re-enqueues forever; add a retry count if that must fail the run.
             update_evaluation_run(
                 session=session, eval_run=run, update=EvaluationRunUpdate()
             )
@@ -92,14 +90,10 @@ def dispatch_fast_evaluation_barriers(session: Session) -> dict[str, Any]:
 
 
 def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str, Any]:
-    """Dispatch a `resume=True` graph step for every PROCESSING iteration loop.
+    """Resume every PROCESSING iteration loop; fail those stalled past the threshold.
 
-    Skips loops dispatched inside the cooldown (a slow step must not race a second
-    one on the same checkpoint thread). Loops PROCESSING past the stall threshold
-    are failed with a callback — this only happens when a sub-job wedges, so the
-    threshold is generous: a false positive tells the customer a live loop failed.
-
-    ponytail: cooldown is a timestamp, not a lock; SELECT FOR UPDATE if double-dispatch ever shows up.
+    Loops dispatched within the cooldown are skipped so a slow step never races a
+    second one on the same checkpoint thread.
     """
     from app.celery.utils import start_evaluation_iteration_round
     from app.services.evaluations.iteration_graph import mark_iteration_run_failed
@@ -168,7 +162,6 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
     try:
         text_summary = await poll_all_pending_evaluations(session=session)
 
-        # Lazy: circular import via cron_utils
         from app.crud.stt_evaluations import poll_all_pending_stt_evaluations
         from app.crud.tts_evaluations import poll_all_pending_tts_evaluations
 
