@@ -1,7 +1,7 @@
 """Add last_dispatched_at to evaluation_iteration_run
 
-Revision ID: 083
-Revises: 082
+Revision ID: 084
+Revises: 083
 Create Date: 2026-09-08 00:00:00.000000
 
 The cron tick used to fan a `resume=True` graph step out to every PROCESSING
@@ -21,8 +21,8 @@ cooldown comparison happens in Python, mirroring the fast-eval barrier.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "083"
-down_revision = "082"
+revision = "084"
+down_revision = "083"
 branch_labels = None
 depends_on = None
 
