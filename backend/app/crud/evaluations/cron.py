@@ -1,9 +1,4 @@
-"""
-CRUD operations for evaluation cron jobs.
-
-This module provides functions that can be invoked periodically to process
-pending evaluations across all organizations.
-"""
+"""Periodic evaluation maintenance: polling, fast-eval barriers, iteration resumes."""
 
 import asyncio
 import logging
@@ -24,10 +19,7 @@ from app.crud.evaluations.iteration import (
 from app.crud.evaluations.processing import poll_all_pending_evaluations
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.evaluation import RunModeEnum
-from app.models.evaluation_iteration import (
-    EvaluationIterationRun,
-    EvaluationIterationRunUpdate,
-)
+from app.models.evaluation_iteration import EvaluationIterationRunUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -35,16 +27,9 @@ logger = logging.getLogger(__name__)
 def dispatch_fast_evaluation_barriers(session: Session) -> dict[str, Any]:
     """Fan-in barrier + stall healer for chunked fast evaluations.
 
-    For every fast run still `processing`:
-      * all chunks done and not yet aggregated (batch_job_id unset) → enqueue the
-        aggregate task,
-      * chunks missing and the run stalled past EVAL_FAST_STALL_THRESHOLD_MINUTES
-        → re-enqueue the missing chunk indices (idempotent: a completed chunk is
-        skipped, so this never re-charges OpenAI).
-
-    ``batch_job_id`` (set by the aggregator's merge) is the double-enqueue guard:
-    once merged, later ticks won't re-enqueue the aggregate, and a redelivered
-    aggregate reloads the merged unit instead of re-merging.
+    All chunks done → enqueue aggregate (`batch_job_id`, set by the merge, guards
+    against double-enqueue). Stalled with chunks missing → re-enqueue those
+    indices (idempotent, completed chunks are skipped).
     """
     from app.celery.utils import (
         start_fast_evaluation_aggregate,
@@ -88,10 +73,8 @@ def dispatch_fast_evaluation_barriers(session: Session) -> dict[str, Any]:
             for chunk_index in missing:
                 start_fast_evaluation_chunk(eval_run_id=run.id, chunk_index=chunk_index)
             chunks_reenqueued += len(missing)
-            # Bump updated_at so the stall window resets to the next tick's cadence.
-            # ponytail: no hard retry budget — a permanently failing chunk keeps
-            # re-enqueuing (cheap + idempotent). Add a retry-count field to fail
-            # the run outright if provider outages must not linger.
+            # Bump updated_at to reset the stall window.
+            # ponytail: no retry budget — a dead chunk re-enqueues forever; add a retry count if that must fail the run.
             update_evaluation_run(
                 session=session, eval_run=run, update=EvaluationRunUpdate()
             )
@@ -108,54 +91,18 @@ def dispatch_fast_evaluation_barriers(session: Session) -> dict[str, Any]:
     }
 
 
-def _reap_zombie_iteration_run(run: EvaluationIterationRun) -> None:
-    """Fail a loop that has been PROCESSING far longer than it could legitimately run.
-
-    The genuinely unbounded case is a loop interrupted on a sub-job that never
-    reaches a terminal status — an eval run wedged in `processing`. A crashed graph
-    step doesn't need this: the step's own handler fails the loop, and a SIGKILLed
-    one resumes from its checkpoint on the next tick.
-
-    Reaping fires the failure callback, so the threshold is deliberately generous;
-    a false positive kills a live loop and tells the customer it failed.
-    """
-    from app.services.evaluations.iteration_graph import mark_iteration_run_failed
-
-    logger.warning(
-        f"[_reap_zombie_iteration_run] Reaping stalled loop | "
-        f"iteration_run_id={run.id} | inserted_at={run.inserted_at}"
-    )
-    mark_iteration_run_failed(
-        iteration_run_id=run.id,
-        organization_id=run.organization_id,
-        project_id=run.project_id,
-        error_message=(
-            f"Evaluation iteration loop stalled: still processing more than "
-            f"{settings.EVAL_ITERATION_STALL_THRESHOLD_HOURS}h after it started."
-        ),
-    )
-
-
 def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str, Any]:
-    """Resume trigger for the eval-iterate-improve LangGraph loop.
+    """Dispatch a `resume=True` graph step for every PROCESSING iteration loop.
 
-    For every thin `evaluation_iteration_run` row still `PROCESSING`, dispatch a
-    `resume=True` graph-step task. Cheap even when the loop is still waiting on
-    the same sub-job as last tick: the task just re-checks status and interrupts
-    again immediately if not ready — same cost profile as a plain polling barrier.
+    Skips loops dispatched inside the cooldown (a slow step must not race a second
+    one on the same checkpoint thread). Loops PROCESSING past the stall threshold
+    are failed with a callback — this only happens when a sub-job wedges, so the
+    threshold is generous: a false positive tells the customer a live loop failed.
 
-    Two guards keep that from running away:
-      * a loop whose last dispatch is still inside the cooldown is skipped, so a
-        step slower than the tick never gets a second one racing it on the same
-        checkpoint thread (and never double-charges an eval or improvement job),
-      * a loop still PROCESSING past the stall threshold is reaped, so a row whose
-        sub-job wedged doesn't collect resumes forever.
-
-    ponytail: the cooldown is a timestamp heuristic, not a lock — a step outliving
-    CELERY_TASK_TIME_LIMIT could still be double-dispatched. A real lock (row-level
-    SELECT FOR UPDATE, or a Redis key) is the upgrade if that ever shows up.
+    ponytail: cooldown is a timestamp, not a lock; SELECT FOR UPDATE if double-dispatch ever shows up.
     """
     from app.celery.utils import start_evaluation_iteration_round
+    from app.services.evaluations.iteration_graph import mark_iteration_run_failed
 
     runs = list_processing_evaluation_iteration_runs(session=session)
     now_ = now()
@@ -170,7 +117,19 @@ def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str,
 
     for run in runs:
         if run.inserted_at < stall_cutoff:
-            _reap_zombie_iteration_run(run)
+            logger.warning(
+                f"[dispatch_pending_evaluation_iteration_resumes] Reaping stalled "
+                f"loop | iteration_run_id={run.id} | inserted_at={run.inserted_at}"
+            )
+            mark_iteration_run_failed(
+                iteration_run_id=run.id,
+                organization_id=run.organization_id,
+                project_id=run.project_id,
+                error_message=(
+                    f"Evaluation iteration loop stalled: still processing more than "
+                    f"{settings.EVAL_ITERATION_STALL_THRESHOLD_HOURS}h after it started."
+                ),
+            )
             reaped += 1
             continue
 
@@ -187,7 +146,7 @@ def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str,
             organization_id=run.organization_id,
             project_id=run.project_id,
         )
-        # Stamped only after the enqueue lands, so a failed dispatch retries next tick.
+        # Stamp after enqueue so a failed dispatch retries next tick.
         update_evaluation_iteration_run(
             session=session,
             iteration_run=run,
@@ -203,44 +162,23 @@ def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str,
 
 
 async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
-    """
-    Process all pending evaluations across all organizations.
-
-    Delegates to poll_all_pending_evaluations which fetches all processing
-    evaluation runs in a single query, groups by project, and processes them.
-    Also polls STT and TTS evaluations similarly.
-
-    Args:
-        session: Database session
-
-    Returns:
-        Dict with aggregated results.
-    """
+    """Poll text/STT/TTS evaluations, then run the fast-eval barrier and iteration resumes."""
     logger.info("[process_all_pending_evaluations] Starting evaluation processing")
 
     try:
-        # Poll text evaluations (single query, grouped by project)
         text_summary = await poll_all_pending_evaluations(session=session)
 
-        # Lazy imports to avoid circular dependency with cron_utils
+        # Lazy: circular import via cron_utils
         from app.crud.stt_evaluations import poll_all_pending_stt_evaluations
         from app.crud.tts_evaluations import poll_all_pending_tts_evaluations
 
-        # Poll STT evaluations (single query, grouped by project)
         stt_summary = await poll_all_pending_stt_evaluations(session=session)
-
-        # Poll TTS evaluations (single query, grouped by project)
         tts_summary = await poll_all_pending_tts_evaluations(session=session)
-
-        # Fan-in barrier + stall healer for chunked fast-mode text evaluations.
         fast_summary = dispatch_fast_evaluation_barriers(session=session)
-
-        # Resume trigger for the eval-iterate-improve LangGraph loop.
         iteration_summary = dispatch_pending_evaluation_iteration_resumes(
             session=session
         )
 
-        # Merge summaries
         total_processed = (
             text_summary["processed"]
             + stt_summary["processed"]
@@ -295,15 +233,5 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
 
 
 def process_all_pending_evaluations_sync(session: Session) -> dict[str, Any]:
-    """
-    Synchronous wrapper for process_all_pending_evaluations.
-
-    This function can be called from synchronous contexts (like FastAPI endpoints).
-
-    Args:
-        session: Database session
-
-    Returns:
-        Dict with aggregated results (same as process_all_pending_evaluations)
-    """
+    """Sync wrapper for FastAPI endpoints."""
     return asyncio.run(process_all_pending_evaluations(session=session))
