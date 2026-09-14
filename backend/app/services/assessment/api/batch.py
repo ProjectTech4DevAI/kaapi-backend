@@ -209,11 +209,13 @@ def build_rows(
     Column kinds come from the config's ``input_schema``: a column typed image/pdf is
     an attachment column (url-format only); any column not declared there is text. Cells are
     plain strings (an attachment cell holds the url), so the URL-only JSONL builders consume
-    them unchanged.
+    them unchanged. A column a row omits (non-strict) is filled with "".
     """
-    submissions = batch_input.data
+    submissions = batch_input.data or []
     input_columns = input_columns or {}
-    columns = list(submissions[0].keys()) if submissions else []
+    columns = list(
+        dict.fromkeys([*(key for sub in submissions for key in sub), *input_columns])
+    )
 
     text_columns: list[str] = []
     attachments: list[AssessmentAttachment] = []

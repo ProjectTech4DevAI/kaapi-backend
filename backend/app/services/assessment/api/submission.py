@@ -64,20 +64,24 @@ def _validate_rows_against_schema(
 ) -> None:
     """Validate every BATCH row against the config's input_schema.
 
-    Raises 422 on the first offending row: a missing declared column, an
-    unexpected column not in the schema, or an attachment column whose value is
-    not a URL. The row index is named so the client can locate the bad row.
+    Raises 422 on the first offending row: a strict column absent or blank, a column
+    not in the schema, or an attachment value that is not a URL. A non-strict column
+    may be omitted or blank. The row index is named so the client can locate the row.
     """
     declared = set(input_schema)
+    strict_columns = [
+        column
+        for column, spec in input_schema.items()
+        if (spec or {}).get("strict", True)
+    ]
     for idx, row in enumerate(rows):
-        row_columns = set(row)
-        missing = declared - row_columns
+        missing = [c for c in strict_columns if not (row.get(c) or "").strip()]
         if missing:
             raise HTTPException(
                 status_code=422,
-                detail=f"input.data[{idx}] is missing required column(s): {sorted(missing)}",
+                detail=f"input.data[{idx}] is missing required column(s): {missing}",
             )
-        unexpected = row_columns - declared
+        unexpected = set(row) - declared
         if unexpected:
             raise HTTPException(
                 status_code=422,
@@ -88,8 +92,8 @@ def _validate_rows_against_schema(
             )
         for column, spec in input_schema.items():
             column_type = (spec or {}).get("type")
-            if column_type in _ATTACHMENT_TYPES:
-                value = row.get(column, "")
+            value = (row.get(column) or "").strip()
+            if value and column_type in _ATTACHMENT_TYPES:
                 if not value.startswith(_URL_PREFIXES):
                     raise HTTPException(
                         status_code=422,

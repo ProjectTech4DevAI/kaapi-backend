@@ -27,11 +27,17 @@ DEFAULT_PREFILTER_MODEL = "gpt-5.6-luna"
 
 
 class InputColumn(SQLModel):
-    """One BATCH input column: its type (required, no default — every column must
-    declare one), and how an attachment value is provided (`format`)."""
+    """One BATCH input column: its type (required), attachment `format`, and `strict`.
+
+    ``strict`` (default) rejects a row where the column is absent or blank; ``false``
+    lets rows omit it. Unknown keys are rejected so a misspelt flag fails at config save.
+    """
+
+    model_config = {"extra": "forbid"}
 
     type: Literal["text", "image", "pdf"]
     format: Literal["url", "base64"] | None = None
+    strict: bool = True
 
 
 class PreFilterParams(TextLLMParams):
@@ -160,9 +166,10 @@ class AssessmentConfigBlob(SQLModel):
         ...,
         min_length=1,
         description=(
-            "Per-column spec for the BATCH `data` rows ({type, format}). Shared by the "
-            "pre-filter and assessment consumers, so it lives once at the blob root. "
-            "Mandatory and non-empty; every declared column must be present in every row."
+            "Per-column spec for the BATCH `data` rows ({type, format, strict}). Shared by "
+            "the pre-filter and assessment consumers, so it lives once at the blob root. "
+            "Mandatory and non-empty; a strict column (the default) must be present and "
+            "non-blank in every row, a non-strict one may be omitted."
         ),
     )
     pre_filters: AssessmentPreFilters | None = None
