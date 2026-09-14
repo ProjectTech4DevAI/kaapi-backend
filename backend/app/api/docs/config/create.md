@@ -88,9 +88,9 @@ shape is documented here:
   (system prompt), an optional `json_output_schema` (structured-output JSON schema), and a
   **mandatory, non-empty** `input_schema` mapping each column name to `{ type, format, strict }`
   (`type` is **required**: `text` | `image` | `pdf`; `format`: `url` for attachment
-  columns; `strict` defaults to `true`). A strict column must be present and non-blank in
-  every submission row; `strict: false` lets rows omit it (see the submit docs for per-row
-  validation). Unknown keys in a column spec are rejected.
+  columns; `strict` defaults to `false`). A `strict: true` column must be present and
+  non-blank in every submission row; any other column may be omitted or blank (see the
+  submit docs for per-row validation). Unknown keys in a column spec are rejected.
 * `pre_filters` (optional) — `topic_relevance` and/or `duplicate_detection`. Each runs its
   own llm call, so it carries `provider` (default `openai`) + its own `params`
   (a `TextLLMParams` object: `model`, `temperature`, …). Its criteria live in

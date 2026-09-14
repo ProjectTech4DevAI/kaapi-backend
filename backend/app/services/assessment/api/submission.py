@@ -70,9 +70,7 @@ def _validate_rows_against_schema(
     """
     declared = set(input_schema)
     strict_columns = [
-        column
-        for column, spec in input_schema.items()
-        if (spec or {}).get("strict", True)
+        column for column, spec in input_schema.items() if (spec or {}).get("strict")
     ]
     for idx, row in enumerate(rows):
         missing = [c for c in strict_columns if not (row.get(c) or "").strip()]
@@ -236,13 +234,18 @@ def submit(
         session=session, request=request, project_id=project_id
     )
 
-    # input_schema is mandatory (enforced on the config), so every row must match it:
-    # all declared columns present, no undeclared columns, attachments url-valued.
     input_columns = {
         name: col.model_dump(exclude_none=True)
         for name, col in blob.input_schema.items()
     }
-    _validate_rows_against_schema(batch_input.data, input_columns)
+    if submission_id is not None:
+        batch_input = BatchInput(
+            data=[
+                {key: value for key, value in row.items() if key in input_columns}
+                for row in batch_input.data or []
+            ]
+        )
+    _validate_rows_against_schema(batch_input.data or [], input_columns)
 
     # Validate transposition up front so bad attachment shapes fail as 422, not async.
     try:
