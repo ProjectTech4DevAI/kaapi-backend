@@ -30,7 +30,12 @@ def create_evaluation_iteration_run(
     organization_id: int,
     project_id: int,
 ) -> EvaluationIterationRun:
-    """Create the thin tracking row, status=PROCESSING."""
+    """Create the thin tracking row, status=PROCESSING.
+
+    Stamped `last_dispatched_at` up front: kickoff enqueues the first graph step
+    right after this returns, and the cron's cooldown has to cover that step like
+    any other, or the first tick races it on the same checkpoint thread.
+    """
     iteration_run = EvaluationIterationRun(
         dataset_id=dataset_id,
         experiment_name=experiment_name,
@@ -38,6 +43,7 @@ def create_evaluation_iteration_run(
         initial_config_version=initial_config_version,
         callback_url=callback_url,
         status=EvaluationIterationStatusEnum.PROCESSING,
+        last_dispatched_at=now(),
         organization_id=organization_id,
         project_id=project_id,
     )
