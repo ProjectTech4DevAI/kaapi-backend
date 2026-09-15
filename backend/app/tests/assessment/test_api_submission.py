@@ -114,12 +114,12 @@ class TestSubmit:
         assert bag["stage_status"] == AssessmentStatus.PENDING.value
         assert bag["callback_url"].startswith("https://hook.example")
 
-    def test_row_missing_declared_column_is_422(self, db) -> None:
+    def test_row_missing_strict_column_is_422(self, db) -> None:
         auth = get_user_test_auth_context(db)
         config = _assessment_config(
             db,
             auth.project_id,
-            input_schema={"a": {"type": "text"}, "b": {"type": "text"}},
+            input_schema={"a": {"type": "text"}, "b": {"type": "text", "strict": True}},
         )
         request = _request(config, [{"a": "present"}, {"a": "present", "b": "here"}])
 
@@ -322,10 +322,13 @@ class TestSubmissionDocId:
             project_id=auth.project_id,
         )
 
-        with patch(
-            "app.services.assessment.api.submission.load_submission_file_rows",
-            return_value=[{"a": "one"}, {"a": "two"}],
-        ), patch("app.celery.tasks.job_execution.run_assessment_api_batch"):
+        with (
+            patch(
+                "app.services.assessment.api.submission.load_submission_file_rows",
+                return_value=[{"a": "one"}, {"a": "two"}],
+            ),
+            patch("app.celery.tasks.job_execution.run_assessment_api_batch"),
+        ):
             response = self._submit(db, auth, config, stored.id)
 
         assert response.status == AssessmentStatus.PROCESSING
