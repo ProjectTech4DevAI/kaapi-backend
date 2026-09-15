@@ -272,6 +272,15 @@ def finalize_node(state: EvaluationIterationState) -> dict[str, Any]:
                 f"iteration_run_id={state['iteration_run_id']}"
             )
             return {}
+        if iteration_run.status != EvaluationIterationStatusEnum.PROCESSING:
+            # Reaper (or another terminal writer) got here first; its callback
+            # already went out, so a second one would contradict it.
+            logger.warning(
+                f"[finalize_node] Row already terminal, skipping | "
+                f"iteration_run_id={state['iteration_run_id']} | "
+                f"status={iteration_run.status.value}"
+            )
+            return {}
 
         update_evaluation_iteration_run(
             session=session,
