@@ -99,7 +99,7 @@ def _google_gcp_credential(
     return cred
 
 
-# Re-poll cadence for a stage's provider batch, mirroring the assessment cron tick.
+# Re-poll cadence for a stage's provider batch, mirroring the assessment cron interval.
 POLL_COUNTDOWN_SECONDS = settings.CRON_INTERVAL_MINUTES * 60
 
 
@@ -200,23 +200,13 @@ def _stage_kind(pipeline: list[dict[str, str]], stage: str) -> str:
     raise ValueError(f"[_stage_kind] Stage {stage} not in pipeline")
 
 
-def build_rows(
-    batch_input: BatchInput,
-    input_columns: dict[str, Any] | None = None,
-) -> tuple[list[dict[str, str]], list[str], list[AssessmentAttachment]]:
-    """Split each submission into text cells + attachment specs for the JSONL builders.
+def column_kinds(
+    columns: list[str], input_columns: dict[str, Any]
+) -> tuple[list[str], list[AssessmentAttachment]]:
+    """Split columns into text names and attachment specs per the config's ``input_schema``.
 
-    Column kinds come from the config's ``input_schema``: a column typed image/pdf is
-    an attachment column (url-format only); any column not declared there is text. Cells are
-    plain strings (an attachment cell holds the url), so the URL-only JSONL builders consume
-    them unchanged. A column a row omits (non-strict) is filled with "".
+    A column typed image/pdf is an attachment (url-format only); anything else is text.
     """
-    submissions = batch_input.data or []
-    input_columns = input_columns or {}
-    columns = list(
-        dict.fromkeys([*(key for sub in submissions for key in sub), *input_columns])
-    )
-
     text_columns: list[str] = []
     attachments: list[AssessmentAttachment] = []
     for column in columns:
@@ -233,7 +223,24 @@ def build_rows(
             )
         else:
             text_columns.append(column)
+    return text_columns, attachments
 
+
+def build_rows(
+    batch_input: BatchInput,
+    input_columns: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, str]], list[str], list[AssessmentAttachment]]:
+    """Normalise submissions to string cells over the union of row and schema columns.
+
+    Submit-time only; the batch task streams the stored rows instead. A column a row omits
+    (non-strict) is filled with "".
+    """
+    submissions = batch_input.data or []
+    input_columns = input_columns or {}
+    columns = list(
+        dict.fromkeys([*(key for sub in submissions for key in sub), *input_columns])
+    )
+    text_columns, attachments = column_kinds(columns, input_columns)
     rows = [{col: str(sub.get(col, "")) for col in columns} for sub in submissions]
     return rows, text_columns, attachments
 
@@ -611,8 +618,8 @@ def _submit_stage(
     """Build + submit the current stage's batch on its row subset. Returns success.
 
     A stage already in flight is reported as submitted (no second provider batch): the
-    in-memory bag can predate a concurrent tick's write, so the row is re-read here.
-    The submission rows are fetched here, not per tick: only a submission needs them.
+    in-memory bag can predate a concurrent task's write, so the row is re-read here.
+    Rows are streamed from storage once per stage submit; only this stage's subset is held.
     """
     session.refresh(execution)
     persisted = cast(BatchRunState, execution.execution or {})
@@ -631,16 +638,15 @@ def _submit_stage(
         )
         return True
 
-    from app.services.assessment.api.submission_store import load_submission_rows
+    from app.services.assessment.api.submission_store import open_submission_rows
 
     kind = _stage_kind(bag["pipeline"], stage)
     input_columns = {
         name: col.model_dump(exclude_none=True)
         for name, col in blob.input_schema.items()
     }
-    batch_input = load_submission_rows(session=session, assessment=assessment)
-    rows, text_columns, attachments = build_rows(batch_input, input_columns)
-    subset = _row_subset(bag, stage, kind, len(rows))
+    text_columns, attachments = column_kinds(list(input_columns), input_columns)
+    subset = _row_subset(bag, stage, kind, execution.total_items)
 
     if not subset:
         # No rows left for this stage (everything gated out upstream). Persist the
@@ -655,12 +661,16 @@ def _submit_stage(
         api.save_execution_state(session=session, execution=execution, state=bag)
         return False
 
+    wanted = set(subset)
+    with open_submission_rows(session=session, assessment=assessment) as stream:
+        rows = [row for idx, row in enumerate(stream) if idx in wanted]
+
     provider_name, model = _stage_provider_model(blob, stage)
     batch_job = _submit_provider_batch(
         session=session,
         provider_name=provider_name,
         model=model,
-        rows=[rows[i] for i in subset],
+        rows=rows,
         text_columns=text_columns,
         attachments=attachments,
         prompt=_stage_prompt(blob, stage),
@@ -859,7 +869,7 @@ def _advance_or_finalize(
             project_id=project_id,
         )
     except SubmissionUnavailableError as exc:
-        # Storage blip, not a bad run: the stage is still PENDING, so retry the tick.
+        # Storage blip, not a bad run: the stage is still PENDING, so retry the task.
         logger.warning(
             "[_advance_or_finalize] Submission unreadable, will retry | "
             "execution_id=%s | stage=%s | %s",
@@ -890,7 +900,7 @@ def _advance_or_finalize(
 def run_batch_stage(
     *, execution_id: int, organization_id: int, project_id: int
 ) -> dict[str, bool]:
-    """Drive one tick of the staged pipeline. Returns ``{"requeue": bool}``.
+    """Run one step of the staged pipeline. Returns ``{"requeue": bool}``.
 
     Idempotent: keyed off ``stage_status`` in the bag — a redelivery either re-polls
     the in-flight batch or re-submits a stage that was never dispatched.
@@ -907,7 +917,7 @@ def run_batch_stage(
         ).first()
         if execution is None:
             logger.warning(
-                "[run_batch_stage] execution_id=%s missing or held by another tick",
+                "[run_batch_stage] execution_id=%s missing or held by another task",
                 execution_id,
             )
             return {"requeue": False}
@@ -936,7 +946,7 @@ def run_batch_stage(
 
         # Entry log: distinguishes "the task never ran" from "it ran and did nothing".
         logger.info(
-            "[run_batch_stage] Tick | execution_id=%s | stage=%s | stage_status=%s",
+            "[run_batch_stage] Step | execution_id=%s | stage=%s | stage_status=%s",
             execution_id,
             stage,
             stage_status,
@@ -966,7 +976,7 @@ def run_batch_stage(
                     project_id=project_id,
                 )
             except SubmissionUnavailableError as exc:
-                # Storage blip, not a bad run: the stage stays PENDING, retry the tick.
+                # Storage blip, not a bad run: the stage stays PENDING, retry the task.
                 logger.warning(
                     "[run_batch_stage] Submission unreadable, will retry | "
                     "execution_id=%s | stage=%s | %s",

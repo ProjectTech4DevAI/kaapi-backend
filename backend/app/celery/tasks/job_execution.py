@@ -364,6 +364,8 @@ def run_assessment_pipeline(
     priority=2,
     autoretry_for=(Exception, Timeout),
     retry_backoff=True,
+    # A task whose worker is lost is acked, not re-queued, so it cannot redeliver in a loop.
+    reject_on_worker_lost=False,
 )
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_assessment_api_batch")
 def run_assessment_api_batch(
@@ -374,9 +376,9 @@ def run_assessment_api_batch(
     trace_id: str,
     **kwargs,
 ):
-    """Drive one tick of the BATCH API-client staged pipeline.
+    """Run one step of the BATCH API-client staged pipeline.
 
-    Self-re-enqueues while a stage is in flight; idempotent, so a raised tick is retried.
+    Self-re-enqueues while a stage is in flight; idempotent, so a failed task is retried.
     """
     from app.services.assessment.api.batch import (
         POLL_COUNTDOWN_SECONDS,

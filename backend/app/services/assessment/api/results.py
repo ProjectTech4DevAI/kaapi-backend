@@ -164,11 +164,12 @@ def _submission_rows(session: Session, assessment: Assessment) -> list[Submissio
     """
     from app.services.assessment.api.submission_store import (
         SubmissionUnavailableError,
-        load_submission_rows,
+        open_submission_rows,
     )
 
     try:
-        return load_submission_rows(session=session, assessment=assessment).data or []
+        with open_submission_rows(session=session, assessment=assessment) as stream:
+            return list(stream)
     except (SubmissionUnavailableError, ValueError) as exc:
         logger.warning(
             "[_submission_rows] Submission rows unavailable | assessment_id=%s | %s",

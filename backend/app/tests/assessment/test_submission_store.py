@@ -1,6 +1,5 @@
 """Tests for the submission-rows round trip (api/submission_store.py)."""
 
-import io
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -9,7 +8,7 @@ import pytest
 from app.models.assessment import Assessment, AssessmentMethod, BatchInput
 from app.services.assessment.api.submission_store import (
     SubmissionUnavailableError,
-    load_submission_rows,
+    open_submission_rows,
     upload_submission_rows,
 )
 
@@ -25,6 +24,30 @@ def _assessment(url: str | None) -> Assessment:
         organization_id=1,
         project_id=1,
     )
+
+
+class _Body:
+    """The slice of botocore's StreamingBody the loader touches."""
+
+    def __init__(self, payload: bytes, fail_after: int | None = None) -> None:
+        self._lines = payload.splitlines()
+        self._fail_after = fail_after
+        self.closed = False
+
+    def iter_lines(self):
+        for index, line in enumerate(self._lines):
+            if self._fail_after is not None and index >= self._fail_after:
+                raise OSError("connection reset")
+            yield line
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _storage_with(body: _Body) -> MagicMock:
+    storage = MagicMock()
+    storage.stream.return_value = body
+    return storage
 
 
 class TestUpload:
@@ -55,26 +78,50 @@ class TestUpload:
             )
 
 
-class TestLoad:
-    def test_parses_the_stored_jsonl(self) -> None:
-        storage = MagicMock()
-        storage.stream.return_value = io.BytesIO(b'{"a": "1"}\n\n{"a": "2"}\n')
-        with patch(_STORAGE, return_value=storage):
-            result = load_submission_rows(
+class TestOpen:
+    def test_streams_the_stored_jsonl_and_closes_the_body(self) -> None:
+        body = _Body(b'{"a": "1"}\n\n{"a": "2"}\n')
+        with patch(_STORAGE, return_value=_storage_with(body)):
+            with open_submission_rows(
                 session=MagicMock(), assessment=_assessment("s3://b/sub.jsonl")
-            )
+            ) as stream:
+                assert list(stream) == [{"a": "1"}, {"a": "2"}]
 
-        assert result.data == [{"a": "1"}, {"a": "2"}]
+        assert body.closed
 
     def test_missing_url_is_a_value_error(self) -> None:
         with pytest.raises(ValueError, match="No submission_input"):
-            load_submission_rows(session=MagicMock(), assessment=_assessment(None))
+            with open_submission_rows(
+                session=MagicMock(), assessment=_assessment(None)
+            ):
+                pass
 
-    def test_storage_failure_is_retryable(self) -> None:
+    def test_open_failure_is_retryable(self) -> None:
         storage = MagicMock()
         storage.stream.side_effect = RuntimeError("s3 down")
         with patch(_STORAGE, return_value=storage):
             with pytest.raises(SubmissionUnavailableError):
-                load_submission_rows(
+                with open_submission_rows(
                     session=MagicMock(), assessment=_assessment("s3://b/sub.jsonl")
-                )
+                ):
+                    pass
+
+    def test_read_failure_mid_stream_is_retryable_and_still_closes(self) -> None:
+        body = _Body(b'{"a": "1"}\n{"a": "2"}\n', fail_after=1)
+        with patch(_STORAGE, return_value=_storage_with(body)):
+            with pytest.raises(SubmissionUnavailableError):
+                with open_submission_rows(
+                    session=MagicMock(), assessment=_assessment("s3://b/sub.jsonl")
+                ) as stream:
+                    list(stream)
+
+        assert body.closed
+
+    def test_corrupt_line_is_terminal(self) -> None:
+        body = _Body(b'{"a": "1"}\nnot json\n')
+        with patch(_STORAGE, return_value=_storage_with(body)):
+            with pytest.raises(ValueError):
+                with open_submission_rows(
+                    session=MagicMock(), assessment=_assessment("s3://b/sub.jsonl")
+                ) as stream:
+                    list(stream)

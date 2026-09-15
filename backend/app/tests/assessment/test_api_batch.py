@@ -6,6 +6,7 @@ the transactional ``db`` session with only external provider/webhook seams mocke
 """
 
 import json
+from contextlib import contextmanager
 from uuid import uuid4
 from unittest.mock import MagicMock, patch
 
@@ -76,11 +77,12 @@ _SEEDED_ROWS: dict = {}
 def _serve_seeded_submission_rows():
     """Submission rows live in object storage; serve the seeded ones instead."""
 
-    def _load(*, session, assessment):
-        return BatchInput(data=_SEEDED_ROWS[assessment.id])
+    @contextmanager
+    def _open(*, assessment, **_):
+        yield iter(_SEEDED_ROWS[assessment.id])
 
     with patch(
-        "app.services.assessment.api.submission_store.load_submission_rows", _load
+        "app.services.assessment.api.submission_store.open_submission_rows", _open
     ):
         yield
 

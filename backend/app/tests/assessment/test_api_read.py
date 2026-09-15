@@ -1,5 +1,6 @@
 """Tests for the API-client read endpoints: the assessment list and the poll detail."""
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
@@ -21,7 +22,17 @@ from app.tests.utils.test_data import create_test_config
 from app.tests.utils.utils import random_lower_string
 
 _STORE = "app.services.assessment.api.results.get_cloud_storage"
-_ROWS = "app.services.assessment.api.submission_store.load_submission_rows"
+_ROWS = "app.services.assessment.api.submission_store.open_submission_rows"
+
+
+def _serving(rows):
+    """Stand-in for open_submission_rows that streams the given rows."""
+
+    @contextmanager
+    def _open(**_):
+        yield iter(rows)
+
+    return _open
 
 
 def _config(db, project_id):
@@ -170,9 +181,7 @@ class TestDetail:
         auth = get_user_test_auth_context(db)
         assessment, _ = _seed(db, auth, total=2)
 
-        from app.models.assessment import BatchInput
-
-        with patch(_ROWS, return_value=BatchInput(data=[{"a": "one"}, {"a": "two"}])):
+        with patch(_ROWS, _serving([{"a": "one"}, {"a": "two"}])):
             detail = build_detail(session=db, assessment=assessment, include_input=True)
 
         assert detail.status == AssessmentStatus.PENDING
@@ -209,9 +218,7 @@ class TestDetail:
         )
         assessment, _ = _seed(db, auth, total=2, bag=bag)
 
-        from app.models.assessment import BatchInput
-
-        with patch(_ROWS, return_value=BatchInput(data=[{"a": "1"}, {"a": "2"}])):
+        with patch(_ROWS, _serving([{"a": "1"}, {"a": "2"}])):
             detail = build_detail(session=db, assessment=assessment)
 
         gated = detail.items[0]
@@ -224,9 +231,7 @@ class TestDetail:
         auth = get_user_test_auth_context(db)
         assessment, _ = _seed(db, auth, total=3)
 
-        from app.models.assessment import BatchInput
-
-        with patch(_ROWS, return_value=BatchInput(data=[{"a": "only one"}])):
+        with patch(_ROWS, _serving([{"a": "only one"}])):
             detail = build_detail(session=db, assessment=assessment, include_input=True)
 
         assert detail.items[0].input == {"a": "only one"}
