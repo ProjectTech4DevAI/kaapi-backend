@@ -28,6 +28,7 @@ All paths relative to `backend/app/`.
 - `LLMCallConfig` — one-of: saved reference (`id` + `version`) XOR ad-hoc `blob` (validator-enforced)
 - `ConfigBlob` — `completion` + optional `prompt_template` (`PromptTemplate.template`, plain string; `{{input}}` interpolation is llm-chain-only) + `input_guardrails`/`output_guardrails`
 - `CompletionConfig` — discriminated union on `provider`: `KaapiCompletionConfig` (standardized params: `TextLLMParams`/`STTLLMParams`/`TTSLLMParams`), `NativeCompletionConfig` (pass-through), `ProxyCompletionConfig` (client's own endpoint)
+- `TextLLMParams` reasoning knobs: `reasoning` + `effort` (OpenAI-style), `thinking` (Anthropic adaptive-thinking container, forwarded as-is) and `thinking_level` (Gemini). A knob must be **declared here** to survive config save — pydantic's default extra policy is ignore, so an undeclared key is dropped silently at validation with no error.
 - `QueryParams` — per-call input + `ConversationConfig`
 - `models/guardrails/` — validator config shapes
 

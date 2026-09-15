@@ -259,6 +259,29 @@ class TestConvertJsonSchemaToGoogle:
         assert "propertyOrdering" in result
 
 
+ENUM_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "band": {"type": "string", "enum": ["low", "high"]},
+        "score": {"type": "integer"},
+    },
+    "required": ["band", "score"],
+}
+
+
+class TestGoogleSchemaOrderingKey:
+    def test_enum_schema_carries_only_the_camel_case_ordering_key(self) -> None:
+        # Real SDK transformer, not the stub above: it only emits the snake_case
+        # property_ordering for some schemas (an enum triggers it), and Vertex
+        # rejects a payload carrying both spellings.
+        result, _ = map_kaapi_to_google_params(
+            {"model": "gemini-2.5-pro", "output_schema": ENUM_OUTPUT_SCHEMA}
+        )
+        google_schema = result["output_schema"]
+        assert "property_ordering" not in google_schema
+        assert google_schema["propertyOrdering"] == ["band", "score"]
+
+
 class TestOpenAIResponseFormat:
     def _call(self, params: dict):
         with patch(
@@ -318,7 +341,7 @@ class TestMapKaapiToAnthropicParams:
         assert fmt["type"] == "json_schema"
         assert fmt["schema"]["additionalProperties"] is False
 
-    def test_unsupported_params_warned(self) -> None:
+    def test_knowledge_base_ids_warned(self) -> None:
         result, warnings = self._call(
             {
                 "model": "claude-sonnet-4-6",
@@ -326,6 +349,49 @@ class TestMapKaapiToAnthropicParams:
                 "knowledge_base_ids": ["kb1"],
             }
         )
-        assert "effort" not in result
-        assert any("effort" in w for w in warnings)
+        assert "knowledge_base_ids" not in result
         assert any("knowledge_base_ids" in w for w in warnings)
+
+    def test_effort_lands_in_output_config_without_a_schema(self) -> None:
+        result, warnings = self._call({"model": "claude-sonnet-4-6", "effort": "high"})
+        assert result["output_config"] == {"effort": "high"}
+        assert warnings == []
+
+    def test_effort_shares_the_output_config_with_the_schema(self) -> None:
+        schema = {"type": "object", "properties": {"score": {"type": "integer"}}}
+        result, _ = self._call(
+            {
+                "model": "claude-sonnet-4-6",
+                "effort": "high",
+                "output_schema": schema,
+            }
+        )
+        assert result["output_config"]["effort"] == "high"
+        assert result["output_config"]["format"]["type"] == "json_schema"
+
+    def test_reasoning_is_read_as_effort(self) -> None:
+        result, _ = self._call({"model": "claude-sonnet-4-6", "reasoning": "medium"})
+        assert result["output_config"]["effort"] == "medium"
+
+    def test_minimal_effort_is_warned_and_omitted(self) -> None:
+        # "minimal" is a Kaapi/OpenAI rung with no Anthropic equivalent.
+        result, warnings = self._call(
+            {"model": "claude-sonnet-4-6", "effort": "minimal"}
+        )
+        assert "output_config" not in result
+        assert any("minimal" in w for w in warnings)
+
+    def test_thinking_container_passes_through(self) -> None:
+        thinking = {"type": "enabled", "budget_tokens": 4096}
+        result, warnings = self._call(
+            {"model": "claude-sonnet-4-6", "thinking": thinking}
+        )
+        assert result["thinking"] == thinking
+        assert warnings == []
+
+    def test_thinking_level_is_warned_and_dropped(self) -> None:
+        result, warnings = self._call(
+            {"model": "claude-sonnet-4-6", "thinking_level": "high"}
+        )
+        assert "thinking_level" not in result
+        assert any("thinking_level" in w for w in warnings)

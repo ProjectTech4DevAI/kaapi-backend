@@ -8,6 +8,13 @@ from app.crud.model_config import is_reasoning_model
 
 logger = logging.getLogger(__name__)
 
+# Vertex rejects a payload carrying both spellings (the SDK dump emits snake_case).
+_SDK_ORDERING_KEY = "property_ordering"
+_ORDERING_KEY = "propertyOrdering"
+
+# Anthropic's output_config.effort ladder; Kaapi's "none"/"minimal" have no equivalent.
+ANTHROPIC_EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
 
 def normalize_llm_text(text: str) -> str:
     if not isinstance(text, str) or not text:
@@ -83,8 +90,9 @@ def _convert_json_schema_to_google(schema: dict) -> dict:
         else normalized_schema
     )
 
-    if "properties" in google_schema and "propertyOrdering" not in google_schema:
-        google_schema["propertyOrdering"] = list(
+    google_schema.pop(_SDK_ORDERING_KEY, None)
+    if "properties" in google_schema and _ORDERING_KEY not in google_schema:
+        google_schema[_ORDERING_KEY] = list(
             normalized_schema.get("required", [])
         ) or list(google_schema["properties"].keys())
 
@@ -222,19 +230,35 @@ def map_kaapi_to_anthropic_params(kaapi_params: dict) -> tuple[dict, list[str]]:
     if max_output_tokens is not None:
         anthropic_params["max_tokens"] = max_output_tokens
 
+    # Structured output and reasoning effort share one container on the Messages API.
+    output_config: dict[str, object] = {}
     output_schema = kaapi_params.get("output_schema")
     if output_schema is not None:
-        anthropic_params["output_config"] = {
-            "format": {
-                "type": "json_schema",
-                "schema": _ensure_openai_strict_schema(output_schema),
-            }
+        output_config["format"] = {
+            "type": "json_schema",
+            "schema": _ensure_openai_strict_schema(output_schema),
         }
 
-    if kaapi_params.get("effort") or kaapi_params.get("reasoning"):
+    effort = kaapi_params.get("effort") or kaapi_params.get("reasoning")
+    if effort in ANTHROPIC_EFFORT_LEVELS:
+        output_config["effort"] = effort
+    elif effort is not None:
         warnings.append(
-            "Parameters 'effort'/'reasoning' are not mapped for Anthropic "
-            "batch assessment and were ignored."
+            f"Parameter 'effort' value '{effort}' is not an Anthropic effort level "
+            f"({', '.join(ANTHROPIC_EFFORT_LEVELS)}) and was ignored."
+        )
+
+    if output_config:
+        anthropic_params["output_config"] = output_config
+
+    thinking = kaapi_params.get("thinking")
+    if thinking is not None:
+        anthropic_params["thinking"] = thinking
+
+    if kaapi_params.get("thinking_level") is not None:
+        warnings.append(
+            "Parameter 'thinking_level' is Google-only; Anthropic reads the 'thinking' "
+            "container instead, so it was ignored."
         )
 
     if kaapi_params.get("knowledge_base_ids"):
