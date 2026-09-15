@@ -222,10 +222,10 @@ class Settings(BaseSettings):
     EVAL_ITERATION_CEILING_DELTA_THRESHOLD: float = 0.05
     # Consecutive low-delta rounds required before the loop stops as ceiling_reached.
     EVAL_ITERATION_CEILING_CONSECUTIVE_ROUNDS: int = 3
-    # Cron skips loops dispatched inside this window; keep >= CELERY_TASK_TIME_LIMIT + queue wait.
+    # Cron skips loops dispatched within this window
     EVAL_ITERATION_DISPATCH_COOLDOWN_MINUTES: int = 10
-    # Loops PROCESSING past this are reaped as zombies (failure callback fired) — keep well above max rounds x round duration.
-    EVAL_ITERATION_STALL_THRESHOLD_HOURS: int = 24
+    # Loops stalled longer are reaped; must exceed 25 hard-cap rounds worst-case time
+    EVAL_ITERATION_STALL_THRESHOLD_HOURS: int = 48
 
     EVAL_JUDGE_MODEL: str = "gpt-5.6-luna"
 
