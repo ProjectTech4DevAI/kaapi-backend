@@ -1,6 +1,6 @@
 """Cosine scoring for v1 fast runs.
 
-Pure: takes the responses + embeddings units and returns everything Stage 3
+Pure: takes response rows + their embedding pairs, returns everything Stage 3
 persists for a non-judge run. v2 judged runs never embed, so they never reach
 this module.
 """
