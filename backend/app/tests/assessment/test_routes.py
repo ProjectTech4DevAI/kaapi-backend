@@ -3,7 +3,7 @@
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -61,6 +61,7 @@ def _assessment() -> SimpleNamespace:
     return SimpleNamespace(
         id=10,
         experiment_name="exp",
+        method="RUN",
         submission_id=UUID(int=7),
         status="processing",
         organization_id=1,
@@ -139,19 +140,23 @@ class TestDatasetRoutes:
             ),
         ):
             with pytest.raises(HTTPException, match="not found"):
-                get_dataset(1, session=MagicMock(), auth_context=_auth_context())
+                get_dataset(uuid4(), session=MagicMock(), auth_context=_auth_context())
 
     def test_get_dataset_with_signed_url(self) -> None:
         storage = MagicMock()
         storage.get_signed_url.return_value = "signed-url"
-        with patch(
-            "app.api.routes.assessment.datasets.get_submission_by_id",
-            return_value=_submission(),
-        ), patch(
-            "app.api.routes.assessment.datasets.get_cloud_storage", return_value=storage
+        with (
+            patch(
+                "app.api.routes.assessment.datasets.get_submission_by_id",
+                return_value=_submission(),
+            ),
+            patch(
+                "app.api.routes.assessment.datasets.get_cloud_storage",
+                return_value=storage,
+            ),
         ):
             resp = get_dataset(
-                7,
+                uuid4(),
                 session=MagicMock(),
                 auth_context=_auth_context(),
                 include_signed_url=True,
@@ -161,15 +166,18 @@ class TestDatasetRoutes:
         assert resp.data.signed_url == "signed-url"
 
     def test_get_dataset_with_limit_rows_includes_preview(self) -> None:
-        with patch(
-            "app.api.routes.assessment.datasets.get_submission_by_id",
-            return_value=_submission(),
-        ), patch(
-            "app.api.routes.assessment.datasets.preview_submission",
-            return_value=(["a", "b"], [["1", "2"], ["3", "4"]]),
-        ) as preview_mock:
+        with (
+            patch(
+                "app.api.routes.assessment.datasets.get_submission_by_id",
+                return_value=_submission(),
+            ),
+            patch(
+                "app.api.routes.assessment.datasets.preview_submission",
+                return_value=(["a", "b"], [["1", "2"], ["3", "4"]]),
+            ) as preview_mock,
+        ):
             resp = get_dataset(
-                7,
+                uuid4(),
                 session=MagicMock(),
                 auth_context=_auth_context(),
                 limit_rows=2,
@@ -182,37 +190,52 @@ class TestDatasetRoutes:
         assert resp.data.preview.truncated is True
 
     def test_get_dataset_without_limit_rows_skips_preview(self) -> None:
-        with patch(
-            "app.api.routes.assessment.datasets.get_submission_by_id",
-            return_value=_submission(),
-        ), patch(
-            "app.api.routes.assessment.datasets.preview_submission"
-        ) as preview_mock:
-            resp = get_dataset(7, session=MagicMock(), auth_context=_auth_context())
+        with (
+            patch(
+                "app.api.routes.assessment.datasets.get_submission_by_id",
+                return_value=_submission(),
+            ),
+            patch(
+                "app.api.routes.assessment.datasets.preview_submission"
+            ) as preview_mock,
+        ):
+            resp = get_dataset(
+                uuid4(), session=MagicMock(), auth_context=_auth_context()
+            )
         preview_mock.assert_not_called()
         assert resp.data is not None
         assert resp.data.preview is None
 
     def test_delete_dataset_success_and_error(self) -> None:
-        with patch(
-            "app.api.routes.assessment.datasets.get_submission_by_id",
-            return_value=_submission(),
-        ), patch(
-            "app.api.routes.assessment.datasets.delete_submission",
-            return_value=None,
+        with (
+            patch(
+                "app.api.routes.assessment.datasets.get_submission_by_id",
+                return_value=_submission(),
+            ),
+            patch(
+                "app.api.routes.assessment.datasets.delete_submission",
+                return_value=None,
+            ),
         ):
-            resp = delete_dataset(7, session=MagicMock(), auth_context=_auth_context())
+            resp = delete_dataset(
+                uuid4(), session=MagicMock(), auth_context=_auth_context()
+            )
         assert resp.success is True
 
-        with patch(
-            "app.api.routes.assessment.datasets.get_submission_by_id",
-            return_value=_submission(),
-        ), patch(
-            "app.api.routes.assessment.datasets.delete_submission",
-            return_value="cannot delete",
+        with (
+            patch(
+                "app.api.routes.assessment.datasets.get_submission_by_id",
+                return_value=_submission(),
+            ),
+            patch(
+                "app.api.routes.assessment.datasets.delete_submission",
+                return_value="cannot delete",
+            ),
         ):
             with pytest.raises(HTTPException, match="cannot delete"):
-                delete_dataset(7, session=MagicMock(), auth_context=_auth_context())
+                delete_dataset(
+                    uuid4(), session=MagicMock(), auth_context=_auth_context()
+                )
 
 
 # ─── Runs — POST + retry ─────────────────────────────────────────────────────
@@ -255,24 +278,30 @@ class TestRunRoutes:
             num_configs=1,
             runs=[],
         )
-        with patch(
-            "app.api.routes.assessment.assessments.get_assessment_by_id",
-            return_value=_assessment(),
-        ), patch(
-            "app.api.routes.assessment.assessments.retry_assessment_service",
-            return_value=result,
+        with (
+            patch(
+                "app.api.routes.assessment.assessments.get_assessment_by_id",
+                return_value=_assessment(),
+            ),
+            patch(
+                "app.api.routes.assessment.assessments.retry_assessment_service",
+                return_value=result,
+            ),
         ):
             resp = retry_assessment(
                 10, session=MagicMock(), auth_context=_auth_context()
             )
         assert resp.success is True
 
-        with patch(
-            "app.api.routes.assessment.runs.get_run_by_id",
-            return_value=_run(),
-        ), patch(
-            "app.api.routes.assessment.runs.retry_run",
-            return_value=result,
+        with (
+            patch(
+                "app.api.routes.assessment.runs.get_run_by_id",
+                return_value=_run(),
+            ),
+            patch(
+                "app.api.routes.assessment.runs.retry_run",
+                return_value=result,
+            ),
         ):
             resp = retry_assessment_run(
                 22, session=MagicMock(), auth_context=_auth_context()
@@ -286,12 +315,15 @@ class TestRunRoutes:
 class TestAssessmentAndRunRoutes:
     def test_list_and_get_assessments(self) -> None:
         public_stub = MagicMock()
-        with patch(
-            "app.api.routes.assessment.assessments.list_assessments_crud",
-            return_value=[_assessment()],
-        ), patch(
-            "app.api.routes.assessment.assessments._build_assessment_public",
-            return_value=public_stub,
+        with (
+            patch(
+                "app.api.routes.assessment.assessments.list_assessments_crud",
+                return_value=[_assessment()],
+            ),
+            patch(
+                "app.api.routes.assessment.assessments._build_assessment_public",
+                return_value=public_stub,
+            ),
         ):
             resp = list_assessments(
                 session=MagicMock(),
@@ -300,12 +332,15 @@ class TestAssessmentAndRunRoutes:
         assert resp.success is True
         assert len(resp.data or []) == 1
 
-        with patch(
-            "app.api.routes.assessment.assessments.get_assessment_by_id",
-            return_value=_assessment(),
-        ), patch(
-            "app.api.routes.assessment.assessments._build_assessment_public",
-            return_value=public_stub,
+        with (
+            patch(
+                "app.api.routes.assessment.assessments.get_assessment_by_id",
+                return_value=_assessment(),
+            ),
+            patch(
+                "app.api.routes.assessment.assessments._build_assessment_public",
+                return_value=public_stub,
+            ),
         ):
             resp = get_assessment(
                 10,
@@ -325,24 +360,30 @@ class TestAssessmentAndRunRoutes:
 
     def test_list_and_get_runs(self) -> None:
         public_stub = MagicMock()
-        with patch(
-            "app.api.routes.assessment.runs.list_runs",
-            return_value=[_run()],
-        ), patch(
-            "app.api.routes.assessment.runs._build_run_public",
-            return_value=public_stub,
+        with (
+            patch(
+                "app.api.routes.assessment.runs.list_runs",
+                return_value=[_run()],
+            ),
+            patch(
+                "app.api.routes.assessment.runs._build_run_public",
+                return_value=public_stub,
+            ),
         ):
             resp = list_assessment_runs(
                 session=MagicMock(), auth_context=_auth_context()
             )
         assert resp.success is True
 
-        with patch(
-            "app.api.routes.assessment.runs.get_run_by_id",
-            return_value=_run(),
-        ), patch(
-            "app.api.routes.assessment.runs._build_run_public",
-            return_value=public_stub,
+        with (
+            patch(
+                "app.api.routes.assessment.runs.get_run_by_id",
+                return_value=_run(),
+            ),
+            patch(
+                "app.api.routes.assessment.runs._build_run_public",
+                return_value=public_stub,
+            ),
         ):
             resp = get_assessment_run(
                 22, session=MagicMock(), auth_context=_auth_context()
@@ -367,16 +408,20 @@ class TestAssessmentAndRunRoutes:
 class TestExportRoutes:
     def test_export_assessment_results_delegates_to_util(self) -> None:
         """Parent export route delegates JSON/single-file/ZIP packaging to utils."""
-        with patch(
-            "app.api.routes.assessment.assessments.get_assessment_by_id",
-            return_value=_assessment(),
-        ), patch(
-            "app.api.routes.assessment.assessments.get_assessment_runs_for_assessment",
-            return_value=[_run()],
-        ), patch(
-            "app.api.routes.assessment.assessments.build_assessment_results_response",
-            return_value="stub-response",
-        ) as build:
+        with (
+            patch(
+                "app.api.routes.assessment.assessments.get_assessment_by_id",
+                return_value=_assessment(),
+            ),
+            patch(
+                "app.api.routes.assessment.assessments.get_assessment_runs_for_assessment",
+                return_value=[_run()],
+            ),
+            patch(
+                "app.api.routes.assessment.assessments.build_assessment_results_response",
+                return_value="stub-response",
+            ) as build,
+        ):
             result = export_assessment_results(
                 10,
                 session=MagicMock(),
@@ -388,21 +433,27 @@ class TestExportRoutes:
 
     def test_export_assessment_run_results_json_and_file(self) -> None:
         run = _run()
-        with patch(
-            "app.api.routes.assessment.runs.get_run_by_id",
-            return_value=run,
-        ), patch(
-            "app.api.routes.assessment.runs.get_assessment_by_id",
-            return_value=_assessment(),
-        ), patch(
-            "app.api.routes.assessment.runs.load_export_rows_for_run",
-            return_value=[_row()],
-        ), patch(
-            "app.api.routes.assessment.runs.sort_export_rows",
-            side_effect=lambda rows: rows,
-        ), patch(
-            "app.api.routes.assessment.runs.build_json_export_rows",
-            return_value=[{"x": 1}],
+        with (
+            patch(
+                "app.api.routes.assessment.runs.get_run_by_id",
+                return_value=run,
+            ),
+            patch(
+                "app.api.routes.assessment.runs.get_assessment_by_id",
+                return_value=_assessment(),
+            ),
+            patch(
+                "app.api.routes.assessment.runs.load_export_rows_for_run",
+                return_value=[_row()],
+            ),
+            patch(
+                "app.api.routes.assessment.runs.sort_export_rows",
+                side_effect=lambda rows: rows,
+            ),
+            patch(
+                "app.api.routes.assessment.runs.build_json_export_rows",
+                return_value=[{"x": 1}],
+            ),
         ):
             json_resp = export_assessment_run_results(
                 22,
@@ -412,21 +463,27 @@ class TestExportRoutes:
             )
         assert json_resp.success is True
 
-        with patch(
-            "app.api.routes.assessment.runs.get_run_by_id",
-            return_value=run,
-        ), patch(
-            "app.api.routes.assessment.runs.get_assessment_by_id",
-            return_value=_assessment(),
-        ), patch(
-            "app.api.routes.assessment.runs.load_export_rows_for_run",
-            return_value=[_row()],
-        ), patch(
-            "app.api.routes.assessment.runs.sort_export_rows",
-            side_effect=lambda rows: rows,
-        ), patch(
-            "app.api.routes.assessment.runs.build_export_response",
-            return_value=StreamingResponse(iter([b"x"])),
+        with (
+            patch(
+                "app.api.routes.assessment.runs.get_run_by_id",
+                return_value=run,
+            ),
+            patch(
+                "app.api.routes.assessment.runs.get_assessment_by_id",
+                return_value=_assessment(),
+            ),
+            patch(
+                "app.api.routes.assessment.runs.load_export_rows_for_run",
+                return_value=[_row()],
+            ),
+            patch(
+                "app.api.routes.assessment.runs.sort_export_rows",
+                side_effect=lambda rows: rows,
+            ),
+            patch(
+                "app.api.routes.assessment.runs.build_export_response",
+                return_value=StreamingResponse(iter([b"x"])),
+            ),
         ):
             file_resp = export_assessment_run_results(
                 22,
@@ -474,15 +531,19 @@ class TestBuildAssessmentResultsResponse:
             build_assessment_results_response,
         )
 
-        with patch(
-            "app.services.assessment.utils.export.load_export_rows_for_run",
-            return_value=[_row()],
-        ), patch(
-            "app.services.assessment.utils.export.sort_export_rows",
-            side_effect=lambda rows: rows,
-        ), patch(
-            "app.services.assessment.utils.export.build_json_export_rows",
-            return_value=[{"x": 1}],
+        with (
+            patch(
+                "app.services.assessment.utils.export.load_export_rows_for_run",
+                return_value=[_row()],
+            ),
+            patch(
+                "app.services.assessment.utils.export.sort_export_rows",
+                side_effect=lambda rows: rows,
+            ),
+            patch(
+                "app.services.assessment.utils.export.build_json_export_rows",
+                return_value=[{"x": 1}],
+            ),
         ):
             resp = build_assessment_results_response(
                 session=MagicMock(),
@@ -502,18 +563,23 @@ class TestBuildAssessmentResultsResponse:
         run2.id = 23
         run2.config_version = 2
 
-        with patch(
-            "app.services.assessment.utils.export.load_export_rows_for_run",
-            side_effect=[[_row(execution_id=22)], [_row(execution_id=23)]],
-        ), patch(
-            "app.services.assessment.utils.export.sort_export_rows",
-            side_effect=lambda rows: rows,
-        ), patch(
-            "app.services.assessment.utils.export.serialize_export_rows",
-            return_value=(b"csv", "text/csv"),
-        ), patch(
-            "app.services.assessment.utils.export.generate_timestamped_filename",
-            return_value="out.zip",
+        with (
+            patch(
+                "app.services.assessment.utils.export.load_export_rows_for_run",
+                side_effect=[[_row(execution_id=22)], [_row(execution_id=23)]],
+            ),
+            patch(
+                "app.services.assessment.utils.export.sort_export_rows",
+                side_effect=lambda rows: rows,
+            ),
+            patch(
+                "app.services.assessment.utils.export.serialize_export_rows",
+                return_value=(b"csv", "text/csv"),
+            ),
+            patch(
+                "app.services.assessment.utils.export.generate_timestamped_filename",
+                return_value="out.zip",
+            ),
         ):
             resp = build_assessment_results_response(
                 session=MagicMock(),

@@ -1,14 +1,14 @@
 """Parent-assessment endpoints (LEGACY RUN pipeline).
 
-Serves submission-based RUN assessments only. The new API-client BATCH path
-(`api.py`) delivers results by webhook and never surfaces here.
+Serves submission-based RUN assessments only. The API-client BATCH path (`api.py`) has
+its own list/detail endpoints; its rows never surface here.
 """
 
 import logging
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from sqlmodel import Session
@@ -25,10 +25,11 @@ from app.crud.assessment import (
 )
 from app.models.assessment import (
     Assessment,
+    AssessmentMethod,
     AssessmentPublic,
     AssessmentResponse,
+    AssessmentSubmission,
 )
-from app.models.assessment import AssessmentSubmission
 from app.services.assessment.service import retry_assessment as retry_assessment_service
 from app.services.assessment.utils import build_assessment_results_response
 from app.utils import APIResponse, load_description
@@ -168,6 +169,14 @@ def export_assessment_results(
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
+    if assessment.method != AssessmentMethod.RUN:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Assessment {assessment_id} is a {assessment.method} assessment; this "
+                f"export serves RUN only. Read its rows from GET /assessments/{assessment_id}."
+            ),
+        )
 
     runs = get_assessment_runs_for_assessment(
         session=session, assessment_id=assessment_id

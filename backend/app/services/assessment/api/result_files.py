@@ -5,7 +5,6 @@ builds ``errors.jsonl`` at terminal time, and presigns both into the callback en
 Nothing here raises into the terminal path: a missing dump degrades to a missing key.
 """
 
-import json
 import logging
 from datetime import timedelta
 from enum import StrEnum
@@ -26,7 +25,11 @@ from app.models.assessment import (
     BatchRunState,
 )
 from app.models.batch_job import BatchJob
-from app.services.assessment.api.batch import ApiStage, _build_batch_provider
+from app.services.assessment.api.batch import (
+    ApiStage,
+    _build_batch_provider,
+    error_file_entries,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +123,7 @@ def _error_file_rows(
             organization_id=assessment.organization_id,
             project_id=assessment.project_id,
         )
-        content = provider.download_file(file_id)
+        entries = error_file_entries(provider, file_id)
     except Exception as exc:
         # Provider SDKs raise heterogeneous types here and the dump is best-effort.
         message = (
@@ -143,29 +146,15 @@ def _error_file_rows(
             }
         ]
 
-    rows: list[dict[str, Any]] = []
-    for line in content.strip().split("\n"):
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            logger.warning(
-                "[_error_file_rows] Unparseable error-file line, skipping | "
-                "batch_job_id=%s | stage=%s",
-                batch_job.id,
-                stage,
-            )
-            continue
-        rows.append(
-            {
-                "type": ErrorRecordEnum.PROVIDER_ERROR_FILE.value,
-                "stage": stage,
-                "provider_error_file_id": file_id,
-                "entry": entry,
-            }
-        )
-    return rows
+    return [
+        {
+            "type": ErrorRecordEnum.PROVIDER_ERROR_FILE.value,
+            "stage": stage,
+            "provider_error_file_id": file_id,
+            "entry": entry,
+        }
+        for entry in entries
+    ]
 
 
 def build_and_upload_errors(

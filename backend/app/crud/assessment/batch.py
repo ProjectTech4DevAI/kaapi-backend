@@ -103,12 +103,8 @@ def _parse_csv_rows(content: bytes) -> list[dict[str, str]]:
     else:
         text = content.decode("utf-8", errors="replace")
 
-    reader = csv.DictReader(io.StringIO(text))
-    return [
-        _named_cells(row)
-        for row in reader
-        if any(value and str(value).strip() for value in row.values())
-    ]
+    rows = (_named_cells(row) for row in csv.DictReader(io.StringIO(text)))
+    return [row for row in rows if any(value.strip() for value in row.values())]
 
 
 def _parse_excel_rows(content: bytes) -> list[dict[str, str]]:

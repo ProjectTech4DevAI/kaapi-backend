@@ -226,7 +226,9 @@ def list_assessments_with_execution(
             statement = statement.where(AssessmentRun.config_version == config_version)
 
     statement = (
-        statement.order_by(col(Assessment.inserted_at).desc())
+        statement.order_by(
+            col(Assessment.inserted_at).desc(), col(Assessment.id).desc()
+        )
         .limit(limit)
         .offset(offset)
     )

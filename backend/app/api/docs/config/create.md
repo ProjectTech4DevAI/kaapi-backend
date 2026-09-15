@@ -83,14 +83,17 @@ When `tag` is `"ASSESSMENT"`, `config_blob` uses the assessment shape instead of
 not rendered in the OpenAPI spec (so the default `config_blob` schema stays stable) — the
 shape is documented here:
 
+* `input_schema` (required, at the `config_blob` root) — **non-empty** mapping of each
+  submission column name to `{ type, format, strict }` (`type` is **required**: `text` |
+  `image` | `pdf`; `format`: `url` for attachment columns; `strict` defaults to `false`).
+  A `strict: true` column must be present and non-blank in every submission row; any other
+  column may be omitted or blank (see the submit docs for per-row validation). Unknown keys
+  in a column spec are rejected. Shared by the pre-filter and the assessment call.
 * `assessment` (required) — the grading call. `provider` is `openai` | `google` |
   `anthropic`, `type` is `"text"`. `params` carries the `model`, the `instructions`
-  (system prompt), an optional `json_output_schema` (structured-output JSON schema), and a
-  **mandatory, non-empty** `input_schema` mapping each column name to `{ type, format, strict }`
-  (`type` is **required**: `text` | `image` | `pdf`; `format`: `url` for attachment
-  columns; `strict` defaults to `false`). A `strict: true` column must be present and
-  non-blank in every submission row; any other column may be omitted or blank (see the
-  submit docs for per-row validation). Unknown keys in a column spec are rejected.
+  (system prompt), the **mandatory** per-row `submission` template (`{column}`
+  placeholders must name `input_schema` keys), and an optional `json_output_schema`
+  (structured-output JSON schema).
 * `pre_filters` (optional) — `topic_relevance` and/or `duplicate_detection`. Each runs its
   own llm call, so it carries `provider` (default `openai`) + its own `params`
   (a `TextLLMParams` object: `model`, `temperature`, …). Its criteria live in
@@ -102,6 +105,10 @@ shape is documented here:
 
 ```json
 "config_blob": {
+  "input_schema": {
+    "gcs_url": { "type": "image", "format": "url", "strict": true },
+    "rubric":  { "type": "text" }
+  },
   "pre_filters": {
     "topic_relevance": {
       "provider": "openai",
@@ -119,10 +126,7 @@ shape is documented here:
     "params": {
       "model": "gpt-4o",
       "instructions": "You are an AI Assessment Evaluator ...",
-      "input_schema": {
-        "gcs_url": { "type": "image", "format": "url" },
-        "rubric":  { "type": "text" }
-      },
+      "submission": "Grade the attached answer sheet against this rubric: {rubric}",
       "json_output_schema": {
         "type": "object",
         "properties": { "grade": { "type": "string" }, "feedback": { "type": "string" } },

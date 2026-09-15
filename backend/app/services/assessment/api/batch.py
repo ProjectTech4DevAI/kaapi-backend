@@ -698,6 +698,21 @@ def _submit_stage(
     return True
 
 
+def error_file_entries(provider: BatchProvider, file_id: str) -> list[dict[str, Any]]:
+    """Parsed lines of a provider error file (OpenAI only); an unparseable line is skipped."""
+    entries: list[dict[str, Any]] = []
+    for line in provider.download_file(file_id).splitlines():
+        if not line.strip():
+            continue
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            logger.warning(
+                "[error_file_entries] Unparseable line skipped | file_id=%s", file_id
+            )
+    return entries
+
+
 def _poll_outcome(
     session: Session,
     provider: BatchProvider,
@@ -732,6 +747,20 @@ def _poll_outcome(
                     f"{assessment_subdirectory(assessment_id)}/batch-{batch_job.id}"
                 ),
             )
+            # Rows OpenAI rejected live only in the error file; without them they would
+            # read as "no output, no error" and the stage could finish COMPLETED.
+            if batch_job.provider_error_file_id:
+                try:
+                    results = [
+                        *results,
+                        *error_file_entries(provider, batch_job.provider_error_file_id),
+                    ]
+                except Exception:
+                    logger.warning(
+                        "[_poll_outcome] Provider error file unreadable | batch_job_id=%s",
+                        batch_job.id,
+                        exc_info=True,
+                    )
             return "completed", results
         return "processing", None  # output not ready yet
     if status in _FAILED_STATUSES:

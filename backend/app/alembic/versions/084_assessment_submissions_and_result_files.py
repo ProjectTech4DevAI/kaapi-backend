@@ -7,7 +7,8 @@ Create Date: 2026-09-09 00:00:00.000000
 Assessment submissions leave `evaluation_dataset`, whose type-agnostic name uniqueness
 let an eval dataset block an assessment one. Multi-MB payloads leave Postgres too:
 `submission_input` and `result_files` hold s3:// urls, and `provider_error_file_id`
-keeps OpenAI's error dump fetchable after the poll that surfaced it.
+keeps OpenAI's error dump fetchable after the poll that surfaced it. `dataset_id` is
+dropped without a backfill: no assessment rows exist in any environment yet.
 """
 
 import sqlalchemy as sa

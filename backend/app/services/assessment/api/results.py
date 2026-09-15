@@ -111,6 +111,8 @@ def build_result(
     gate_passed = bag.get("gate_passed") or [True] * total_items
     verdicts = bag.get("verdicts") or {}
     outputs, load_error = _load_assessment_outputs(session, bag, assessment.project_id)
+    # Rows the provider rejected are absent from the output dump; the bag kept their error.
+    row_errors = (bag.get("stage_errors") or {}).get(ApiStage.ASSESSMENT.value, {})
 
     tr_verdicts = verdicts.get(ApiStage.TOPIC_RELEVANCE.value, {})
 
@@ -126,6 +128,8 @@ def build_result(
                 out = outputs[idx]
                 assessment_output = _parse_assessment(out)
                 error = out.get("error")
+            elif str(idx) in row_errors:
+                error = row_errors[str(idx)]
             elif load_error:
                 error = load_error
 

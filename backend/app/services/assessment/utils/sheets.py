@@ -13,7 +13,7 @@ def clean_sheet(
     """Drop blank rows, then columns with no header or no values; cells come back stripped.
 
     Sheets pad with formatted-but-empty cells, so 1000 rows x 17 columns with 100 x 10
-    filled comes back as exactly 100 x 10.
+    filled comes back as exactly 100 x 10. A row left empty by the column drop goes too.
     """
     headers = [_cell(name) for name in header]
     width = len(headers)
@@ -30,6 +30,5 @@ def clean_sheet(
         for idx, name in enumerate(headers)
         if name and any(row[idx] for row in filled)
     ]
-    return [headers[idx] for idx in keep], [
-        [row[idx] for idx in keep] for row in filled
-    ]
+    rows = [[row[idx] for idx in keep] for row in filled]
+    return [headers[idx] for idx in keep], [row for row in rows if any(row)]
