@@ -9,10 +9,10 @@ loop unconditionally, so a step slower than the tick interval got a second one
 dispatched on top of it — two workers against the same LangGraph checkpoint
 thread, and a duplicate eval run or improvement job charged for.
 
-Nullable with no backfill on purpose: NULL means "never dispatched", which is
-exactly what a freshly created loop needs so its first tick isn't skipped. Rows
-that predate this migration read as NULL and get one immediate resume, which is
-the behaviour they had anyway.
+New rows are stamped at creation, since kickoff enqueues the first step right
+away and that step needs the same cooldown as every later one. Nullable with no
+backfill: rows that predate this migration read as NULL and get one immediate
+resume, which is the behaviour they had anyway.
 
 No index — the PROCESSING set is small and already indexed on `status`; the
 cooldown comparison happens in Python, mirroring the fast-eval barrier.
@@ -34,7 +34,7 @@ def upgrade():
             "last_dispatched_at",
             sa.DateTime(),
             nullable=True,
-            comment="When the cron last dispatched a resume; NULL until the first tick",
+            comment="When a graph step was last dispatched (kickoff or cron resume); cron skips rows stamped inside the cooldown",
         ),
     )
 

@@ -72,11 +72,27 @@ def _backdate(
 
 
 class TestInFlightGuard:
-    def test_a_never_dispatched_loop_is_dispatched_and_stamped(
+    def test_a_fresh_kickoff_is_stamped_and_skipped_by_the_first_tick(
         self, db: Session, user_api_key: TestAuthContext
     ) -> None:
+        """Kickoff enqueues the first step itself; the tick must not race it."""
         run = _make_run(db, user_api_key, "guard-fresh")
-        assert run.last_dispatched_at is None
+        assert run.last_dispatched_at is not None
+
+        with patch(_START) as mock_start:
+            summary = dispatch_pending_evaluation_iteration_resumes(session=db)
+
+        mock_start.assert_not_called()
+        assert summary == {"total": 1, "resumes_dispatched": 0}
+
+    def test_a_pre_migration_null_stamp_is_dispatched_and_stamped(
+        self, db: Session, user_api_key: TestAuthContext
+    ) -> None:
+        """Rows older than migration 084 carry NULL; they get one immediate resume."""
+        run = _make_run(db, user_api_key, "guard-legacy-null")
+        run.last_dispatched_at = None
+        db.add(run)
+        db.commit()
 
         with patch(_START) as mock_start:
             summary = dispatch_pending_evaluation_iteration_resumes(session=db)

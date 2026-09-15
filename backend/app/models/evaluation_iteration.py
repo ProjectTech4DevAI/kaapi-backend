@@ -121,7 +121,7 @@ class EvaluationIterationRun(SQLModel, table=True):
     last_dispatched_at: datetime | None = Field(
         default=None,
         sa_column_kwargs={
-            "comment": "When the cron last dispatched a resume; NULL until the first tick"
+            "comment": "When a graph step was last dispatched (kickoff or cron resume); cron skips rows stamped inside the cooldown"
         },
     )
     inserted_at: datetime = Field(
