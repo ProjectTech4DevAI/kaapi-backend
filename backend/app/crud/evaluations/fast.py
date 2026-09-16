@@ -31,11 +31,12 @@ import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any
 
 import openai
 from langfuse import Langfuse
 from openai import OpenAI
+from sqlalchemy.orm.attributes import set_committed_value
 from sqlmodel import Session
 
 from app.core.cloud.storage import get_cloud_storage
@@ -55,12 +56,8 @@ from app.crud.evaluations.dataset import (
     get_dataset_by_id,
 )
 from app.crud.evaluations.embeddings import EMBEDDING_MODEL
-from app.crud.evaluations.fast_chunks import (  # noqa: F401  (re-exported)
+from app.crud.evaluations.fast_chunks import (
     CHUNK_CONFIG_INDEX,
-    CHUNK_CONFIG_RUN_ID,
-    JOB_TYPE_EMBEDDING_FAST,
-    JOB_TYPE_EVALUATION_FAST,
-    JOB_TYPE_EVALUATION_FAST_CHUNK,
     create_embedding_job,
     create_merged_response_job,
     create_response_chunk_job,
@@ -82,10 +79,9 @@ from app.crud.evaluations.fast_results import (
     is_failure_threshold_breached,
     parse_embedding_pair,
 )
-from app.crud.evaluations.fast_traces import build_trace_records, format_top_kb_matches
+from app.crud.evaluations.fast_traces import build_trace_records
 from app.crud.evaluations.judge import METRIC_REGISTRY, JudgeMetricSpec, JudgeResult
-from app.crud.evaluations.judge_stage import (  # noqa: F401  (re-exported)
-    PROMPT_TEMPLATE_LABEL,
+from app.crud.evaluations.judge_stage import (
     build_metric_summary_scores,
     judge_rows,
     resolve_config_prompt,
@@ -114,12 +110,6 @@ from app.services.llm.mappers import map_kaapi_to_openai_params
 from app.services.response.response import get_file_search_results
 
 logger = logging.getLogger(__name__)
-
-# The job-type/chunk-config constants above and these aliases are re-exported:
-# callers and tests still import them from this module, not from the split-out ones.
-_format_top_kb_matches = format_top_kb_matches
-_get_chunk_job = get_chunk_job
-_is_failure_threshold_breached = is_failure_threshold_breached
 
 _retry_openai_call = retry_openai_call(logger)
 
@@ -350,7 +340,7 @@ def run_response_chunk(
     Concurrency: two workers racing the same chunk_index can both pass the skip
     guard and write two rows; the merge de-duplicates per index.
     """
-    existing = _get_chunk_job(
+    existing = get_chunk_job(
         session=session, eval_run_id=eval_run.id, chunk_index=chunk_index
     )
     if existing and existing.raw_output_url:
@@ -531,7 +521,7 @@ def _stage2_embeddings(
         f"total={len(embedding_results)} | failed={failed_count}"
     )
 
-    if _is_failure_threshold_breached(
+    if is_failure_threshold_breached(
         failed_rows=total_failures, total_rows=len(response_results)
     ):
         raise RuntimeError(
@@ -935,7 +925,7 @@ def run_fast_evaluation(
 
     # Failure threshold is decided over the full merged set, not per chunk.
     failed_count = sum(1 for r in response_results if r.get("failed"))
-    if _is_failure_threshold_breached(
+    if is_failure_threshold_breached(
         failed_rows=failed_count, total_rows=len(response_results)
     ):
         raise RuntimeError(
@@ -1007,9 +997,11 @@ def run_fast_evaluation(
             )
         ),
     )
-    # The full unit (summary + traces) for the caller; the DB keeps summary +
-    # overall, with the traces in S3 behind score_trace_url.
-    eval_run.score = cast(dict[str, object], score)
+    # Hand the caller the full unit (summary + traces) without dirtying the row:
+    # the DB keeps summary + overall, traces live in S3 behind score_trace_url, and
+    # a plain assignment would flush every trace into `score` on the caller's next
+    # commit.
+    set_committed_value(eval_run, "score", score)
 
     logger.info(
         f"[run_fast_evaluation] {log_prefix} Fast evaluation completed | "

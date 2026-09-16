@@ -117,6 +117,22 @@ class TestAdvanceRoundState:
         assert update["best_round_number"] == 2
         assert update["best_config_version"] == 2
 
+    def test_a_tied_round_keeps_the_earlier_best(self) -> None:
+        state = _state(
+            round_number=2,
+            config_version=2,
+            history=[_round(1, 4.0)],
+            best_stop_score=4.0,
+            best_round_number=1,
+            best_config_version=1,
+        )
+        update = advance_round_state(
+            state=state, eval_run_id=101, stop_score=4.0, kb_score=None
+        )
+        assert update["best_stop_score"] == 4.0
+        assert update["best_round_number"] == 1
+        assert update["best_config_version"] == 1
+
     def test_a_gain_below_threshold_increments_the_ceiling_counter(self) -> None:
         state = _state(
             round_number=2, history=[_round(1, 3.0)], consecutive_low_delta_rounds=1

@@ -11,7 +11,10 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.util import now
 from app.crud.evaluations.core import update_evaluation_run
-from app.crud.evaluations.fast import CHUNK_CONFIG_INDEX, list_response_chunk_jobs
+from app.crud.evaluations.fast_chunks import (
+    CHUNK_CONFIG_INDEX,
+    list_response_chunk_jobs,
+)
 from app.crud.evaluations.iteration import (
     list_processing_evaluation_iteration_runs,
     update_evaluation_iteration_run,
@@ -152,7 +155,12 @@ def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str,
         f"[dispatch_pending_evaluation_iteration_resumes] Dispatched resumes | "
         f"count={dispatched} | in_flight_skipped={in_flight} | reaped={reaped}"
     )
-    return {"total": len(runs), "resumes_dispatched": dispatched}
+    return {
+        "total": len(runs),
+        "resumes_dispatched": dispatched,
+        "in_flight_skipped": in_flight,
+        "reaped": reaped,
+    }
 
 
 async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:

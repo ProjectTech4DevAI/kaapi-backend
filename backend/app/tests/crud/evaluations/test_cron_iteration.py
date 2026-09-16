@@ -103,4 +103,9 @@ class TestDispatchPendingEvaluationIterationResumes:
             summary = dispatch_pending_evaluation_iteration_resumes(session=db)
 
         mock_start.assert_not_called()
-        assert summary == {"total": 0, "resumes_dispatched": 0}
+        assert summary == {
+            "total": 0,
+            "resumes_dispatched": 0,
+            "in_flight_skipped": 0,
+            "reaped": 0,
+        }

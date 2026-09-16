@@ -3,15 +3,6 @@
 from enum import Enum
 from typing import NotRequired, TypedDict
 
-# Rubric text lives in judge_prompts; re-exported for existing importers.
-from app.crud.evaluations.judge_prompts import (  # noqa: F401
-    GROUND_TRUTH_JUDGE_PROMPT,
-    JUDGE_OUTPUT_INSTRUCTION,
-    JUDGE_SYSTEM_PREAMBLE,
-    KNOWLEDGE_BASE_JUDGE_PROMPT,
-    PROMPT_JUDGE_PROMPT,
-)
-
 DEFAULT_CATEGORY: str = "Other"
 
 

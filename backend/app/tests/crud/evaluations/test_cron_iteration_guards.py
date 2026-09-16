@@ -11,6 +11,7 @@ thread, and a row whose sub-job wedged collected resumes forever.
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
+import pytest
 from sqlmodel import Session
 
 from app.core.config import settings
@@ -83,7 +84,12 @@ class TestInFlightGuard:
             summary = dispatch_pending_evaluation_iteration_resumes(session=db)
 
         mock_start.assert_not_called()
-        assert summary == {"total": 1, "resumes_dispatched": 0}
+        assert summary == {
+            "total": 1,
+            "resumes_dispatched": 0,
+            "in_flight_skipped": 1,
+            "reaped": 0,
+        }
 
     def test_a_pre_migration_null_stamp_is_dispatched_and_stamped(
         self, db: Session, user_api_key: TestAuthContext
@@ -136,6 +142,23 @@ class TestInFlightGuard:
         assert run.last_dispatched_at is not None
         assert run.last_dispatched_at > stale
 
+    def test_a_failed_enqueue_leaves_the_stamp_so_the_next_tick_retries(
+        self, db: Session, user_api_key: TestAuthContext
+    ) -> None:
+        cooldown = settings.EVAL_ITERATION_DISPATCH_COOLDOWN_MINUTES
+        run = _make_run(db, user_api_key, "guard-enqueue-fails")
+        stale = now() - timedelta(minutes=cooldown + 1)
+        _backdate(db, run, last_dispatched_at=stale)
+
+        with (
+            patch(_START, side_effect=RuntimeError("broker down")),
+            pytest.raises(RuntimeError),
+        ):
+            dispatch_pending_evaluation_iteration_resumes(session=db)
+
+        db.refresh(run)
+        assert run.last_dispatched_at == stale
+
 
 class TestZombieReaper:
     def test_a_loop_past_the_stall_threshold_is_reaped_not_resumed(
@@ -159,7 +182,12 @@ class TestZombieReaper:
         assert kwargs["organization_id"] == user_api_key.organization_id
         assert kwargs["project_id"] == user_api_key.project_id
         assert "stalled" in kwargs["error_message"]
-        assert summary == {"total": 1, "resumes_dispatched": 0}
+        assert summary == {
+            "total": 1,
+            "resumes_dispatched": 0,
+            "in_flight_skipped": 0,
+            "reaped": 1,
+        }
 
     def test_a_young_loop_is_never_reaped(
         self, db: Session, user_api_key: TestAuthContext
@@ -183,16 +211,3 @@ class TestZombieReaper:
 
         mock_reaper.assert_not_called()
         mock_start.assert_called_once()
-
-
-class TestSummaryShape:
-    def test_summary_keeps_exactly_the_two_documented_keys(
-        self, db: Session, user_api_key: TestAuthContext
-    ) -> None:
-        """`test_cron_iteration.py` asserts this dict by equality — keep it closed."""
-        _make_run(db, user_api_key, "guard-shape")
-
-        with patch(_START):
-            summary = dispatch_pending_evaluation_iteration_resumes(session=db)
-
-        assert set(summary) == {"total", "resumes_dispatched"}
