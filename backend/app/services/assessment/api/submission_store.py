@@ -1,4 +1,4 @@
-"""Object-store round trip for the API-client BATCH submission rows."""
+"""Object-store round trip for the rows a BATCH assessment runs against."""
 
 import json
 import logging
@@ -11,12 +11,19 @@ from sqlmodel import Session
 
 from app.core.cloud import get_cloud_storage
 from app.core.storage_utils import upload_jsonl_to_object_store
-from app.models.assessment import Assessment, BatchInput, Submission
-from app.services.assessment.api.result_files import assessment_subdirectory
+from app.models.assessment import (
+    Assessment,
+    AssessmentSubmission,
+    BatchInput,
+    Submission,
+)
+from app.services.assessment.validators import (
+    SUBMISSION_FILENAME,
+    assessment_prefix,
+    submission_rows_url,
+)
 
 logger = logging.getLogger(__name__)
-
-SUBMISSION_FILENAME = "submission.jsonl"
 
 
 class SubmissionUnavailableError(Exception):
@@ -26,13 +33,13 @@ class SubmissionUnavailableError(Exception):
 def upload_submission_rows(
     *, session: Session, assessment_id: UUID, project_id: int, batch_input: BatchInput
 ) -> str | None:
-    """Store the submission rows as JSONL. Returns the object-store url, None on failure."""
+    """Store inline submission rows as JSONL. Returns the object-store url, None on failure."""
     rows = batch_input.data or []
     url = upload_jsonl_to_object_store(
         storage=get_cloud_storage(session=session, project_id=project_id),
         results=rows,
         filename=SUBMISSION_FILENAME,
-        subdirectory=assessment_subdirectory(assessment_id),
+        subdirectory=assessment_prefix(assessment_id),
     )
     logger.info(
         "[upload_submission_rows] Submission %s | assessment_id=%s | rows=%s | url=%s",
@@ -52,35 +59,85 @@ def _rows(body: StreamingBody, url: str) -> Iterator[Submission]:
     except json.JSONDecodeError:
         raise
     except Exception as exc:
-        raise SubmissionUnavailableError(
-            f"[open_submission_rows] Read of {url} failed: {exc}"
-        ) from exc
+        raise SubmissionUnavailableError(f"Read of {url} failed: {exc}") from exc
+
+
+@contextmanager
+def _stream(
+    *, session: Session, project_id: int, url: str
+) -> Generator[Iterator[Submission], None, None]:
+    """Stream a JSONL of rows; the storage body closes on exit."""
+    try:
+        storage = get_cloud_storage(session=session, project_id=project_id)
+        body = storage.stream(url)
+    except Exception as exc:
+        raise SubmissionUnavailableError(f"Could not open {url}: {exc}") from exc
+
+    try:
+        yield _rows(body, url)
+    finally:
+        body.close()
+
+
+@contextmanager
+def open_uploaded_rows(
+    *, session: Session, submission: AssessmentSubmission
+) -> Generator[Iterator[Submission], None, None]:
+    """Stream an uploaded submission's rows, parsed once at upload.
+
+    Falls back to parsing the original file for submissions stored before the
+    upload started writing them, so old records keep working.
+    """
+    if not submission.object_store_url:
+        raise ValueError(f"Submission {submission.id} has no object_store_url")
+
+    url = submission_rows_url(submission.object_store_url)
+    # Opened here, not via `_stream`: only a failure to open may fall back, never a
+    # failure mid-iteration, which must surface as the retryable error it is.
+    try:
+        storage = get_cloud_storage(session=session, project_id=submission.project_id)
+        body = storage.stream(url)
+    except Exception:
+        logger.info(
+            "[open_uploaded_rows] No stored rows, parsing the original | submission_id=%s",
+            submission.id,
+        )
+        from app.crud.assessment.batch import load_submission_file_rows
+
+        yield iter(load_submission_file_rows(session=session, submission=submission))
+        return
+
+    try:
+        yield _rows(body, url)
+    finally:
+        body.close()
 
 
 @contextmanager
 def open_submission_rows(
     *, session: Session, assessment: Assessment
 ) -> Generator[Iterator[Submission], None, None]:
-    """Stream the stored rows one per line; the storage body closes on exit.
+    """Stream the rows an assessment runs against.
 
-    Storage errors raise ``SubmissionUnavailableError`` so the task retries (an S3 blip
-    must not fail a paid-for execution); a corrupt line is a ``ValueError`` and terminal.
+    An inline BATCH holds its own copy at ``submission_input``; one submitted by
+    reference reads the uploaded submission directly, since that file never changes.
     """
-    url = assessment.submission_input
-    if not url:
-        raise ValueError(
-            f"[open_submission_rows] No submission_input on assessment {assessment.id}"
-        )
+    if assessment.submission_input:
+        with _stream(
+            session=session,
+            project_id=assessment.project_id,
+            url=assessment.submission_input,
+        ) as stream:
+            yield stream
+        return
 
-    try:
-        storage = get_cloud_storage(session=session, project_id=assessment.project_id)
-        body = storage.stream(url)
-    except Exception as exc:
-        raise SubmissionUnavailableError(
-            f"[open_submission_rows] Could not open {url}: {exc}"
-        ) from exc
+    submission = (
+        session.get(AssessmentSubmission, assessment.submission_id)
+        if assessment.submission_id
+        else None
+    )
+    if submission is None:
+        raise ValueError(f"Assessment {assessment.id} has no rows to read")
 
-    try:
-        yield _rows(body, url)
-    finally:
-        body.close()
+    with open_uploaded_rows(session=session, submission=submission) as stream:
+        yield stream

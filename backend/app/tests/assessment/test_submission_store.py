@@ -1,5 +1,6 @@
 """Tests for the submission-rows round trip (api/submission_store.py)."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -89,12 +90,30 @@ class TestOpen:
 
         assert body.closed
 
-    def test_missing_url_is_a_value_error(self) -> None:
-        with pytest.raises(ValueError, match="No submission_input"):
-            with open_submission_rows(
-                session=MagicMock(), assessment=_assessment(None)
-            ):
+    def test_no_rows_anywhere_is_a_value_error(self) -> None:
+        session = MagicMock()
+        session.get.return_value = None
+        with pytest.raises(ValueError, match="no rows to read"):
+            with open_submission_rows(session=session, assessment=_assessment(None)):
                 pass
+
+    def test_falls_back_to_the_uploaded_submission(self) -> None:
+        body = _Body(b'{"a": "1"}\n')
+        assessment = _assessment(None)
+        assessment.submission_id = uuid4()
+        submission = SimpleNamespace(
+            id=assessment.submission_id,
+            project_id=1,
+            object_store_url="s3://b/subs/x/file.csv",
+        )
+        session = MagicMock()
+        session.get.return_value = submission
+
+        with patch(_STORAGE, return_value=_storage_with(body)):
+            with open_submission_rows(session=session, assessment=assessment) as stream:
+                assert list(stream) == [{"a": "1"}]
+
+        assert body.closed
 
     def test_open_failure_is_retryable(self) -> None:
         storage = MagicMock()

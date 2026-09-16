@@ -10,11 +10,10 @@ from openpyxl.utils.exceptions import InvalidFileException
 
 from app.crud.assessment.batch import (
     _build_text_prompt,
-    load_submission_file_rows,
-    _parse_excel_rows,
     build_anthropic_jsonl,
     build_google_jsonl,
     build_openai_jsonl,
+    load_submission_file_rows,
     submit_assessment_batch,
 )
 from app.models.assessment import AssessmentAttachment
@@ -30,6 +29,7 @@ from app.services.assessment.utils.attachments import (
     split_attachment_urls,
     to_direct_attachment_url,
 )
+from app.services.assessment.validators import parse_excel_rows
 
 _REWRITE_RESOLVER = "app.services.assessment.utils.attachments.resolve_attachments"
 
@@ -371,14 +371,14 @@ class TestBatchDatasetParsing:
         with (
             patch("app.crud.assessment.batch.get_cloud_storage", return_value=storage),
             patch(
-                "app.crud.assessment.batch._parse_excel_rows",
+                "app.crud.assessment.batch.parse_rows",
                 return_value=expected,
-            ) as parse_excel,
+            ) as parse,
         ):
             result = load_submission_file_rows(session=session, submission=submission)
 
         assert result == expected
-        parse_excel.assert_called_once_with(b"xlsx-content")
+        parse.assert_called_once_with(b"xlsx-content", ".xlsx")
 
     def test_load_submission_rows_rejects_legacy_xls(self) -> None:
         session = MagicMock()
@@ -398,7 +398,7 @@ class TestBatchDatasetParsing:
 
     def test_parse_excel_rows_invalid_payload_raises(self) -> None:
         with pytest.raises((ValueError, InvalidFileException)):
-            _parse_excel_rows(b"not-a-valid-xlsx")
+            parse_excel_rows(b"not-a-valid-xlsx")
 
     def test_parse_excel_rows_success(self) -> None:
         wb = Workbook()
@@ -411,16 +411,17 @@ class TestBatchDatasetParsing:
         wb.save(buf)
         wb.close()
 
-        rows = _parse_excel_rows(buf.getvalue())
+        rows = parse_excel_rows(buf.getvalue())
         assert rows == [{"question": "What is 2+2?", "answer": "4"}]
 
     def test_parse_excel_rows_returns_empty_when_sheet_missing(self) -> None:
         fake_wb = MagicMock()
         fake_wb.active = None
         with patch(
-            "app.crud.assessment.batch.openpyxl.load_workbook", return_value=fake_wb
+            "app.services.assessment.validators.openpyxl.load_workbook",
+            return_value=fake_wb,
         ):
-            assert _parse_excel_rows(b"irrelevant") == []
+            assert parse_excel_rows(b"irrelevant") == []
         fake_wb.close.assert_called_once()
 
     def test_parse_excel_rows_returns_empty_when_header_missing(self) -> None:
@@ -429,28 +430,29 @@ class TestBatchDatasetParsing:
         fake_wb = MagicMock()
         fake_wb.active = fake_ws
         with patch(
-            "app.crud.assessment.batch.openpyxl.load_workbook", return_value=fake_wb
+            "app.services.assessment.validators.openpyxl.load_workbook",
+            return_value=fake_wb,
         ):
-            assert _parse_excel_rows(b"irrelevant") == []
+            assert parse_excel_rows(b"irrelevant") == []
         fake_wb.close.assert_called_once()
 
     def test_parse_excel_rows_invalid_file_exception_re_raises(self) -> None:
         with patch(
-            "app.crud.assessment.batch.openpyxl.load_workbook",
+            "app.services.assessment.validators.openpyxl.load_workbook",
             side_effect=InvalidFileException("bad xlsx"),
         ):
             with pytest.raises(InvalidFileException):
-                _parse_excel_rows(b"bad")
+                parse_excel_rows(b"bad")
 
     def test_parse_excel_rows_unexpected_exception_raises_value_error(self) -> None:
         with patch(
-            "app.crud.assessment.batch.openpyxl.load_workbook",
+            "app.services.assessment.validators.openpyxl.load_workbook",
             side_effect=RuntimeError("boom"),
         ):
             with pytest.raises(
                 ValueError, match="Failed to parse XLSX submission rows"
             ):
-                _parse_excel_rows(b"bad")
+                parse_excel_rows(b"bad")
 
 
 class TestBatchHelpers:

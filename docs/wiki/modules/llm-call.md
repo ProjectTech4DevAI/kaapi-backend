@@ -34,6 +34,7 @@ All paths relative to `backend/app/`.
 
 ## Services / CRUD
 - `services/llm/` — `mappers.py` (Kaapi params → provider API), `providers/`, `chain/`, `guardrails.py`, `jobs.py`
+- `mappers.py` is the **only** param mapper in the codebase; the assessment fork was merged back into it. Callers: `crud/evaluations/{batch,fast,judge}.py`, `crud/assessment/batch.py`, `services/assessment/api/batch.py`, `services/assessment/prefilter/request_builder.py`. Structured output is keyed `output_schema` for every provider (OpenAI `text.format`, Anthropic `output_config.format`, Gemini `output_schema`), and Anthropic reads `effort` into `output_config.effort`. Every param that only assessment set (`top_p`, `max_output_tokens`, `thinking_level`, `thinking`, `output_schema`) defaults to `None` on `TextLLMParams` and is dropped by `ParamSerialization._dump_compact`, so a config that does not set it maps exactly as before. `normalize_llm_text` lives here but no mapper calls it — callers that want prompt unescaping apply it themselves.
 - `services/guardrails/` — validator execution
 - `crud/llm.py`, `crud/llm_chain.py`, `crud/config/` — persistence
 

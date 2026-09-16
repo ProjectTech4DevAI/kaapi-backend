@@ -7,17 +7,22 @@ upload so nothing has to re-read the file to learn how many rows it holds.
 import csv
 import io
 import logging
-from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.core.cloud import get_cloud_storage
-from app.core.storage_utils import upload_to_object_store
+from app.core.storage_utils import upload_jsonl_to_object_store, upload_to_object_store
 from app.crud.assessment.submission import create_submission, get_submission_by_name
 from app.models.assessment import AssessmentSubmission
-from app.services.assessment.utils.sheets import clean_sheet
+from app.services.assessment.validators import (
+    SUBMISSION_FILENAME,
+    clean_sheet,
+    file_extension_of,
+    parse_rows,
+    submission_prefix,
+)
 from app.services.evaluations.validators import sanitize_dataset_name
 
 logger = logging.getLogger(__name__)
@@ -30,17 +35,10 @@ except Exception:  # pragma: no cover - openpyxl is expected in runtime deps
         pass
 
 
-SUBMISSIONS_SUBDIRECTORY = "assessment/submissions"
-
 _MIME_TYPES = {
     ".csv": "text/csv",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
-
-
-def file_extension_of(object_store_url: str) -> str:
-    """Format of a stored submission, read off its key (no column holds it)."""
-    return Path(object_store_url).suffix.lower()
 
 
 def _upload_file_to_object_store(
@@ -61,7 +59,7 @@ def _upload_file_to_object_store(
             storage=storage,
             content=file_content,
             filename=filename,
-            subdirectory=f"{SUBMISSIONS_SUBDIRECTORY}/{submission_id}",
+            subdirectory=submission_prefix(submission_id),
             content_type=content_type,
         )
     except Exception as e:
@@ -72,65 +70,28 @@ def _upload_file_to_object_store(
         return None
 
 
-def _count_csv_rows(content: bytes) -> int:
-    """Count data rows in a CSV file (excluding header)."""
-    try:
-        for encoding in ("utf-8-sig", "utf-8", "latin-1"):
-            try:
-                text = content.decode(encoding)
-                break
-            except (UnicodeDecodeError, ValueError):
-                continue
-        else:
-            text = content.decode("utf-8", errors="replace")
+def _store_parsed_rows(
+    session: Session,
+    project_id: int,
+    submission_id: UUID,
+    rows: list[dict[str, str]],
+) -> None:
+    """Keep the parsed rows beside the file so no run has to parse it again.
 
-        reader = csv.reader(io.StringIO(text))
-        next(reader, None)
-        return sum(1 for row in reader if any(cell.strip() for cell in row))
-    except Exception as e:
-        logger.warning(f"[_count_csv_rows] Failed to count rows | {e}")
-        return 0
-
-
-def _count_excel_rows(content: bytes) -> int:
-    """Count data rows in an Excel file (excluding header)."""
-    wb = None
-    try:
-        import openpyxl
-
-        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-        ws = wb.active
-        if ws is None:
-            return 0
-
-        rows_iter = ws.iter_rows(values_only=True)
-        header = next(rows_iter, None)
-        if header is None:
-            return 0
-
-        return len(clean_sheet(header, rows_iter)[1])
-    except InvalidFileException as e:
-        logger.warning("[_count_excel_rows] Invalid XLSX file content: %s", e)
-        raise
-    except Exception as e:
+    Best effort: a failure here only costs a later reader one re-parse.
+    """
+    url = upload_jsonl_to_object_store(
+        storage=get_cloud_storage(session=session, project_id=project_id),
+        results=rows,
+        filename=SUBMISSION_FILENAME,
+        subdirectory=submission_prefix(submission_id),
+    )
+    if not url:
         logger.warning(
-            "[_count_excel_rows] Failed to count rows | %s", e, exc_info=True
+            "[_store_parsed_rows] Rows not stored, runs will parse the file | "
+            "submission_id=%s",
+            submission_id,
         )
-        raise ValueError("Failed to parse XLSX file") from e
-    finally:
-        if wb is not None:
-            wb.close()
-
-
-def _count_rows(content: bytes, file_ext: str) -> int:
-    """Count data rows in a file (CSV or XLSX), excluding the header."""
-    if file_ext == ".xls":
-        raise ValueError(
-            "Legacy Excel format (.xls) is not supported. Please upload .xlsx or .csv."
-        )
-    if file_ext == ".xlsx":
-        return _count_excel_rows(content)
-    return _count_csv_rows(content)
 
 
 def _stringify(value: object) -> str:
@@ -271,7 +232,7 @@ def upload_submission(
         )
 
     try:
-        row_count = _count_rows(file_content, file_ext)
+        rows = parse_rows(file_content, file_ext)
     except InvalidFileException as e:
         raise HTTPException(
             status_code=422,
@@ -285,6 +246,7 @@ def upload_submission(
             detail="Unable to parse the file. Please upload a valid CSV or XLSX file.",
         ) from e
 
+    row_count = len(rows)
     logger.info(
         f"[upload_submission] Uploading | name={submission_name} | "
         f"file_type={file_ext} | rows={row_count} | "
@@ -309,6 +271,8 @@ def upload_submission(
             status_code=500,
             detail="Failed to upload the submission file. Please try again.",
         )
+
+    _store_parsed_rows(session, project_id, submission_id, rows)
 
     submission = create_submission(
         session=session,

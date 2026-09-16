@@ -1,4 +1,4 @@
-"""Tests for assessment/submission.py upload and row counting behavior."""
+"""Tests for assessment/submission.py upload and preview behaviour."""
 
 from unittest.mock import MagicMock, patch
 
@@ -7,9 +7,6 @@ from fastapi import HTTPException
 from openpyxl.utils.exceptions import InvalidFileException
 
 from app.services.assessment.submission import (
-    _count_csv_rows,
-    _count_excel_rows,
-    _count_rows,
     _preview_csv,
     _preview_excel,
     preview_submission,
@@ -17,47 +14,22 @@ from app.services.assessment.submission import (
 )
 
 
-class TestCountRows:
-    def test_legacy_xls_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Legacy Excel format"):
-            _count_rows(b"legacy-xls-content", ".xls")
-
-    def test_count_excel_rows_invalid_file_re_raises(self) -> None:
-        with patch(
-            "openpyxl.load_workbook",
-            side_effect=InvalidFileException("bad xlsx"),
-        ):
-            with pytest.raises(InvalidFileException):
-                _count_excel_rows(b"bad")
-
-    def test_count_excel_rows_unexpected_error_raises_value_error(self) -> None:
-        with patch("openpyxl.load_workbook", side_effect=RuntimeError("boom")):
-            with pytest.raises(ValueError, match="Failed to parse XLSX file"):
-                _count_excel_rows(b"bad")
-
-    def test_count_csv_rows(self) -> None:
-        assert _count_csv_rows(b"a,b\n1,2\n\n3,4\n") == 2
-
-    def test_count_rows_csv_and_xlsx(self) -> None:
-        with patch(
-            "app.services.assessment.submission._count_excel_rows", return_value=5
-        ):
-            assert _count_rows(b"x", ".xlsx") == 5
-        assert _count_rows(b"a,b\n1,2\n", ".csv") == 1
-
-
 class TestUploadSubmission:
     def test_invalid_xlsx_returns_422(self) -> None:
         session = MagicMock()
-        with patch(
-            "app.services.assessment.submission.sanitize_dataset_name",
-            return_value="ds-1",
-        ), patch(
-            "app.services.assessment.submission.get_submission_by_name",
-            return_value=None,
-        ), patch(
-            "app.services.assessment.submission._count_rows",
-            side_effect=InvalidFileException("bad xlsx"),
+        with (
+            patch(
+                "app.services.assessment.submission.sanitize_dataset_name",
+                return_value="ds-1",
+            ),
+            patch(
+                "app.services.assessment.submission.get_submission_by_name",
+                return_value=None,
+            ),
+            patch(
+                "app.services.assessment.submission.parse_rows",
+                side_effect=InvalidFileException("bad xlsx"),
+            ),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 upload_submission(
@@ -74,15 +46,19 @@ class TestUploadSubmission:
 
     def test_count_rows_value_error_returns_422(self) -> None:
         session = MagicMock()
-        with patch(
-            "app.services.assessment.submission.sanitize_dataset_name",
-            return_value="ds-1",
-        ), patch(
-            "app.services.assessment.submission.get_submission_by_name",
-            return_value=None,
-        ), patch(
-            "app.services.assessment.submission._count_rows",
-            side_effect=ValueError("Legacy Excel format (.xls) is not supported."),
+        with (
+            patch(
+                "app.services.assessment.submission.sanitize_dataset_name",
+                return_value="ds-1",
+            ),
+            patch(
+                "app.services.assessment.submission.get_submission_by_name",
+                return_value=None,
+            ),
+            patch(
+                "app.services.assessment.submission.parse_rows",
+                side_effect=ValueError("Legacy Excel format (.xls) is not supported."),
+            ),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 upload_submission(
@@ -99,15 +75,19 @@ class TestUploadSubmission:
 
     def test_count_rows_unexpected_error_returns_generic_422(self) -> None:
         session = MagicMock()
-        with patch(
-            "app.services.assessment.submission.sanitize_dataset_name",
-            return_value="ds-1",
-        ), patch(
-            "app.services.assessment.submission.get_submission_by_name",
-            return_value=None,
-        ), patch(
-            "app.services.assessment.submission._count_rows",
-            side_effect=RuntimeError("unexpected"),
+        with (
+            patch(
+                "app.services.assessment.submission.sanitize_dataset_name",
+                return_value="ds-1",
+            ),
+            patch(
+                "app.services.assessment.submission.get_submission_by_name",
+                return_value=None,
+            ),
+            patch(
+                "app.services.assessment.submission.parse_rows",
+                side_effect=RuntimeError("unexpected"),
+            ),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 upload_submission(
@@ -126,24 +106,32 @@ class TestUploadSubmission:
         session = MagicMock()
         created = MagicMock()
         created.id = 9
-        with patch(
-            "app.services.assessment.submission.sanitize_dataset_name",
-            return_value="ds-1",
-        ), patch(
-            "app.services.assessment.submission.get_submission_by_name",
-            return_value=None,
-        ), patch(
-            "app.services.assessment.submission.get_submission_by_name",
-            return_value=None,
-        ), patch(
-            "app.services.assessment.submission._count_rows", return_value=2
-        ), patch(
-            "app.services.assessment.submission._upload_file_to_object_store",
-            return_value="s3://datasets/file.csv",
-        ), patch(
-            "app.services.assessment.submission.create_submission",
-            return_value=created,
-        ) as create_ds:
+        with (
+            patch(
+                "app.services.assessment.submission.sanitize_dataset_name",
+                return_value="ds-1",
+            ),
+            patch(
+                "app.services.assessment.submission.get_submission_by_name",
+                return_value=None,
+            ),
+            patch(
+                "app.services.assessment.submission.get_submission_by_name",
+                return_value=None,
+            ),
+            patch(
+                "app.services.assessment.submission.parse_rows",
+                return_value=[{"a": "1"}, {"a": "2"}],
+            ),
+            patch(
+                "app.services.assessment.submission._upload_file_to_object_store",
+                return_value="s3://datasets/file.csv",
+            ),
+            patch(
+                "app.services.assessment.submission.create_submission",
+                return_value=created,
+            ) as create_ds,
+        ):
             result = upload_submission(
                 session=session,
                 file_content=b"a,b\n1,2\n",
@@ -273,11 +261,15 @@ class TestUploadSubmission:
         ds.object_store_url = "s3://bucket/key.xlsx"
         storage = MagicMock()
         storage.get.return_value = b"not-a-real-xlsx"
-        with patch(
-            "app.services.assessment.submission.get_cloud_storage", return_value=storage
-        ), patch(
-            "app.services.assessment.submission._preview_excel",
-            side_effect=InvalidFileException("bad"),
+        with (
+            patch(
+                "app.services.assessment.submission.get_cloud_storage",
+                return_value=storage,
+            ),
+            patch(
+                "app.services.assessment.submission._preview_excel",
+                side_effect=InvalidFileException("bad"),
+            ),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 preview_submission(
@@ -292,11 +284,15 @@ class TestUploadSubmission:
         ds.object_store_url = "s3://bucket/key.csv"
         storage = MagicMock()
         storage.get.return_value = b"a,b\n1,2\n"
-        with patch(
-            "app.services.assessment.submission.get_cloud_storage", return_value=storage
-        ), patch(
-            "app.services.assessment.submission._preview_csv",
-            side_effect=RuntimeError("boom"),
+        with (
+            patch(
+                "app.services.assessment.submission.get_cloud_storage",
+                return_value=storage,
+            ),
+            patch(
+                "app.services.assessment.submission._preview_csv",
+                side_effect=RuntimeError("boom"),
+            ),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 preview_submission(
@@ -322,17 +318,23 @@ class TestUploadSubmission:
 
     def test_upload_submission_object_store_failure_returns_500(self) -> None:
         session = MagicMock()
-        with patch(
-            "app.services.assessment.submission.sanitize_dataset_name",
-            return_value="ds-1",
-        ), patch(
-            "app.services.assessment.submission.get_submission_by_name",
-            return_value=None,
-        ), patch(
-            "app.services.assessment.submission._count_rows", return_value=1
-        ), patch(
-            "app.services.assessment.submission._upload_file_to_object_store",
-            return_value=None,
+        with (
+            patch(
+                "app.services.assessment.submission.sanitize_dataset_name",
+                return_value="ds-1",
+            ),
+            patch(
+                "app.services.assessment.submission.get_submission_by_name",
+                return_value=None,
+            ),
+            patch(
+                "app.services.assessment.submission.parse_rows",
+                return_value=[{"a": "1"}],
+            ),
+            patch(
+                "app.services.assessment.submission._upload_file_to_object_store",
+                return_value=None,
+            ),
         ):
             with pytest.raises(HTTPException) as exc_info:
                 upload_submission(

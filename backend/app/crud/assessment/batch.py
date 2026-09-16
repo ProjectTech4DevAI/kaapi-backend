@@ -4,13 +4,9 @@ Builds provider-specific JSONL files from submission rows + config,
 then submits them via the core batch infrastructure.
 """
 
-import csv
-import io
 import logging
 from typing import Any
 
-import openpyxl
-from openpyxl.utils.exceptions import InvalidFileException
 from sqlmodel import Session
 
 from app.core.batch import (
@@ -31,13 +27,12 @@ from app.models.assessment import (
 from app.models.batch_job import BatchJob, BatchJobType
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
 from app.models.llm.request import ConfigBlob
-from app.services.assessment.mappers import (
+from app.services.llm.mappers import (
     map_kaapi_to_anthropic_params,
     map_kaapi_to_google_params,
     map_kaapi_to_openai_params,
     normalize_llm_text,
 )
-from app.services.assessment.submission import file_extension_of
 from app.services.assessment.utils.attachments import (
     attachment_type_for_row,
     build_anthropic_attachment_parts,
@@ -45,7 +40,7 @@ from app.services.assessment.utils.attachments import (
     resolve_attachment_values,
     rewrite_gcs_attachment_urls,
 )
-from app.services.assessment.utils.sheets import clean_sheet
+from app.services.assessment.validators import file_extension_of, parse_rows
 from app.services.llm.mappers import kaapi_params_as_dict
 from app.services.llm.providers.registry import LLMProvider
 from app.utils import get_anthropic_client, get_openai_client
@@ -58,7 +53,7 @@ def load_submission_file_rows(
     session: Session,
     submission: AssessmentSubmission,
 ) -> list[dict[str, str]]:
-    """Read an uploaded submission file into row dicts keyed by column name."""
+    """Parse an uploaded submission's original file. Prefer the rows stored at upload."""
     if not submission.object_store_url:
         raise ValueError(f"Submission {submission.id} has no object_store_url")
 
@@ -69,71 +64,7 @@ def load_submission_file_rows(
             f"Failed to download submission from {submission.object_store_url}"
         )
 
-    file_ext = file_extension_of(submission.object_store_url)
-    if file_ext == ".xls":
-        raise ValueError(
-            "Legacy Excel format (.xls) is not supported. Please upload .xlsx or .csv."
-        )
-    if file_ext == ".xlsx":
-        return _parse_excel_rows(file_content)
-    return _parse_csv_rows(file_content)
-
-
-def _named_cells(row: dict[str | None, str | None]) -> dict[str, str]:
-    """Keep only columns the sheet actually names.
-
-    A spreadsheet's trailing blank columns are padding, not data — naming them
-    ``col_<n>`` would surface them as undeclared columns and 422 the run.
-    """
-    return {
-        str(key).strip(): value or ""
-        for key, value in row.items()
-        if key is not None and str(key).strip()
-    }
-
-
-def _parse_csv_rows(content: bytes) -> list[dict[str, str]]:
-    """Parse CSV content into list of row dicts."""
-    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
-        try:
-            text = content.decode(encoding)
-            break
-        except (UnicodeDecodeError, ValueError):
-            continue
-    else:
-        text = content.decode("utf-8", errors="replace")
-
-    rows = (_named_cells(row) for row in csv.DictReader(io.StringIO(text)))
-    return [row for row in rows if any(value.strip() for value in row.values())]
-
-
-def _parse_excel_rows(content: bytes) -> list[dict[str, str]]:
-    """Parse Excel content into row dicts; blank rows and empty columns are dropped."""
-    wb = None
-    try:
-        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
-        ws = wb.active
-        if ws is None:
-            return []
-
-        rows_iter = ws.iter_rows(values_only=True)
-        header = next(rows_iter, None)
-        if header is None:
-            return []
-
-        headers, rows = clean_sheet(header, rows_iter)
-        return [dict(zip(headers, row, strict=True)) for row in rows]
-    except InvalidFileException as e:
-        logger.warning("[_parse_excel_rows] Invalid XLSX file content: %s", e)
-        raise
-    except Exception as e:
-        logger.warning(
-            "[_parse_excel_rows] Failed to parse XLSX rows | %s", e, exc_info=True
-        )
-        raise ValueError("Failed to parse XLSX submission rows") from e
-    finally:
-        if wb is not None:
-            wb.close()
+    return parse_rows(file_content, file_extension_of(submission.object_store_url))
 
 
 def _build_text_prompt(
@@ -407,6 +338,9 @@ def submit_assessment_batch(
     # compact wire format (None fields and an unset temperature dropped), so
     # the batch never forwards defaults the caller didn't set.
     params = kaapi_params_as_dict(completion.params)
+    # Normalised here, not in the mapper, so only this path's prompts are rewritten.
+    if params.get("instructions"):
+        params["instructions"] = normalize_llm_text(params["instructions"])
 
     # Determine the base provider (openai or google)
     base_provider = provider_name.replace("-native", "")

@@ -9,7 +9,6 @@ import logging
 from datetime import timedelta
 from enum import StrEnum
 from typing import Any
-from uuid import UUID
 
 from sqlmodel import Session
 
@@ -30,12 +29,15 @@ from app.services.assessment.api.batch import (
     _build_batch_provider,
     error_file_entries,
 )
+from app.services.assessment.validators import (
+    ERRORS_FILENAME,
+    assessment_prefix,
+)
 
 logger = logging.getLogger(__name__)
 
 RESULTS_FILE_KIND = "results"
 ERRORS_FILE_KIND = "errors"
-ERRORS_FILENAME = "errors.jsonl"
 
 # 86400 is the storage layer's own ceiling, so the presigned urls live exactly one day.
 SIGNED_URL_EXPIRY_SECONDS = settings.MAX_SIGNED_URL_EXPIRY_SECONDS
@@ -48,11 +50,6 @@ class ErrorRecordEnum(StrEnum):
     ROW_ERROR = "row_error"
     PROVIDER_ERROR_FILE = "provider_error_file"
     PROVIDER_ERROR_FILE_UNAVAILABLE = "provider_error_file_unavailable"
-
-
-def assessment_subdirectory(assessment_id: UUID) -> str:
-    """Object-store prefix holding every file one assessment produces."""
-    return f"assessment/{assessment_id}"
 
 
 def stage_file_kind(stage: str) -> str:
@@ -212,7 +209,7 @@ def build_and_upload_errors(
         storage=storage,
         results=rows,
         filename=ERRORS_FILENAME,
-        subdirectory=assessment_subdirectory(assessment.id),
+        subdirectory=assessment_prefix(assessment.id),
     )
     logger.info(
         "[build_and_upload_errors] Errors dump %s | execution_id=%s | rows=%s | url=%s",

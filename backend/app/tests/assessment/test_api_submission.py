@@ -1,5 +1,6 @@
 """Tests for the BATCH API-client submit entrypoint (app/services/assessment/api/submission.py)."""
 
+from contextlib import contextmanager
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -22,6 +23,18 @@ from app.services.assessment.api import submission
 from app.tests.utils.auth import get_user_test_auth_context
 from app.tests.utils.test_data import create_test_config
 from app.tests.utils.utils import random_lower_string
+
+_OPEN_ROWS = "app.services.assessment.api.submission.open_uploaded_rows"
+
+
+def _serving(rows):
+    """Stand-in for open_uploaded_rows that streams the given rows."""
+
+    @contextmanager
+    def _open(**_):
+        yield iter(rows)
+
+    return _open
 
 
 def _assessment_config(
@@ -323,10 +336,7 @@ class TestSubmissionDocId:
         )
 
         with (
-            patch(
-                "app.services.assessment.api.submission.load_submission_file_rows",
-                return_value=[{"a": "one"}, {"a": "two"}],
-            ),
+            patch(_OPEN_ROWS, _serving([{"a": "one"}, {"a": "two"}])),
             patch("app.celery.tasks.job_execution.run_assessment_api_batch"),
         ):
             response = self._submit(db, auth, config, stored.id)
@@ -352,10 +362,7 @@ class TestSubmissionDocId:
             project_id=auth.project_id,
         )
 
-        with patch(
-            "app.services.assessment.api.submission.load_submission_file_rows",
-            side_effect=RuntimeError("s3 down"),
-        ):
+        with patch(_OPEN_ROWS, side_effect=RuntimeError("s3 down")):
             with pytest.raises(HTTPException) as exc:
                 self._submit(db, auth, config, stored.id)
         assert exc.value.status_code == 502
@@ -372,10 +379,7 @@ class TestSubmissionDocId:
             project_id=auth.project_id,
         )
 
-        with patch(
-            "app.services.assessment.api.submission.load_submission_file_rows",
-            return_value=[],
-        ):
+        with patch(_OPEN_ROWS, _serving([])):
             with pytest.raises(HTTPException) as exc:
                 self._submit(db, auth, config, stored.id)
         assert exc.value.status_code == 422

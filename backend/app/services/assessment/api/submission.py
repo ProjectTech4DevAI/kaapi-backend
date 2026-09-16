@@ -15,7 +15,6 @@ from pydantic import ValidationError
 from sqlmodel import Session
 
 from app.crud.assessment import api
-from app.crud.assessment.batch import load_submission_file_rows
 from app.crud.assessment.submission import get_submission_by_id
 from app.crud.config import ConfigCrud, ConfigVersionCrud
 from app.models.assessment import (
@@ -30,7 +29,10 @@ from app.models.assessment import (
 from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.config.config import ConfigTag
 from app.services.assessment.api import batch as batch_service
-from app.services.assessment.api.submission_store import upload_submission_rows
+from app.services.assessment.api.submission_store import (
+    open_uploaded_rows,
+    upload_submission_rows,
+)
 from app.utils import validate_callback_url
 
 logger = logging.getLogger(__name__)
@@ -120,7 +122,7 @@ def _rows_from_submission(
     organization_id: int,
     project_id: int,
 ) -> BatchInput:
-    """Read an uploaded submission's rows so the run continues as if they were inline."""
+    """Stream an uploaded submission's rows so they can be validated before dispatch."""
     submission = get_submission_by_id(
         session=session,
         submission_id=submission_doc_id,
@@ -128,7 +130,8 @@ def _rows_from_submission(
         project_id=project_id,
     )
     try:
-        rows = load_submission_file_rows(session=session, submission=submission)
+        with open_uploaded_rows(session=session, submission=submission) as stream:
+            rows = list(stream)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
@@ -255,17 +258,21 @@ def submit(
     total_items = len(rows)
 
     assessment_id = uuid4()
-    submission_url = upload_submission_rows(
-        session=session,
-        assessment_id=assessment_id,
-        project_id=project_id,
-        batch_input=batch_input,
-    )
-    if not submission_url:
-        raise HTTPException(
-            status_code=503,
-            detail="Failed to store the assessment submission. Please retry.",
+    # Only inline rows need storing; an uploaded submission is already immutable in
+    # storage, so the run reads it through `submission_id` instead of copying it.
+    submission_url = None
+    if submission_id is None:
+        submission_url = upload_submission_rows(
+            session=session,
+            assessment_id=assessment_id,
+            project_id=project_id,
+            batch_input=batch_input,
         )
+        if not submission_url:
+            raise HTTPException(
+                status_code=503,
+                detail="Failed to store the assessment submission. Please retry.",
+            )
     assessment = api.create_assessment(
         session=session,
         assessment_id=assessment_id,

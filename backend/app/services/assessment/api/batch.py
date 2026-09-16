@@ -20,16 +20,17 @@ from enum import StrEnum
 from typing import Any, cast
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlmodel import Session, col, select
 
 from app.core.batch import (
     BATCH_KEY,
     AnthropicBatchProvider,
     BatchJobState,
+    GeminiBatchProvider,
     GoogleGCPBatchProvider,
     MessageBatchStatus,
     OpenAIBatchProvider,
-    GeminiBatchProvider,
     extract_text_from_response_dict,
     poll_batch_status,
     process_completed_batch,
@@ -37,17 +38,15 @@ from app.core.batch import (
 )
 from app.core.batch.base import BatchProvider
 from app.core.batch.client import GeminiClient
-from fastapi import HTTPException
 from app.core.config import settings
 from app.core.db import engine
 from app.crud.assessment import api
-from app.crud.credentials import get_provider_credential
 from app.crud.assessment.batch import (
     build_anthropic_jsonl,
     build_google_jsonl,
     build_openai_jsonl,
 )
-from app.services.assessment.utils.attachments import rewrite_gcs_attachment_urls
+from app.crud.credentials import get_provider_credential
 from app.crud.job import get_batch_job
 from app.models.assessment import (
     Assessment,
@@ -67,11 +66,14 @@ from app.models.config.assessment_blob import (
     TopicRelevanceFilter,
 )
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
-from app.services.assessment.mappers import (
+from app.services.llm.mappers import (
     map_kaapi_to_anthropic_params,
     map_kaapi_to_google_params,
     map_kaapi_to_openai_params,
+    normalize_llm_text,
 )
+from app.services.assessment.utils.attachments import rewrite_gcs_attachment_urls
+from app.services.assessment.validators import stage_batch_prefix
 from app.services.llm.providers.registry import LLMProvider
 from app.utils import (
     get_anthropic_client,
@@ -284,6 +286,8 @@ def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
         params.pop("submission", None)
         if json_schema is not None:
             params["output_schema"] = json_schema  # provider param name
+        # Normalised here, not in the mapper, so only this path's prompts are rewritten.
+        params["instructions"] = normalize_llm_text(params.get("instructions") or "")
         return params
 
     flt = _prefilter_for_stage(blob, stage)
@@ -292,7 +296,7 @@ def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
     params["output_schema"] = PREFILTER_VERDICT_SCHEMA
     # The config's criteria (mandatory params.instructions) is the system prompt;
     # append the gate directive so the model returns the verdict+reasoning contract.
-    criteria = params.get("instructions") or ""
+    criteria = normalize_llm_text(params.get("instructions") or "")
     params["instructions"] = f"{criteria}\n\n{_PREFILTER_INSTRUCTION}"
     return params
 
@@ -735,17 +739,11 @@ def _poll_outcome(
         ):
             return "failed", None
         if batch_job.provider_output_file_id:
-            from app.services.assessment.api.result_files import (
-                assessment_subdirectory,
-            )
-
             results, _ = process_completed_batch(
                 session=session,
                 provider=provider,
                 batch_job=batch_job,
-                subdirectory=(
-                    f"{assessment_subdirectory(assessment_id)}/batch-{batch_job.id}"
-                ),
+                subdirectory=stage_batch_prefix(assessment_id, batch_job.id),
             )
             # Rows OpenAI rejected live only in the error file; without them they would
             # read as "no output, no error" and the stage could finish COMPLETED.
