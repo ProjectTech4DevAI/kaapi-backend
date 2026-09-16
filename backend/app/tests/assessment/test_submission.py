@@ -145,6 +145,49 @@ class TestUploadSubmission:
         create_ds.assert_called_once()
         assert create_ds.call_args.kwargs["total_items"] == 2
 
+    def test_upload_survives_a_failed_parsed_row_store(self) -> None:
+        """Storing the parsed rows is best effort; the upload still succeeds."""
+        session = MagicMock()
+        created = MagicMock()
+        created.id = 11
+        with (
+            patch(
+                "app.services.assessment.submission.sanitize_dataset_name",
+                return_value="ds-2",
+            ),
+            patch(
+                "app.services.assessment.submission.get_submission_by_name",
+                return_value=None,
+            ),
+            patch(
+                "app.services.assessment.submission.parse_rows",
+                return_value=[{"a": "1"}],
+            ),
+            patch(
+                "app.services.assessment.submission._upload_file_to_object_store",
+                return_value="s3://datasets/file.csv",
+            ),
+            patch(
+                "app.services.assessment.submission.get_cloud_storage",
+                side_effect=RuntimeError("storage down"),
+            ),
+            patch(
+                "app.services.assessment.submission.create_submission",
+                return_value=created,
+            ) as create_ds,
+        ):
+            result = upload_submission(
+                session=session,
+                file_content=b"a\n1\n",
+                file_ext=".csv",
+                submission_name="ds-2",
+                description=None,
+                organization_id=1,
+                project_id=1,
+            )
+        assert result.id == 11
+        create_ds.assert_called_once()
+
     def test_preview_csv_returns_headers_and_rows(self) -> None:
         headers, rows = _preview_csv(b"a,b\n1,2\n\n3,4\n5,6\n", limit=2)
         assert headers == ["a", "b"]

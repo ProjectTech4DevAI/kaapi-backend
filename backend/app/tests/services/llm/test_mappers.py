@@ -909,7 +909,6 @@ class TestMapKaapiToAnthropicParams:
         kaapi_params = {
             "model": "claude-sonnet-4-6",
             "instructions": "You are a helpful assistant.",
-            "temperature": 0.4,
             "max_output_tokens": 1024,
         }
 
@@ -918,29 +917,38 @@ class TestMapKaapiToAnthropicParams:
         assert result == {
             "model": "claude-sonnet-4-6",
             "system": "You are a helpful assistant.",
-            "temperature": 0.4,
             "max_tokens": 1024,
         }
         assert warnings == []
 
-    def test_top_p_suppressed_when_temperature_is_also_set(self):
-        """Anthropic rejects a request carrying both sampling knobs."""
+    def test_sampling_is_always_dropped_with_a_warning(self):
+        """The Messages API returns 400 for a non-default temperature or any top_p."""
         result, warnings = map_kaapi_to_anthropic_params(
             {"model": "claude-sonnet-4-6", "temperature": 0.3, "top_p": 0.9}
         )
 
-        assert result["temperature"] == 0.3
+        assert "temperature" not in result
         assert "top_p" not in result
         assert len(warnings) == 1
-        assert "top_p" in warnings[0]
+        assert "temperature" in warnings[0]
 
-    def test_top_p_alone_passes_through(self):
+    def test_default_temperature_dropped_without_a_warning(self):
+        """1.0 is Anthropic's own default, so dropping it changes nothing."""
         result, warnings = map_kaapi_to_anthropic_params(
-            {"model": "claude-sonnet-4-6", "top_p": 0.9}
+            {"model": "claude-sonnet-4-6", "temperature": 1.0}
         )
 
-        assert result["top_p"] == 0.9
+        assert "temperature" not in result
         assert warnings == []
+
+    def test_effort_is_unaffected_by_dropped_sampling(self):
+        result, warnings = map_kaapi_to_anthropic_params(
+            {"model": "claude-opus-4-8", "effort": "high", "temperature": 0.3}
+        )
+
+        assert result["output_config"] == {"effort": "high"}
+        assert "temperature" not in result
+        assert len(warnings) == 1
 
     def test_missing_model_falls_back_to_default(self):
         """Anthropic requires model — provider falls back to the centralised
@@ -1057,13 +1065,12 @@ class TestMapKaapiToAnthropicParams:
         assert "thinking_level" not in result
         assert any("thinking_level" in warning for warning in warnings)
 
-    def test_temperature_zero_is_preserved(self):
-        """0.0 is a valid temperature — guard against truthy-check bugs that
-        would drop it as if it were None."""
-        result, _ = map_kaapi_to_anthropic_params(
+    def test_zero_temperature_is_dropped_not_ignored(self):
+        """0.0 is falsy but still a non-default value the API would reject."""
+        _, warnings = map_kaapi_to_anthropic_params(
             {"model": "claude-sonnet-4-6", "temperature": 0.0}
         )
-        assert result["temperature"] == 0.0
+        assert len(warnings) == 1
 
 
 class TestSchemaHelpers:

@@ -80,12 +80,22 @@ def _store_parsed_rows(
 
     Best effort: a failure here only costs a later reader one re-parse.
     """
-    url = upload_jsonl_to_object_store(
-        storage=get_cloud_storage(session=session, project_id=project_id),
-        results=rows,
-        filename=SUBMISSION_FILENAME,
-        subdirectory=submission_prefix(submission_id),
-    )
+    try:
+        url = upload_jsonl_to_object_store(
+            storage=get_cloud_storage(session=session, project_id=project_id),
+            results=rows,
+            filename=SUBMISSION_FILENAME,
+            subdirectory=submission_prefix(submission_id),
+        )
+    except Exception as exc:
+        logger.warning(
+            "[_store_parsed_rows] Rows not stored, runs will parse the file | "
+            "submission_id=%s | error=%s",
+            submission_id,
+            exc,
+        )
+        return
+
     if not url:
         logger.warning(
             "[_store_parsed_rows] Rows not stored, runs will parse the file | "

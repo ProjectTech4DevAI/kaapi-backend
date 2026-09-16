@@ -27,6 +27,8 @@ from google.genai import _transformers as genai_transformers
 # stays for native/stored configs whose params are persisted as plain JSON.
 KaapiParamsInput = TextLLMParams | STTLLMParams | TTSLLMParams | dict[str, Any]
 
+ANTHROPIC_DEFAULT_TEMPERATURE = 1.0
+
 SARVAM_DEFAULTS_BY_TYPE = {
     "stt": DEFAULT_SARVAM_STT_MODEL,
     "tts": DEFAULT_SARVAM_TTS_MODEL,
@@ -603,8 +605,7 @@ def map_kaapi_to_anthropic_params(
     Supported Mapping:
         - model → model (falls back to DEFAULT_TEXT_MODELS)
         - instructions → system
-        - temperature → temperature
-        - top_p → top_p, but suppressed when temperature is also set
+        - temperature / top_p → always dropped; a non-default value also warns
         - max_output_tokens → max_tokens (Anthropic requires this;
           provider defaults if absent)
         - output_schema → output_config.format, effort → output_config.effort
@@ -622,24 +623,24 @@ def map_kaapi_to_anthropic_params(
     anthropic_params: dict[str, Any] = {}
     warnings: list[str] = []
 
-    anthropic_params["model"] = params.get("model") or DEFAULT_TEXT_MODELS["anthropic"]
+    model = params.get("model") or DEFAULT_TEXT_MODELS["anthropic"]
+    anthropic_params["model"] = model
 
     instructions = params.get("instructions")
     if instructions:
         anthropic_params["system"] = instructions
 
+    # The Messages API returns 400 for a non-default temperature/top_p on every
+    # model Kaapi serves, so sampling never reaches the provider.
     temperature = params.get("temperature")
     top_p = params.get("top_p")
-    if temperature is not None and top_p is not None:
+    if top_p is not None or (
+        temperature is not None and temperature != ANTHROPIC_DEFAULT_TEMPERATURE
+    ):
         warnings.append(
-            "Parameter 'top_p' was suppressed because Anthropic does not accept "
-            "both 'temperature' and 'top_p' on the same request."
+            "Parameters 'temperature'/'top_p' were suppressed because the Anthropic "
+            "Messages API rejects non-default sampling values."
         )
-        top_p = None
-    if temperature is not None:
-        anthropic_params["temperature"] = temperature
-    if top_p is not None:
-        anthropic_params["top_p"] = top_p
 
     max_output_tokens = params.get("max_output_tokens")
     if max_output_tokens is not None:
