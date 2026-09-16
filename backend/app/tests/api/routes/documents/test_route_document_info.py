@@ -1,6 +1,9 @@
+from unittest.mock import patch
+
 import pytest
 from sqlmodel import Session
 
+from app.models import Document
 from app.tests.utils.document import (
     DocumentComparator,
     DocumentMaker,
@@ -50,3 +53,41 @@ class TestDocumentRouteInfo:
         response = crawler.get(route.append(next(maker)))
 
         assert response.is_error
+
+
+class TestDocumentRouteInfoSignedUrl:
+    """The `download` flag decides whether the signed URL forces a save."""
+
+    @staticmethod
+    def _sign_and_capture(
+        db: Session, route: Route, crawler: WebCrawler
+    ) -> tuple[Document, list[str | None]]:
+        store = DocumentStore(db=db, project_id=crawler.user_api_key.project_id)
+        document = store.put()
+        with patch("app.api.routes.documents.get_cloud_storage") as mock_storage:
+            mock_storage.return_value.get_signed_url.return_value = "https://signed"
+            response = crawler.get(route.append(document))
+            assert response.is_success
+            filenames = [
+                call.kwargs.get("filename")
+                for call in mock_storage.return_value.get_signed_url.call_args_list
+            ]
+        return document, filenames
+
+    def test_download_true_signs_with_filename(
+        self, db: Session, crawler: WebCrawler
+    ) -> None:
+        route = Route("", include_url="true", download="true")
+
+        document, filenames = self._sign_and_capture(db, route, crawler)
+
+        assert filenames == [document.fname]
+
+    def test_download_omitted_signs_without_filename(
+        self, db: Session, crawler: WebCrawler
+    ) -> None:
+        route = Route("", include_url="true")
+
+        _, filenames = self._sign_and_capture(db, route, crawler)
+
+        assert filenames == [None]

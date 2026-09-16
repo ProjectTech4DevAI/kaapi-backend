@@ -29,7 +29,6 @@ from app.crud.evaluations import (
 from app.crud.evaluations.batch import fetch_dataset_items
 from app.crud.evaluations.core import update_evaluation_run
 from app.crud.evaluations.dataset import (
-    DATASET_META_DUPLICATE_AT_RUNTIME,
     DATASET_META_DUPLICATION_FACTOR,
     download_csv_from_object_store,
 )
@@ -72,14 +71,13 @@ def load_run_dataset_items(
 
     - Langfuse-backed dataset (v1): items are already physically duplicated in
       Langfuse; read as-is via `fetch_dataset_items`, never re-multiplied.
-    - S3-only dataset (v2, `langfuse_dataset_id` NULL): download the original-items
-      CSV and, when the dataset is marked for run-time duplication, expand each row
-      ×duplication_factor with a unique item id per copy.
+    - S3-only dataset (`langfuse_dataset_id` NULL): download the original-items CSV
+      and expand each original row ×duplication_factor with a unique item id per copy.
 
     Both the fan-out sizing and the per-chunk load call this, so they agree on the
     same expanded item set. `duplication_factor`, when set, overrides the dataset's
-    stored factor for runtime-duplicated datasets only (see
-    `_load_items_from_object_store`); it never applies to a Langfuse dataset.
+    stored factor (see `_load_items_from_object_store`); it never applies to a
+    Langfuse dataset.
     """
     if dataset.langfuse_dataset_id:
         if langfuse is None:
@@ -102,10 +100,10 @@ def _load_items_from_object_store(
 ) -> list[dict[str, Any]]:
     """Parse the dataset's original-items CSV from S3 into fast-pipeline items.
 
-    When the dataset is marked for run-time duplication (v2), each original row is
-    emitted `duplication_factor` times with a distinct item id (`item_{row}_{dup}`)
-    so per-row score keys stay unique. A v1 dataset's S3 CSV is already physically
-    duplicated, so it loads as-is (factor forced to 1)."""
+    This loader is only reached for S3-only datasets (`langfuse_dataset_id` NULL),
+    whose stored CSV always holds the original (un-duplicated) rows. Each original
+    row is emitted `duplication_factor` times with a distinct item id
+    (`item_{row}_{dup}`) so per-row score keys stay unique."""
     if not dataset.object_store_url:
         raise ValueError(f"Dataset {dataset.id} has no object-store CSV to load")
 
@@ -116,13 +114,12 @@ def _load_items_from_object_store(
     original_items = parse_csv_items(csv_content)
 
     metadata = dataset.dataset_metadata or {}
-    duplicate_at_runtime = bool(metadata.get(DATASET_META_DUPLICATE_AT_RUNTIME, False))
     effective_factor = (
         duplication_factor
         if duplication_factor is not None
         else int(metadata.get(DATASET_META_DUPLICATION_FACTOR, 1))
     )
-    duplication_factor = max(1, effective_factor) if duplicate_at_runtime else 1
+    duplication_factor = max(1, effective_factor)
 
     items: list[dict[str, Any]] = []
     for row_idx, item in enumerate(original_items):
@@ -169,8 +166,8 @@ def validate_fast_evaluation_inputs(
     3. Dataset's original_items_count <= EVAL_FAST_MAX_UNIQUE_ROWS.
 
     `duplication_factor`, when provided, overrides the dataset's stored factor for
-    this run only and is supported for runtime-duplicated (v2) datasets exclusively
-    (rejected with 422 otherwise).
+    this run only and is supported for S3-only datasets exclusively; it is rejected
+    with 422 for Langfuse-backed datasets (whose items come pre-duplicated).
     """
     # 1. Dataset must exist (Langfuse id required for v1 runs only; see below).
     dataset = get_dataset_by_id(
@@ -198,14 +195,12 @@ def validate_fast_evaluation_inputs(
             ),
         )
 
-    if duplication_factor is not None and not (dataset.dataset_metadata or {}).get(
-        DATASET_META_DUPLICATE_AT_RUNTIME
-    ):
+    if duplication_factor is not None and dataset.langfuse_dataset_id:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"{ERR_DUPLICATION_FACTOR_NOT_SUPPORTED}: this dataset is not "
-                "runtime-duplicated; re-upload to change its factor"
+                f"{ERR_DUPLICATION_FACTOR_NOT_SUPPORTED}: this dataset is "
+                "Langfuse-backed and pre-duplicated; re-upload to change its factor"
             ),
         )
 
@@ -291,8 +286,8 @@ def validate_and_start_fast_evaluation(
     it stays NULL and no webhook fires.
 
     `duplication_factor`, when provided, overrides the dataset's stored factor for
-    this run only and is supported for runtime-duplicated (v2) datasets exclusively
-    (rejected with 422 otherwise).
+    this run only and is supported for S3-only datasets exclusively; it is rejected
+    with 422 for Langfuse-backed datasets (whose items come pre-duplicated).
     """
     logger.info(
         f"[validate_and_start_fast_evaluation] Starting fast eval | "
