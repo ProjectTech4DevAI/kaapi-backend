@@ -27,6 +27,8 @@ from google.genai import _transformers as genai_transformers
 # stays for native/stored configs whose params are persisted as plain JSON.
 KaapiParamsInput = TextLLMParams | STTLLMParams | TTSLLMParams | dict[str, Any]
 
+ANTHROPIC_DEFAULT_TEMPERATURE = 1.0
+
 SARVAM_DEFAULTS_BY_TYPE = {
     "stt": DEFAULT_SARVAM_STT_MODEL,
     "tts": DEFAULT_SARVAM_TTS_MODEL,
@@ -127,6 +129,8 @@ def _convert_json_schema_to_google(schema: dict[str, Any]) -> dict[str, Any]:
         else normalized_schema
     )
 
+    # Vertex rejects a payload carrying both spellings (the SDK dump emits snake_case).
+    google_schema.pop("property_ordering", None)
     if "properties" in google_schema and "propertyOrdering" not in google_schema:
         google_schema["propertyOrdering"] = list(
             normalized_schema.get("required", [])
@@ -156,6 +160,8 @@ def map_kaapi_to_openai_params(
         - reasoning → legacy alias for effort, used only when effort is absent
         - summary → reasoning.summary (if reasoning supported by model else suppressed)
         - temperature → temperature (if reasoning not supported by model else suppressed)
+        - top_p → top_p (if reasoning not supported by model else suppressed)
+        - output_schema → text.format.json_schema in strict mode
 
     Returns:
         Tuple of:
@@ -171,11 +177,11 @@ def map_kaapi_to_openai_params(
     effort = params.get("effort")
     summary = params.get("summary")
     temperature = params.get("temperature")
+    top_p = params.get("top_p")
     instructions = params.get("instructions")
     knowledge_base_ids = params.get("knowledge_base_ids")
     max_num_results = params.get("max_num_results")
-    # NOTE: Json Schema can only be used for the assessment pipeline
-    json_schema = params.get("json_schema")
+    output_schema = params.get("output_schema")
 
     support_reasoning = bool(model) and is_reasoning_model(
         session=session, provider="openai", model_name=model
@@ -200,6 +206,12 @@ def map_kaapi_to_openai_params(
                 "Parameter 'temperature' was suppressed because the selected model "
                 "supports reasoning, and temperature is ignored when reasoning is enabled."
             )
+
+        if top_p is not None:
+            warnings.append(
+                "Parameter 'top_p' was suppressed because the selected model "
+                "supports reasoning, and top_p is ignored when reasoning is enabled."
+            )
     else:
         if effort_value is not None:
             warnings.append(
@@ -209,6 +221,9 @@ def map_kaapi_to_openai_params(
 
         if temperature is not None:
             openai_params["temperature"] = temperature
+
+        if top_p is not None:
+            openai_params["top_p"] = top_p
 
     openai_params["model"] = model or DEFAULT_TEXT_MODELS["openai"]
 
@@ -224,13 +239,13 @@ def map_kaapi_to_openai_params(
             }
         ]
 
-    if json_schema:
+    if output_schema:
         openai_params["text"] = {
             "format": {
                 "type": "json_schema",
                 "name": "output",
                 "strict": True,
-                "schema": _ensure_openai_strict_schema(json_schema),
+                "schema": _ensure_openai_strict_schema(output_schema),
             }
         }
 
@@ -238,7 +253,7 @@ def map_kaapi_to_openai_params(
 
 
 def map_kaapi_to_google_params(
-    kaapi_params: KaapiParamsInput, completion_type: str
+    kaapi_params: KaapiParamsInput, completion_type: str = CompletionType.TEXT
 ) -> tuple[dict[str, Any], list[str]]:
     """Map Kaapi-abstracted parameters to Google AI (Gemini) API parameters.
 
@@ -253,6 +268,9 @@ def map_kaapi_to_google_params(
         - model → model
         - instructions → instructions (for STT prompts, if available)
         - temperature -> temperature parameter (0-2)
+        - top_p / max_output_tokens → same name (text only)
+        - thinking_level → thinking_config.thinking_level (text only)
+        - output_schema → output_schema, converted to Gemini's shape (text only)
         - knowledge_base_ids → FileSearch tool store names (text only)
 
     Returns:
@@ -284,6 +302,18 @@ def map_kaapi_to_google_params(
         if temperature is not None:
             google_params["temperature"] = temperature
 
+        top_p = params.get("top_p")
+        if top_p is not None:
+            google_params["top_p"] = top_p
+
+        max_output_tokens = params.get("max_output_tokens")
+        if max_output_tokens is not None:
+            google_params["max_output_tokens"] = max_output_tokens
+
+        thinking_level = params.get("thinking_level")
+        if thinking_level:
+            google_params["thinking_config"] = {"thinking_level": thinking_level}
+
         reasoning = params.get("reasoning")
         if reasoning:
             google_params["reasoning"] = reasoning
@@ -298,10 +328,11 @@ def map_kaapi_to_google_params(
                 "FileSearch tool and was ignored."
             )
 
-        # NOTE: Json Schema can only be used for the assessment pipeline
-        json_schema = params.get("json_schema")
-        if json_schema:
-            google_params["json_schema"] = _convert_json_schema_to_google(json_schema)
+        output_schema = params.get("output_schema")
+        if output_schema:
+            google_params["output_schema"] = _convert_json_schema_to_google(
+                output_schema
+            )
 
     elif completion_type == CompletionType.TTS:
         # TTS mode - voice, language, response_format
@@ -572,57 +603,90 @@ def map_kaapi_to_anthropic_params(
     """Map Kaapi-abstracted parameters to Anthropic Messages API parameters.
 
     Supported Mapping:
-        - model → model
+        - model → model (falls back to DEFAULT_TEXT_MODELS)
         - instructions → system
-        - temperature → temperature
-        - top_p → top_p
+        - temperature / top_p → always dropped; a non-default value also warns
         - max_output_tokens → max_tokens (Anthropic requires this;
           provider defaults if absent)
+        - output_schema → output_config.format, effort → output_config.effort
+        - thinking → thinking, forwarded as-is
 
     Unsupported Kaapi params:
         - knowledge_base_ids / max_num_results: Anthropic has no native
           vector-store / file_search tool, dropped with warning.
-        - reasoning / effort / summary: Messages API does not expose a
-          reasoning-effort knob, dropped with warning.
+        - thinking_level: Google-only, dropped with warning.
+        - summary: no reasoning summaries on the Messages API, dropped with warning.
     """
+    # Anthropic's output_config.effort ladder; Kaapi's "none"/"minimal" have no equivalent.
+    effort_levels = ("low", "medium", "high", "xhigh", "max")
     params = kaapi_params_as_dict(kaapi_params)
     anthropic_params: dict[str, Any] = {}
     warnings: list[str] = []
 
-    model = params.get("model")
+    model = params.get("model") or DEFAULT_TEXT_MODELS["anthropic"]
+    anthropic_params["model"] = model
+
     instructions = params.get("instructions")
-    temperature = params.get("temperature")
-    top_p = params.get("top_p")
-    max_output_tokens = params.get("max_output_tokens")
-    knowledge_base_ids = params.get("knowledge_base_ids")
-    reasoning = params.get("reasoning")
-    effort = params.get("effort")
-    summary = params.get("summary")
-
-    anthropic_params["model"] = model or DEFAULT_TEXT_MODELS["anthropic"]
-
     if instructions:
         anthropic_params["system"] = instructions
 
-    if temperature is not None:
-        anthropic_params["temperature"] = temperature
+    # The Messages API returns 400 for a non-default temperature/top_p on every
+    # model Kaapi serves, so sampling never reaches the provider.
+    temperature = params.get("temperature")
+    top_p = params.get("top_p")
+    if top_p is not None or (
+        temperature is not None and temperature != ANTHROPIC_DEFAULT_TEMPERATURE
+    ):
+        warnings.append(
+            "Parameters 'temperature'/'top_p' were suppressed because the Anthropic "
+            "Messages API rejects non-default sampling values."
+        )
 
-    if top_p is not None:
-        anthropic_params["top_p"] = top_p
-
+    max_output_tokens = params.get("max_output_tokens")
     if max_output_tokens is not None:
         anthropic_params["max_tokens"] = max_output_tokens
 
-    if knowledge_base_ids:
+    # Structured output and reasoning effort share one container on the Messages API.
+    output_config: dict[str, Any] = {}
+    output_schema = params.get("output_schema")
+    if output_schema:
+        output_config["format"] = {
+            "type": "json_schema",
+            "schema": _ensure_openai_strict_schema(output_schema),
+        }
+
+    effort = params.get("effort") or params.get("reasoning")
+    if effort in effort_levels:
+        output_config["effort"] = effort
+    elif effort is not None:
+        warnings.append(
+            f"Parameter 'effort' value '{effort}' is not an Anthropic effort level "
+            f"({', '.join(effort_levels)}) and was ignored."
+        )
+
+    if output_config:
+        anthropic_params["output_config"] = output_config
+
+    if params.get("summary") is not None:
+        warnings.append(
+            "Parameter 'summary' was ignored because the Anthropic Messages API "
+            "does not return reasoning summaries."
+        )
+
+    thinking = params.get("thinking")
+    if thinking is not None:
+        anthropic_params["thinking"] = thinking
+
+    if params.get("thinking_level") is not None:
+        warnings.append(
+            "Parameter 'thinking_level' is Google-only; Anthropic reads the 'thinking' "
+            "container instead, so it was ignored."
+        )
+
+    if params.get("knowledge_base_ids"):
         warnings.append(
             "Parameter 'knowledge_base_ids' was ignored because Anthropic has no "
             "native vector-store/file_search tool. Inline document content blocks instead."
-        )
-
-    if reasoning is not None or effort is not None or summary is not None:
-        warnings.append(
-            "Parameters 'reasoning'/'effort'/'summary' were ignored because the "
-            "Anthropic Messages API does not expose a reasoning-effort knob."
         )
 
     return anthropic_params, warnings

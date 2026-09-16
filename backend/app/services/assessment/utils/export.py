@@ -22,10 +22,10 @@ from app.models.assessment import (
     AssessmentExportRow,
     AssessmentRun,
     AssessmentStatus,
+    AssessmentSubmission,
     Stage,
 )
 from app.models.batch_job import BatchJob
-from app.models.evaluation import EvaluationDataset
 from app.services.assessment.prefilter.duplicate_detection import (
     parse_duplicate_detection_results,
 )
@@ -43,15 +43,15 @@ _XLSX_ILLEGAL_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff
 logger = logging.getLogger(__name__)
 
 
-def _load_dataset_rows(
+def _load_submission_rows(
     session: Session,
-    dataset: EvaluationDataset,
+    submission: AssessmentSubmission,
 ) -> list[dict[str, str]]:
     # Imported lazily: app.crud.assessment.batch pulls this module via
     # app.services.assessment.utils, so a top-level import would be circular.
-    from app.crud.assessment.batch import _load_dataset_rows as load_dataset_rows
+    from app.crud.assessment.batch import load_submission_file_rows
 
-    return load_dataset_rows(session, dataset)
+    return load_submission_file_rows(session=session, submission=submission)
 
 
 def _stage_batch_job(
@@ -113,7 +113,7 @@ def _expand_input_columns(
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Expand ``input_data`` dict into separate input columns.
 
-    Uses the original column names from the dataset (no prefix).
+    Uses the original column names from the submission (no prefix).
 
     Returns:
         (expanded_rows with input_data replaced by individual columns,
@@ -144,7 +144,7 @@ def _expand_input_columns(
     collisions = {key: value for key, value in key_map.items() if key != value}
     if collisions:
         logger.warning(
-            "[_expand_input_columns] Input dataset columns conflict with reserved "
+            "[_expand_input_columns] Input submission columns conflict with reserved "
             "export fields and were namespaced: %s",
             collisions,
         )
@@ -450,27 +450,27 @@ def _load_parsed_results_for_run(
     return None
 
 
-def _load_dataset_rows_for_run(
+def _load_submission_rows_for_run(
     session: Session,
     run: AssessmentRun,
     assessment: Assessment,
 ) -> list[dict[str, str]]:
-    """Load original dataset rows for input-output correlation.
+    """Load the original submission rows for input-output correlation.
 
-    Returns an empty list if the dataset is not available.
+    Returns an empty list if the submission is not available.
     """
     try:
-        dataset = session.get(EvaluationDataset, assessment.dataset_id)
-        if not dataset or not dataset.object_store_url:
+        submission = session.get(AssessmentSubmission, assessment.submission_id)
+        if not submission or not submission.object_store_url:
             logger.warning(
-                "[_load_dataset_rows_for_run] Dataset not available for run id=%s",
+                "[_load_submission_rows_for_run] Submission not available for run id=%s",
                 run.id,
             )
             return []
-        return _load_dataset_rows(session, dataset)
+        return _load_submission_rows(session, submission)
     except Exception as exc:
         logger.warning(
-            "[_load_dataset_rows_for_run] Failed to load dataset for run id=%s: %s",
+            "[_load_submission_rows_for_run] Failed to load submission for run id=%s: %s",
             run.id,
             exc,
         )
@@ -594,13 +594,13 @@ def load_export_rows_for_run(
         )
         return []
 
-    dataset_rows = _load_dataset_rows_for_run(session, run, assessment)
+    submission_rows = _load_submission_rows_for_run(session, run, assessment)
 
     prefilter_by_row_id = _load_prefilter_results(session, run, assessment)
     l2_by_row_id = _load_l2_results_for_run(session, run, assessment)
     has_prefilter = bool(prefilter_by_row_id)
 
-    if dataset_rows:
+    if submission_rows:
         rows = [
             _build_export_row(
                 run=run,
@@ -611,7 +611,7 @@ def load_export_rows_for_run(
                 l2_item=l2_by_row_id.get(f"row_{row_idx}"),
                 has_prefilter=has_prefilter,
             )
-            for row_idx, input_data in enumerate(dataset_rows)
+            for row_idx, input_data in enumerate(submission_rows)
         ]
         return rows
 

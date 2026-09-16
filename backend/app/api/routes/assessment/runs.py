@@ -1,6 +1,6 @@
 """Assessment run endpoints — one row per config-run inside a parent assessment (LEGACY RUN pipeline).
 
-Serves dataset-based RUN assessments only. The new API-client BATCH path
+Serves submission-based RUN assessments only. The new API-client BATCH path
 (`api.py`) delivers results by webhook and never surfaces here.
 """
 
@@ -30,7 +30,7 @@ from app.models.assessment import (
     AssessmentRunPublic,
     AssessmentRunResponse,
 )
-from app.models.evaluation import EvaluationDataset
+from app.models.assessment import AssessmentSubmission
 from app.services.assessment.service import (
     resume_assessment_run as resume_run,
 )
@@ -58,7 +58,7 @@ def _build_run_public(
     session: SessionDep,
     run: AssessmentRun,
 ) -> AssessmentRunPublic:
-    """Build AssessmentRunPublic with parent-derived experiment/dataset info."""
+    """Build AssessmentRunPublic with parent-derived experiment/submission info."""
     parent = session.get(Assessment, run.assessment_id)
     if parent is None:
         logger.warning(
@@ -66,13 +66,15 @@ def _build_run_public(
             run.assessment_id,
             run.id,
         )
-    dataset = session.get(EvaluationDataset, parent.dataset_id) if parent else None
+    submission = (
+        session.get(AssessmentSubmission, parent.submission_id) if parent else None
+    )
     return AssessmentRunPublic(
         id=run.id,
         assessment_id=run.assessment_id,
         experiment_name=parent.experiment_name if parent else None,
-        dataset_id=parent.dataset_id if parent else None,
-        dataset_name=dataset.name if dataset else None,
+        submission_id=parent.submission_id if parent else None,
+        submission_name=submission.name if submission else None,
         config_id=run.config_id,
         config_version=run.config_version,
         status=run.status,
@@ -104,9 +106,9 @@ def create_assessment_runs(
 ) -> APIResponse[AssessmentRunResponse]:
     """Submit an assessment and create one child run per config."""
     logger.info(
-        "[create_assessment_runs] Assessment run submission | experiment=%s | dataset_id=%s | configs=%s",
+        "[create_assessment_runs] Assessment run submission | experiment=%s | submission_id=%s | configs=%s",
         request.experiment_name,
-        request.dataset_id,
+        request.submission_id,
         len(request.configs),
     )
 

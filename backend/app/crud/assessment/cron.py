@@ -18,12 +18,16 @@ from app.crud.assessment.processing import (
 )
 from app.models.assessment import (
     Assessment,
+    AssessmentMethod,
     AssessmentRun,
     AssessmentStatus,
     StageStatus,
 )
 
 logger = logging.getLogger(__name__)
+
+# Programming errors: a retry just re-runs the same broken code, so fail the run instead.
+DETERMINISTIC_ERRORS = (ValueError, AttributeError, TypeError, KeyError, IndexError)
 
 
 def _log_config_progress(
@@ -52,8 +56,13 @@ def _log_config_progress(
 async def poll_all_pending_assessment_evaluations(
     session: Session,
 ) -> dict[str, Any]:
-    """Poll all non-terminal parent assessments and their active child runs."""
+    """Poll all non-terminal RUN parent assessments and their active child runs.
+
+    RUN only: the BATCH API path is driven by its own Celery self-re-enqueue and stores a
+    differently shaped ``execution`` bag that this poller corrupts.
+    """
     statement = select(Assessment).where(
+        Assessment.method == AssessmentMethod.RUN,
         Assessment.status.in_((AssessmentStatus.PENDING, AssessmentStatus.PROCESSING)),
     )
     pending_assessments = list(session.exec(statement).all())
@@ -127,7 +136,7 @@ async def poll_all_pending_assessment_evaluations(
                 else:
                     still_processing += 1
 
-            except ValueError as e:
+            except DETERMINISTIC_ERRORS as e:
                 session.rollback()
                 message = format_assessment_failure_message(e)
                 logger.error(
