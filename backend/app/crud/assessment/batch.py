@@ -31,7 +31,6 @@ from app.services.llm.mappers import (
     map_kaapi_to_anthropic_params,
     map_kaapi_to_google_params,
     map_kaapi_to_openai_params,
-    normalize_llm_text,
 )
 from app.services.assessment.utils.attachments import (
     attachment_type_for_row,
@@ -40,7 +39,11 @@ from app.services.assessment.utils.attachments import (
     resolve_attachment_values,
     rewrite_gcs_attachment_urls,
 )
-from app.services.assessment.validators import file_extension_of, parse_rows
+from app.services.assessment.validators import (
+    file_extension_of,
+    normalize_llm_text,
+    parse_rows,
+)
 from app.services.llm.mappers import kaapi_params_as_dict
 from app.services.llm.providers.registry import LLMProvider
 from app.utils import get_anthropic_client, get_openai_client
@@ -75,20 +78,19 @@ def _build_text_prompt(
     """Build the text prompt for a single row.
 
     If prompt_template is provided, placeholders like {column_name} are replaced.
-    Otherwise, all text column values are concatenated with newlines.
+    Otherwise, all text column values are concatenated with newlines. Row values go
+    through verbatim; only the stored template is unescaped.
     """
     if prompt_template:
         prompt = normalize_llm_text(prompt_template)
         for col in text_columns:
             placeholder = "{" + col + "}"
-            prompt = prompt.replace(placeholder, normalize_llm_text(row.get(col, "")))
+            prompt = prompt.replace(placeholder, row.get(col, ""))
         return prompt
 
     # No template: concatenate text columns
     parts = [
-        normalize_llm_text(row.get(col, ""))
-        for col in text_columns
-        if row.get(col, "").strip()
+        col_value for col in text_columns if (col_value := row.get(col, "")).strip()
     ]
     return "\n".join(parts)
 

@@ -1,5 +1,4 @@
 import logging
-import unicodedata
 from typing import Any
 
 from sqlmodel import Session
@@ -38,24 +37,6 @@ ELEVENLABS_DEFAULTS_BY_TYPE = {
 }
 
 logger = logging.getLogger(__name__)
-
-
-def normalize_llm_text(text: str) -> str:
-    """Unescape a prompt stored with literal ``\\n``/``\\t`` and NFC-normalise it.
-
-    Callers apply this themselves; no mapper calls it, so a prompt only changes for
-    the caller that asks for it.
-    """
-    if not isinstance(text, str) or not text:
-        return text
-
-    text = text.replace("\\n", "\n")
-    text = text.replace("\\t", "\t")
-    text = text.replace("\\r", "\r")
-    text = text.replace('\\"', '"')
-    text = text.replace("\\\\", "\\")
-
-    return unicodedata.normalize("NFC", text)
 
 
 def voice_to_id(voice: str) -> str | None:

@@ -70,10 +70,9 @@ from app.services.llm.mappers import (
     map_kaapi_to_anthropic_params,
     map_kaapi_to_google_params,
     map_kaapi_to_openai_params,
-    normalize_llm_text,
 )
 from app.services.assessment.utils.attachments import rewrite_gcs_attachment_urls
-from app.services.assessment.validators import stage_batch_prefix
+from app.services.assessment.validators import normalize_llm_text, stage_batch_prefix
 from app.services.llm.providers.registry import LLMProvider
 from app.utils import (
     get_anthropic_client,

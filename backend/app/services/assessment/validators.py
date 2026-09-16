@@ -1,4 +1,5 @@
-"""Uploaded submission files: upload validation, object-store keys, and parsing to rows.
+"""Uploaded submission files: upload validation, object-store keys, parsing to rows,
+and prompt-text normalisation.
 
 Every layer imports this, so it stays dependency-free: no DB, no object store, no
 other app module.
@@ -7,6 +8,7 @@ other app module.
 import csv
 import io
 import logging
+import unicodedata
 from collections.abc import Iterable
 from pathlib import Path
 from uuid import UUID
@@ -116,6 +118,27 @@ def submission_rows_url(object_store_url: str) -> str:
     String surgery, not ``Path``: a posix path collapses the ``s3://`` double slash.
     """
     return f"{object_store_url.rsplit('/', 1)[0]}/{SUBMISSION_FILENAME}"
+
+
+# ─── PROMPT TEXT ─────────────────────────────────────────────────────────────
+
+
+def normalize_llm_text(text: str) -> str:
+    """Unescape a prompt stored with literal ``\\n``/``\\t`` and NFC-normalise it.
+
+    Applies to stored templates and instructions only. Submission-row values are
+    passed through verbatim, so a cell like ``C:\\new`` is not rewritten.
+    """
+    if not isinstance(text, str) or not text:
+        return text
+
+    text = text.replace("\\n", "\n")
+    text = text.replace("\\t", "\t")
+    text = text.replace("\\r", "\r")
+    text = text.replace('\\"', '"')
+    text = text.replace("\\\\", "\\")
+
+    return unicodedata.normalize("NFC", text)
 
 
 # ─── SHEET PARSING ───────────────────────────────────────────────────────────

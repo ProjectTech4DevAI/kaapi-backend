@@ -24,7 +24,6 @@ from app.services.llm.mappers import (
     map_kaapi_to_google_params,
     map_kaapi_to_openai_params,
     map_kaapi_to_sarvam_params,
-    normalize_llm_text,
     transform_kaapi_config_to_native,
     voice_to_id,
 )
@@ -1142,31 +1141,6 @@ class TestSchemaHelpers:
         )
 
         assert result["propertyOrdering"] == ["a", "b"]
-
-
-class TestNormalizeLlmText:
-    """Callers apply this helper themselves; no mapper calls it."""
-
-    def test_non_string_returns_as_is(self):
-        assert normalize_llm_text(None) is None  # type: ignore[arg-type]
-        assert normalize_llm_text(42) == 42  # type: ignore[arg-type]
-
-    def test_empty_string_returns_as_is(self):
-        assert normalize_llm_text("") == ""
-
-    def test_escaped_whitespace_and_quotes_unescaped(self):
-        assert normalize_llm_text("line1\\nline2") == "line1\nline2"
-        assert normalize_llm_text("col1\\tcol2") == "col1\tcol2"
-        assert normalize_llm_text('\\"quoted\\"') == '"quoted"'
-
-    def test_double_backslash_collapsed(self):
-        assert normalize_llm_text("a\\\\b") == "a\\b"
-
-    def test_nfc_normalization_applied(self):
-        import unicodedata
-
-        text = "é"  # e + combining acute accent
-        assert normalize_llm_text(text) == unicodedata.normalize("NFC", text)
 
 
 class TestTransformGoogleVertexRouting:
