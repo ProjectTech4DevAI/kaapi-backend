@@ -22,21 +22,23 @@ from app.core.config import settings
 from app.core.util import now
 from app.crud.evaluations.cron import dispatch_fast_evaluation_barriers
 from app.crud.evaluations.fast import (
+    _create_response,
+    _merge_response_chunks,
+    _stage2_embeddings,
+    _stage3_score_and_trace,
+    run_fast_evaluation,
+    run_response_chunk,
+)
+from app.crud.evaluations.fast_chunks import (
     CHUNK_CONFIG_INDEX,
     CHUNK_CONFIG_RUN_ID,
     JOB_TYPE_EMBEDDING_FAST,
     JOB_TYPE_EVALUATION_FAST,
     JOB_TYPE_EVALUATION_FAST_CHUNK,
-    _create_response,
-    _get_chunk_job,
-    _is_failure_threshold_breached,
-    _merge_response_chunks,
-    _stage2_embeddings,
-    _stage3_score_and_trace,
+    get_chunk_job,
     list_response_chunk_jobs,
-    run_fast_evaluation,
-    run_response_chunk,
 )
+from app.crud.evaluations.fast_results import is_failure_threshold_breached
 from app.models import Config, EvaluationDataset, EvaluationRun
 from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
@@ -73,18 +75,18 @@ def _seeded_random() -> Iterator[None]:
 
 
 class TestFailureThreshold:
-    """`_is_failure_threshold_breached` controls run-level fail-fast."""
+    """`is_failure_threshold_breached` controls run-level fail-fast."""
 
     def test_returns_false_when_total_is_zero(self) -> None:
-        assert _is_failure_threshold_breached(failed_rows=0, total_rows=0) is False
+        assert is_failure_threshold_breached(failed_rows=0, total_rows=0) is False
 
     def test_returns_true_above_threshold(self) -> None:
         # default EVAL_FAST_FAILURE_THRESHOLD = 0.5
-        assert _is_failure_threshold_breached(failed_rows=6, total_rows=10) is True
+        assert is_failure_threshold_breached(failed_rows=6, total_rows=10) is True
 
     def test_returns_false_at_threshold(self) -> None:
         # 0.5 / 1.0 is NOT greater-than the threshold, so do not breach
-        assert _is_failure_threshold_breached(failed_rows=5, total_rows=10) is False
+        assert is_failure_threshold_breached(failed_rows=5, total_rows=10) is False
 
 
 class TestCallWithRetry:
@@ -545,7 +547,7 @@ class TestRunResponseChunk:
 
         assert fake_openai.responses.create.call_count == 2
 
-        job = _get_chunk_job(session=db, eval_run_id=eval_run.id, chunk_index=0)
+        job = get_chunk_job(session=db, eval_run_id=eval_run.id, chunk_index=0)
         assert job is not None
         assert job.job_type == JOB_TYPE_EVALUATION_FAST_CHUNK
         assert job.config[CHUNK_CONFIG_RUN_ID] == eval_run.id
