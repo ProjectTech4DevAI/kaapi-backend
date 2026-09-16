@@ -189,6 +189,7 @@ def get_llm_call_status(
             raise HTTPException(status_code=404, detail="Job not found")
 
         llm_call_response = None
+        call_metadata: dict | None = None
         if job.status.value == JobStatus.SUCCESS:
             llm_calls = get_llm_calls_by_job_id(
                 session=session, job_id=job_id, project_id=project_id
@@ -229,6 +230,7 @@ def get_llm_call_status(
                     usage=Usage(**usage_payload),
                     provider_raw_response=None,
                 )
+                call_metadata = llm_call.metadata_
 
         job_response = LLMJobPublic(
             job_id=job.id,
@@ -237,4 +239,4 @@ def get_llm_call_status(
             error_message=job.error_message,
         )
 
-        return APIResponse.success_response(data=job_response)
+        return APIResponse.success_response(data=job_response, metadata=call_metadata)

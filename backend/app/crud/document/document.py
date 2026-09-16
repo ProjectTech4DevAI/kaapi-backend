@@ -33,6 +33,10 @@ class DocumentCrud:
 
         return result
 
+    def exists(self, doc_id: UUID) -> bool:
+        # Ignores deleted_at and project scope: the PK stays taken after a soft delete.
+        return self.session.get(Document, doc_id) is not None
+
     def read_many(
         self,
         skip: int | None = None,
