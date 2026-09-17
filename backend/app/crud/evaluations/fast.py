@@ -505,10 +505,13 @@ def run_response_chunk(
         )
 
     # Ask OpenAI to return the file_search hits so knowledge_base can judge them.
-    # tool_choice stays at the model default (auto) — consistent with normal calls;
-    # a row where the model doesn't query the KB is scored N/A, not forced to search.
+    # tool_choice is forced rather than left at auto: a model that declines to search
+    # (gpt-4.1 usually does) returns no chunks, which drops the knowledge_base metric
+    # for every row and leaves the score blank run-wide. Forcing the call makes the
+    # metric measure groundedness given retrieval, not eagerness to retrieve.
     if any(t.get("type") == "file_search" for t in base_params.get("tools", [])):
         base_params["include"] = ["file_search_call.results"]
+        base_params["tool_choice"] = "required"
 
     results: list[dict[str, Any]] = []
     max_workers = max(
