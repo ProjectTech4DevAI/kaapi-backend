@@ -77,6 +77,11 @@ def create_evaluation_run_or_409(
     organization_id: int,
     project_id: int,
     run_mode: RunModeEnum = RunModeEnum.BATCH,
+    is_judge_run: bool = False,
+    callback_url: str | None = None,
+    duplication_factor: int | None = None,
+    total_items: int | None = None,
+    status: str = "pending",
     log_context: str,
 ) -> EvaluationRun:
     """Create an EvaluationRun, translating a duplicate-run_name collision into 409.
@@ -84,6 +89,10 @@ def create_evaluation_run_or_409(
     The (organization_id, project_id, run_name) unique constraint guards against
     double-click / client-retry races; on collision we roll back and raise a 409
     instead of leaking the IntegrityError.
+
+    The v2-only params (is_judge_run, callback_url, duplication_factor, total_items,
+    status) are passed straight through and default to the v1 no-op values, so
+    existing batch callers need no change.
     """
     try:
         return create_evaluation_run(
@@ -96,6 +105,11 @@ def create_evaluation_run_or_409(
             organization_id=organization_id,
             project_id=project_id,
             run_mode=run_mode,
+            is_judge_run=is_judge_run,
+            callback_url=callback_url,
+            duplication_factor=duplication_factor,
+            total_items=total_items,
+            status=status,
         )
     except IntegrityError as exc:
         session.rollback()

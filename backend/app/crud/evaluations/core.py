@@ -73,6 +73,11 @@ def create_evaluation_run(
     organization_id: int,
     project_id: int,
     run_mode: RunModeEnum = RunModeEnum.BATCH,
+    is_judge_run: bool = False,
+    callback_url: str | None = None,
+    duplication_factor: int | None = None,
+    total_items: int | None = None,
+    status: str = "pending",
 ) -> EvaluationRun:
     """
     Create a new evaluation run record in the database.
@@ -87,6 +92,11 @@ def create_evaluation_run(
         organization_id: Organization ID
         project_id: Project ID
         run_mode: Execution mode (RunModeEnum.BATCH default, or RunModeEnum.FAST)
+        is_judge_run: v2-only; default False, persisted as NULL (v1 marker convention)
+        callback_url: v2-only terminal-state webhook; default None
+        duplication_factor: v2-only per-run override; default None (use dataset's)
+        total_items: v2-only pre-known item count; default None, stored as 0
+        status: Initial run status; defaults to "pending"
 
     Returns:
         The created EvaluationRun instance
@@ -98,10 +108,15 @@ def create_evaluation_run(
         type=EvaluationType.TEXT.value,
         config_id=config_id,
         config_version=config_version,
-        status="pending",
+        status=status,
         run_mode=run_mode,
         organization_id=organization_id,
         project_id=project_id,
+        # False is stored as NULL so v1 rows stay indistinguishable from pre-v2 ones
+        is_judge_run=is_judge_run or None,
+        callback_url=callback_url,
+        duplication_factor=duplication_factor,
+        total_items=total_items or 0,
         inserted_at=now(),
         updated_at=now(),
     )
