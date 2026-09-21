@@ -7,7 +7,6 @@ OpenAI. This module owns the queries and row shapes; the orchestrator in
 """
 
 import logging
-from typing import Any
 
 from sqlalchemy import Integer
 from sqlmodel import Session, select

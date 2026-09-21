@@ -19,7 +19,7 @@ def build_response_result(
     item_id: str,
     question: str,
     ground_truth: str,
-    question_id: Any,
+    question_id: int | None,
     generated_output: str,
     failed: bool,
     response_id: str | None = None,

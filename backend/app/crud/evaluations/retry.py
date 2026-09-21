@@ -7,7 +7,7 @@ declaring its own.
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import ParamSpec, TypeVar
 
 import openai
 from tenacity import (
@@ -29,8 +29,13 @@ RETRYABLE_OPENAI_ERRORS: tuple[type[Exception], ...] = (
     openai.InternalServerError,
 )
 
+P = ParamSpec("P")
+R = TypeVar("R")
 
-def retry_openai_call(logger: logging.Logger) -> Callable[..., Any]:
+
+def retry_openai_call(
+    logger: logging.Logger,
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """Tenacity decorator retrying transient OpenAI errors with jittered backoff.
 
     `reraise=True` so call-site handlers see the original `OpenAIError` rather
