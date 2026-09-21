@@ -2,6 +2,7 @@
 
 from contextlib import contextmanager
 from types import SimpleNamespace
+from uuid import UUID
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -101,7 +102,9 @@ class TestSubmitCurrentStage:
                 "_resolve_run_context",
                 return_value=(assessment, MagicMock(), SimpleNamespace(), None),
             ),
-            patch.object(tasks, "_load_dataset_rows", return_value=[{"a": "1"}] * 3),
+            patch.object(
+                tasks, "load_submission_file_rows", return_value=[{"a": "1"}] * 3
+            ),
             patch.object(tasks, "_accepted_indices", return_value=accepted),
             patch.object(tasks, "recompute_assessment_status"),
         ]
@@ -160,7 +163,9 @@ class TestSubmitCurrentStage:
                 "_resolve_run_context",
                 return_value=(assessment, MagicMock(), SimpleNamespace(), None),
             ),
-            patch.object(tasks, "_load_dataset_rows", return_value=[{"a": "1"}] * 3),
+            patch.object(
+                tasks, "load_submission_file_rows", return_value=[{"a": "1"}] * 3
+            ),
             patch.object(tasks, "_accepted_indices", return_value=[0, 1, 2]),
             patch.object(tasks, "recompute_assessment_status"),
             patch.object(assessment_core, "flag_modified"),
@@ -279,9 +284,9 @@ class TestResolveRunContext:
     def test_success(self) -> None:
         session = MagicMock()
         run = _run()
-        session.get.return_value = SimpleNamespace(dataset_id=3)
+        session.get.return_value = SimpleNamespace(submission_id=UUID(int=3))
         with patch.object(
-            tasks, "get_assessment_dataset_by_id", return_value=MagicMock()
+            tasks, "get_submission_by_id", return_value=MagicMock()
         ), patch.object(
             tasks, "resolve_evaluation_config", return_value=({"x": 1}, None)
         ):
@@ -298,9 +303,9 @@ class TestResolveRunContext:
 
     def test_config_error(self) -> None:
         session = MagicMock()
-        session.get.return_value = SimpleNamespace(dataset_id=3)
+        session.get.return_value = SimpleNamespace(submission_id=UUID(int=3))
         with patch.object(
-            tasks, "get_assessment_dataset_by_id", return_value=MagicMock()
+            tasks, "get_submission_by_id", return_value=MagicMock()
         ), patch.object(
             tasks, "resolve_evaluation_config", return_value=(None, "bad config")
         ):
@@ -361,7 +366,9 @@ class TestSubmitStageBranches:
             tasks,
             "_resolve_run_context",
             return_value=(SimpleNamespace(), MagicMock(), SimpleNamespace(), None),
-        ), patch.object(tasks, "_load_dataset_rows", return_value=[]), patch.object(
+        ), patch.object(
+            tasks, "load_submission_file_rows", return_value=[]
+        ), patch.object(
             assessment_core, "flag_modified"
         ), patch.object(
             tasks, "update_assessment_run_status"
@@ -389,7 +396,7 @@ class TestSubmitStageBranches:
                 None,
             ),
         ), patch.object(
-            tasks, "_load_dataset_rows", return_value=[{"a": "1"}] * 3
+            tasks, "load_submission_file_rows", return_value=[{"a": "1"}] * 3
         ), patch.object(
             tasks, "_accepted_indices", return_value=[0, 1]
         ), patch.object(
@@ -415,7 +422,7 @@ class TestSubmitStageBranches:
                 None,
             ),
         ), patch.object(
-            tasks, "_load_dataset_rows", return_value=[{"a": "1"}]
+            tasks, "load_submission_file_rows", return_value=[{"a": "1"}]
         ), patch.object(
             tasks, "_accepted_indices", return_value=[0]
         ):

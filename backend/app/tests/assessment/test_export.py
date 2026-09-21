@@ -13,7 +13,7 @@ from app.services.assessment.utils.export import (
     _drop_empty_columns,
     _expand_input_columns,
     _expand_output_columns,
-    _load_dataset_rows_for_run,
+    _load_submission_rows_for_run,
     _load_l2_results_for_run,
     _load_parsed_results_for_batch_job,
     _load_parsed_results_for_run,
@@ -567,7 +567,7 @@ class TestLoadDatasetRowsForRun:
     def test_dataset_not_found_returns_empty(self) -> None:
         session = MagicMock()
         session.get.return_value = None
-        result = _load_dataset_rows_for_run(
+        result = _load_submission_rows_for_run(
             session=session, run=self._make_run(), assessment=self._make_assessment()
         )
         assert result == []
@@ -577,7 +577,7 @@ class TestLoadDatasetRowsForRun:
         dataset = MagicMock()
         dataset.object_store_url = None
         session.get.return_value = dataset
-        result = _load_dataset_rows_for_run(
+        result = _load_submission_rows_for_run(
             session=session, run=self._make_run(), assessment=self._make_assessment()
         )
         assert result == []
@@ -585,7 +585,7 @@ class TestLoadDatasetRowsForRun:
     def test_exception_returns_empty(self) -> None:
         session = MagicMock()
         session.get.side_effect = Exception("DB error")
-        result = _load_dataset_rows_for_run(
+        result = _load_submission_rows_for_run(
             session=session, run=self._make_run(), assessment=self._make_assessment()
         )
         assert result == []
@@ -596,10 +596,10 @@ class TestLoadDatasetRowsForRun:
         dataset.object_store_url = "s3://bucket/ds.csv"
         session.get.return_value = dataset
         with patch(
-            "app.services.assessment.utils.export._load_dataset_rows",
+            "app.services.assessment.utils.export._load_submission_rows",
             return_value=[{"q": "hi"}],
         ):
-            result = _load_dataset_rows_for_run(
+            result = _load_submission_rows_for_run(
                 session=session,
                 run=self._make_run(),
                 assessment=self._make_assessment(),
@@ -637,7 +637,7 @@ class TestLoadExportRowsForRun:
                 return_value=prefilter or {},
             ),
             patch(
-                "app.services.assessment.utils.export._load_dataset_rows_for_run",
+                "app.services.assessment.utils.export._load_submission_rows_for_run",
                 return_value=dataset_rows if dataset_rows is not None else [],
             ),
         ]
