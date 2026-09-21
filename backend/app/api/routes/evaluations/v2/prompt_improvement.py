@@ -22,7 +22,7 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation v2"])
 
 @router.post(
     "/{evaluation_id}/improve-prompt",
-    description=load_description("evaluation/improve_prompt_v2.md"),
+    description=load_description("evaluation/v2/improve_prompt.md"),
     response_model=APIResponse[LLMJobImmediatePublic],
     status_code=202,
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],

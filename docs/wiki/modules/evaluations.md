@@ -7,10 +7,10 @@ All paths relative to `backend/app/`.
 
 ## Routes
 - `api/routes/evaluations/dataset.py`, `api/routes/evaluations/evaluation.py` — text datasets + runs (v1, `/api/v1`)
-- `api/routes/evaluations/evaluation_v2.py` — `POST /api/v2/evaluations`, replica of v1 run trigger + native ground-truth LLM judge (Langfuse-free); mounted under `settings.API_V2_STR`
-- `api/routes/evaluations/dataset_v2.py` — `POST /api/v2/evaluations/datasets`, Langfuse-free dataset upload; stores only the original CSV in S3 and records `duplication_factor` as metadata (rows expanded ×factor at run time, not physically duplicated)
-- `api/routes/evaluations/prompt_improvement_v2.py` — `POST /api/v2/evaluations/{evaluation_id}/improve-prompt`, prompt iteration off the three-metric judge results (requires an `is_judge_run` run); same body as v1, returns a recommendation of type `prompt`
-- `api/routes/evaluations/iteration_v2.py` — `POST /api/v2/evaluations/iterations`, kicks off the automated eval → improve-prompt → eval loop (see Async); returns `202` with an `EvaluationIterationRunImmediatePublic` handle, final round-by-round report delivered to `callback_url`
+- `api/routes/evaluations/v2/evaluation.py` — `POST /api/v2/evaluations`, replica of v1 run trigger + native ground-truth LLM judge (Langfuse-free); mounted under `settings.API_V2_STR`
+- `api/routes/evaluations/v2/dataset.py` — `POST /api/v2/evaluations/datasets`, Langfuse-free dataset upload; stores only the original CSV in S3 and records `duplication_factor` as metadata (rows expanded ×factor at run time, not physically duplicated)
+- `api/routes/evaluations/v2/prompt_improvement.py` — `POST /api/v2/evaluations/{evaluation_id}/improve-prompt`, prompt iteration off the three-metric judge results (requires an `is_judge_run` run); same body as v1, returns a recommendation of type `prompt`
+- `api/routes/evaluations/v2/iteration.py` — `POST /api/v2/evaluations/iterations`, kicks off the automated eval → improve-prompt → eval loop (see Async); returns `202` with an `EvaluationIterationRunImmediatePublic` handle, final round-by-round report delivered to `callback_url`
 - `api/routes/stt_evaluations/`, `api/routes/tts_evaluations/` — STT/TTS
 - `api/routes/cron.py` — batch polling trigger
 
