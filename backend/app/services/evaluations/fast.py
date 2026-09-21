@@ -42,7 +42,7 @@ from app.models.evaluation import (
     RunModeEnum,
 )
 from app.models.llm.request import TextLLMParams
-from app.services.evaluations.evaluation import create_evaluation_run_or_409
+from app.services.evaluations.evaluation import create_evaluation_run
 from app.services.evaluations.validators import parse_csv_items
 from app.services.llm.providers import LLMProvider
 from app.utils import get_langfuse_client, get_openai_client
@@ -299,7 +299,7 @@ def validate_and_start_fast_evaluation(
     n_chunks = math.ceil(total_items / settings.EVAL_FAST_CHUNK_SIZE)
 
     # v2 markers (is_judge_run, callback_url, duplication_factor) land in one INSERT.
-    eval_run = create_evaluation_run_or_409(
+    eval_run = create_evaluation_run(
         session=session,
         run_name=run_name,
         dataset_name=dataset.name,

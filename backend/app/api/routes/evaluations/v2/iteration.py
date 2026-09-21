@@ -30,7 +30,7 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation v2"])
         Depends(monitor_rate("evaluations")),
     ],
 )
-def create_evaluation_iteration_v2(
+def create_evaluation_iteration(
     session: SessionDep,
     auth_context: AuthContextDep,
     request: EvaluationIterationCreateRequest,
