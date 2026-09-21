@@ -12,9 +12,8 @@ from sqlalchemy import Integer
 from sqlmodel import Session, select
 
 from app.core.cloud.storage import CloudStorage
-from app.crud.job import create_batch_job, delete_batch_job
-from app.models.batch_job import BatchJob, BatchJobCreate
-from app.models.evaluation import EvaluationRun, RunModeEnum
+from app.crud.job import delete_batch_job
+from app.models.batch_job import BatchJob
 
 logger = logging.getLogger(__name__)
 

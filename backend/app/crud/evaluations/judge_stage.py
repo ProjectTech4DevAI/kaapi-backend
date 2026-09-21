@@ -35,9 +35,7 @@ PROMPT_TEMPLATE_LABEL = "Prompt template wrapped around each user input:"
 _CHUNK_SEPARATOR = "\n---\n"
 
 
-def resolve_config_prompt(
-    *, session: Session, eval_run: EvaluationRun, log_prefix: str
-) -> str | None:
+def resolve_config_prompt(*, session: Session, eval_run: EvaluationRun) -> str | None:
     """The evaluated bot's own configured prompt, or None if unresolvable.
 
     The prompt template is appended when the config carries one, since it is

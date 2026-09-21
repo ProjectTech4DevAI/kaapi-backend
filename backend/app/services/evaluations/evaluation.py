@@ -14,7 +14,6 @@ from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import load_json_from_object_store
 from app.crud.evaluations import (
     EvaluationScore,
-    create_evaluation_run as _create_evaluation_run,
     fetch_trace_scores_from_langfuse,
     get_dataset_by_id,
     get_evaluation_run_by_id,
@@ -22,6 +21,9 @@ from app.crud.evaluations import (
     resolve_evaluation_config,
     save_score,
     sort_traces_by_question_id,
+)
+from app.crud.evaluations import (
+    create_evaluation_run as _create_evaluation_run,
 )
 from app.crud.evaluations.core import update_evaluation_run
 from app.crud.evaluations.merge import apply_cosine_breakdown

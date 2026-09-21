@@ -27,7 +27,7 @@ from app.crud.evaluations import (
     run_fast_evaluation,
 )
 from app.crud.evaluations.batch import fetch_dataset_items
-from app.crud.evaluations.core import build_log_prefix, update_evaluation_run
+from app.crud.evaluations.core import update_evaluation_run
 from app.crud.evaluations.dataset import (
     DATASET_META_DUPLICATION_FACTOR,
     DATASET_META_ORIGINAL_ITEMS,
@@ -447,7 +447,6 @@ def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None
             start = chunk_index * settings.EVAL_FAST_CHUNK_SIZE
             items_slice = dataset_items[start : start + settings.EVAL_FAST_CHUNK_SIZE]
 
-            log_prefix = build_log_prefix(eval_run)
             run_response_chunk(
                 session=session,
                 openai_client=openai_client,
@@ -455,7 +454,6 @@ def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None
                 config=text_params,
                 dataset_items_slice=items_slice,
                 chunk_index=chunk_index,
-                log_prefix=log_prefix,
             )
 
         except Exception as exc:

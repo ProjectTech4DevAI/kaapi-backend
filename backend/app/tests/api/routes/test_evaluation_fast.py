@@ -542,7 +542,6 @@ class TestRunResponseChunk:
                 config=TextLLMParams(model="gpt-4o", instructions="x"),
                 dataset_items_slice=items,
                 chunk_index=0,
-                log_prefix="[t]",
             )
 
         assert fake_openai.responses.create.call_count == 2
@@ -574,7 +573,6 @@ class TestRunResponseChunk:
             "config": TextLLMParams(model="gpt-4o", instructions="x"),
             "dataset_items_slice": items,
             "chunk_index": 0,
-            "log_prefix": "[t]",
         }
         with patch(
             "app.crud.evaluations.fast.map_kaapi_to_openai_params",
@@ -733,7 +731,6 @@ class TestStageSkipping:
                         "failed": False,
                     }
                 ],
-                log_prefix="[t]",
             )
 
         assert results == cached

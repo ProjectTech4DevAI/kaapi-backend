@@ -1491,7 +1491,6 @@ class TestFileSearchIncludeParam:
                 config=TextLLMParams(model="gpt-4o"),
                 dataset_items_slice=[{"id": "item-1"}],
                 chunk_index=0,
-                log_prefix="[test]",
             )
         return captured
 
