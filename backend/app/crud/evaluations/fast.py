@@ -645,8 +645,7 @@ def _score_judge_path(
         if reason is not None:
             outcome.unscoreable[item_refs[response["item_id"]]] = reason
 
-    # Run-level input, resolved once for every row. When it resolves to None the
-    # prompt metric drops out per row (empty input); the run still completes.
+    # Run-level input; None means prompt metric drops per row, run still completes.
     outcome.config_prompt = (
         resolve_config_prompt(session=session, eval_run=eval_run, log_prefix=log_prefix)
         or ""
@@ -670,8 +669,7 @@ def _score_judge_path(
         metrics=outcome.metrics, judge_results=outcome.judge_results
     )
 
-    # One combined call grades every metric, so its tokens can't be split per
-    # metric — they land in a single "judge" cost stage.
+    # One combined judge call means all metric tokens land in single cost stage.
     if outcome.judge_results and judge_model:
         attach_cost(
             session=session,
