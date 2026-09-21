@@ -5,10 +5,36 @@ dicts produced here are the units uploaded to S3, so they must stay
 JSON-serializable and match the batch path's shape.
 """
 
-from typing import Any
+from typing import Any, TypedDict
 
 from app.core.config import settings
 from app.crud.evaluations.response_parsing import field_value
+
+
+class ResponseResult(TypedDict, total=False):
+    """Stage 1 response evaluation result."""
+
+    item_id: str
+    question: str
+    generated_output: str
+    ground_truth: str
+    response_id: str | None
+    usage: dict[str, int]
+    question_id: int | None
+    failed: bool
+    retrieved_chunks: list[dict[str, Any]]
+
+
+class EmbeddingResult(TypedDict, total=False):
+    """Stage 2 embedding pair result."""
+
+    item_id: str
+    output_embedding: list[float] | None
+    ground_truth_embedding: list[float] | None
+    usage: dict[str, int]
+    failed: bool
+    error: str
+
 
 RESPONSE_USAGE_KEYS: tuple[str, ...] = ("input_tokens", "output_tokens", "total_tokens")
 EMBEDDING_USAGE_KEYS: tuple[str, ...] = ("prompt_tokens", "total_tokens")
@@ -25,7 +51,7 @@ def build_response_result(
     response_id: str | None = None,
     usage: dict[str, int] | None = None,
     retrieved_chunks: list[dict[str, Any]] | None = None,
-) -> dict[str, Any]:
+) -> ResponseResult:
     """One Stage-1 per-item result, in the batch path's shape."""
     return {
         "item_id": item_id,
@@ -40,13 +66,13 @@ def build_response_result(
     }
 
 
-def build_embedding_failure(item_id: str, error: str) -> dict[str, Any]:
+def build_embedding_failure(item_id: str, error: str) -> EmbeddingResult:
     """One failed Stage-2 per-pair result."""
     return {
         "item_id": item_id,
         "output_embedding": None,
         "ground_truth_embedding": None,
-        "usage": None,
+        "usage": {},
         "failed": True,
         "error": error,
     }
@@ -57,7 +83,7 @@ def extract_usage(usage_obj: Any, keys: tuple[str, ...]) -> dict[str, int]:
     return {key: int(field_value(usage_obj, key, 0) or 0) for key in keys}
 
 
-def parse_embedding_pair(*, item_id: str, response: Any) -> dict[str, Any]:
+def parse_embedding_pair(*, item_id: str, response: Any) -> EmbeddingResult:
     """Unpack an embeddings response into one Stage-2 per-pair result.
 
     The request embeds `[output_text, ground_truth]`, so index 0 is the generated

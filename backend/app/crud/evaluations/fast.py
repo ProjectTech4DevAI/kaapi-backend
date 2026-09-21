@@ -69,8 +69,6 @@ from app.crud.evaluations.fast_chunks import (
     get_chunk_job,
     list_response_chunk_jobs,
 )
-from app.crud.job import create_batch_job
-from app.models.batch_job import BatchJobCreate
 from app.crud.evaluations.fast_cosine import (
     build_item_refs,
     classify_empty_side,
@@ -79,6 +77,8 @@ from app.crud.evaluations.fast_cosine import (
 from app.crud.evaluations.fast_results import (
     EMBEDDING_USAGE_KEYS,
     RESPONSE_USAGE_KEYS,
+    EmbeddingResult,
+    ResponseResult,
     build_embedding_failure,
     build_response_result,
     extract_usage,
@@ -109,9 +109,9 @@ from app.crud.evaluations.score import (
     compute_overall_summary,
 )
 from app.crud.evaluations.summary import generate_run_ai_summary
-from app.crud.job import get_batch_job
+from app.crud.job import create_batch_job, get_batch_job
 from app.models import EvaluationRun, EvaluationRunUpdate
-from app.models.batch_job import BatchJob
+from app.models.batch_job import BatchJob, BatchJobCreate
 from app.models.llm.request import TextLLMParams
 from app.services.llm.mappers import map_kaapi_to_openai_params
 from app.services.response.response import get_file_search_results
@@ -156,7 +156,7 @@ def _responses_call_for_item(
     openai_client: OpenAI,
     base_params: dict[str, Any],
     item: dict[str, Any],
-) -> dict[str, Any]:
+) -> ResponseResult:
     """Run one Responses call for a dataset item, in the batch path's per-item shape.
 
     `base_params` is the question-independent OpenAI body produced once by
@@ -169,7 +169,7 @@ def _responses_call_for_item(
     )
     question_id = (item.get("metadata") or {}).get("question_id")
 
-    def failed_result(generated_output: str) -> dict[str, Any]:
+    def failed_result(generated_output: str) -> ResponseResult:
         return build_response_result(
             item_id=item_id,
             question=question,
@@ -214,7 +214,7 @@ def _embedding_call_for_pair(
     item_id: str,
     output_text: str,
     ground_truth: str,
-) -> dict[str, Any]:
+) -> EmbeddingResult:
     """Embed an (output, ground_truth) pair; `failed=True` on a terminal failure."""
     if not output_text or not ground_truth:
         return build_embedding_failure(item_id, "empty output or ground_truth")
@@ -274,8 +274,6 @@ def _load_completed_stage(
     session: Session,
     batch_job_id: int | None,
     project_id: int,
-    log_prefix: str,
-    stage: str,
 ) -> list[dict[str, Any]] | None:
     """Return a stage's persisted unit if its batch_job already completed, else None.
 
@@ -324,7 +322,6 @@ def run_response_chunk(
     config: TextLLMParams,
     dataset_items_slice: list[dict[str, Any]],
     chunk_index: int,
-    log_prefix: str,
 ) -> None:
     """Run the responses stage over one slice of dataset items.
 
@@ -360,8 +357,6 @@ def run_response_chunk(
         max_workers=settings.EVAL_FAST_API_CONCURRENCY,
     )
 
-    failed_count = sum(1 for r in results if r.get("failed"))
-
     raw_output_url = _upload_unit_to_s3(
         session=session,
         project_id=eval_run.project_id,
@@ -394,7 +389,7 @@ def _merge_response_chunks(
     *,
     session: Session,
     eval_run: EvaluationRun,
-) -> tuple[EvaluationRun, list[dict[str, Any]]]:
+) -> tuple[EvaluationRun, list[ResponseResult]]:
     """Concatenate every response chunk into the canonical responses unit.
 
     Skipped on retry when `eval_run.batch_job_id` is set (canonical unit
@@ -402,13 +397,10 @@ def _merge_response_chunks(
     ordered by index and de-duplicated per index — a healer re-enqueue may race
     a slow chunk — so the merged order, and the scores, stay reproducible.
     """
-    log_prefix = build_log_prefix(eval_run)
     cached = _load_completed_stage(
         session=session,
         batch_job_id=eval_run.batch_job_id,
         project_id=eval_run.project_id,
-        log_prefix=log_prefix,
-        stage="_merge_response_chunks",
     )
     if cached is not None:
         return eval_run, cached
@@ -473,16 +465,13 @@ def _stage2_embeddings(
     session: Session,
     openai_client: OpenAI,
     eval_run: EvaluationRun,
-    response_results: list[dict[str, Any]],
-    log_prefix: str,
-) -> tuple[EvaluationRun, list[dict[str, Any]]]:
+    response_results: list[ResponseResult],
+) -> tuple[EvaluationRun, list[EmbeddingResult]]:
     """Stage 2 — embed each (output, ground_truth) pair; skipped on retry if done."""
     cached = _load_completed_stage(
         session=session,
         batch_job_id=eval_run.embedding_batch_job_id,
         project_id=eval_run.project_id,
-        log_prefix=log_prefix,
-        stage="_stage2_embeddings",
     )
     if cached is not None:
         return eval_run, cached
@@ -603,8 +592,8 @@ def _attach_stage_costs(
 
 def _score_cosine_path(
     *,
-    response_results: list[dict[str, Any]],
-    embedding_results: list[dict[str, Any]] | None,
+    response_results: list[ResponseResult],
+    embedding_results: list[EmbeddingResult] | None,
     item_refs: dict[str, str],
     trace_id_mapping: dict[str, str],
     eval_run: EvaluationRun,
@@ -631,7 +620,7 @@ def _score_judge_path(
     *,
     session: Session,
     openai_client: OpenAI,
-    response_results: list[dict[str, Any]],
+    response_results: list[ResponseResult],
     item_refs: dict[str, str],
     eval_run: EvaluationRun,
     log_prefix: str,
@@ -647,8 +636,7 @@ def _score_judge_path(
 
     # Run-level input; None means prompt metric drops per row, run still completes.
     outcome.config_prompt = (
-        resolve_config_prompt(session=session, eval_run=eval_run, log_prefix=log_prefix)
-        or ""
+        resolve_config_prompt(session=session, eval_run=eval_run) or ""
     )
 
     outcome.judge_results, judge_failed_refs, judge_model = judge_rows(
@@ -741,8 +729,8 @@ def _stage3_score_and_trace(
     openai_client: OpenAI,
     eval_run: EvaluationRun,
     langfuse: Langfuse | None,
-    response_results: list[dict[str, Any]],
-    embedding_results: list[dict[str, Any]] | None,
+    response_results: list[ResponseResult],
+    embedding_results: list[EmbeddingResult] | None,
     log_prefix: str,
 ) -> tuple[EvaluationRun, EvaluationScore, list[dict[str, Any]]]:
     """Stage 3 — cosine (v1) or judge (v2), create traces, attach costs. Idempotent.
@@ -931,7 +919,6 @@ def run_fast_evaluation(
             openai_client=openai_client,
             eval_run=eval_run,
             response_results=response_results,
-            log_prefix=log_prefix,
         )
 
     # Stage 3
