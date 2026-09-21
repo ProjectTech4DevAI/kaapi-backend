@@ -78,11 +78,6 @@ def start_eval_node(state: EvaluationIterationState) -> dict[str, Any]:
             project_id=state["project_id"],
             is_judge_run=True,
         )
-    logger.info(
-        f"[start_eval_node] Round eval started | "
-        f"iteration_run_id={state['iteration_run_id']} | "
-        f"round_number={state['round_number']} | eval_run_id={eval_run.id}"
-    )
     return {"current_eval_run_id": eval_run.id}
 
 
@@ -145,12 +140,6 @@ def wait_eval_node(state: EvaluationIterationState) -> dict[str, Any]:
         stop_score=stop_score,
         kb_score=kb_score,
     )
-    logger.info(
-        f"[wait_eval_node] Round scored | iteration_run_id={state['iteration_run_id']} | "
-        f"round_number={state['round_number']} | stop_score={stop_score} | "
-        f"consecutive_low_delta_rounds={update['consecutive_low_delta_rounds']} | "
-        f"stop_reason={update.get('stop_reason')}"
-    )
     return update
 
 
@@ -179,10 +168,6 @@ def start_improve_node(state: EvaluationIterationState) -> dict[str, Any]:
             callback_url="",
             require_judge_run=True,
         )
-    logger.info(
-        f"[start_improve_node] Prompt improvement job started | "
-        f"iteration_run_id={state['iteration_run_id']} | job_id={job.id}"
-    )
     return {"current_improvement_job_id": str(job.id)}
 
 
@@ -231,11 +216,6 @@ def wait_improve_node(state: EvaluationIterationState) -> dict[str, Any]:
             "error_message": "Prompt improvement job succeeded without a version in meta",
         }
 
-    logger.info(
-        f"[wait_improve_node] Prompt improved | "
-        f"iteration_run_id={state['iteration_run_id']} | "
-        f"next_round_number={state['round_number'] + 1} | config_version={new_version}"
-    )
     return {
         "round_number": state["round_number"] + 1,
         "config_version": new_version,
@@ -275,11 +255,6 @@ def finalize_node(state: EvaluationIterationState) -> dict[str, Any]:
         if iteration_run.status != EvaluationIterationStatusEnum.PROCESSING:
             # Reaper (or another terminal writer) got here first; its callback
             # already went out, so a second one would contradict it.
-            logger.warning(
-                f"[finalize_node] Row already terminal, skipping | "
-                f"iteration_run_id={state['iteration_run_id']} | "
-                f"status={iteration_run.status.value}"
-            )
             return {}
 
         update_evaluation_iteration_run(
@@ -306,11 +281,6 @@ def finalize_node(state: EvaluationIterationState) -> dict[str, Any]:
         state["callback_url"], envelope.model_dump(), webhook_secret=webhook_secret
     )
 
-    logger.info(
-        f"[finalize_node] Loop finished | iteration_run_id={state['iteration_run_id']} | "
-        f"status={status.value} | stop_reason={stop_reason} | "
-        f"rounds={len(state['history'])}"
-    )
     return {}
 
 
@@ -417,10 +387,6 @@ def mark_iteration_run_failed(
         send_callback(
             callback_url, envelope.model_dump(), webhook_secret=webhook_secret
         )
-
-        logger.info(
-            f"[mark_iteration_run_failed] iteration_run_id={iteration_run_id} marked failed"
-        )
     except Exception:
         logger.error(
             f"[mark_iteration_run_failed] Could not mark iteration_run_id="
@@ -477,10 +443,6 @@ def execute_evaluation_iteration_graph_step(
     PROCESSING) or reaches `finalize_node` (which already updated the thin row and
     sent the callback before this returns).
     """
-    logger.info(
-        f"[execute_evaluation_iteration_graph_step] Starting | "
-        f"iteration_run_id={iteration_run_id} | resume={resume}"
-    )
     try:
         _run_graph_step(
             iteration_run_id=iteration_run_id,

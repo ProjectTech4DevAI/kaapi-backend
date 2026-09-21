@@ -46,6 +46,7 @@ from app.core.storage_utils import (
     upload_jsonl_to_object_store,
 )
 from app.crud.evaluations.core import (
+    build_log_prefix,
     resolve_model_from_config,
     save_score,
     update_evaluation_run,
@@ -58,9 +59,13 @@ from app.crud.evaluations.dataset import (
 from app.crud.evaluations.embeddings import EMBEDDING_MODEL
 from app.crud.evaluations.fast_chunks import (
     CHUNK_CONFIG_INDEX,
-    create_embedding_job,
-    create_merged_response_job,
-    create_response_chunk_job,
+    CHUNK_CONFIG_RUN_ID,
+    EMBEDDINGS_ENDPOINT,
+    JOB_TYPE_EMBEDDING_FAST,
+    JOB_TYPE_EVALUATION_FAST,
+    JOB_TYPE_EVALUATION_FAST_CHUNK,
+    RESPONSES_ENDPOINT,
+    create_stage_job,
     delete_response_chunk_artifacts,
     get_chunk_job,
     list_response_chunk_jobs,
@@ -78,6 +83,7 @@ from app.crud.evaluations.fast_results import (
     extract_usage,
     is_failure_threshold_breached,
     parse_embedding_pair,
+    sum_usage,
 )
 from app.crud.evaluations.fast_traces import build_trace_records
 from app.crud.evaluations.judge import METRIC_REGISTRY, JudgeMetricSpec, JudgeResult
@@ -142,14 +148,6 @@ def _run_in_pool(
         for future in as_completed(futures):
             results.append(future.result())
     return results
-
-
-def _log_prefix(eval_run: EvaluationRun) -> str:
-    return (
-        f"[org={eval_run.organization_id}]"
-        f"[project={eval_run.project_id}]"
-        f"[eval={eval_run.id}]"
-    )
 
 
 def _responses_call_for_item(
@@ -391,13 +389,19 @@ def run_response_chunk(
         filename=f"responses_{eval_run.id}_{chunk_index}.json",
         results=results,
     )
-    create_response_chunk_job(
+    create_stage_job(
         session=session,
         eval_run=eval_run,
-        chunk_index=chunk_index,
-        model=config.model,
-        results=results,
+        job_type=JOB_TYPE_EVALUATION_FAST_CHUNK,
+        config={
+            "endpoint": RESPONSES_ENDPOINT,
+            "model": config.model,
+            "usage": sum_usage(results, RESPONSE_USAGE_KEYS),
+            CHUNK_CONFIG_RUN_ID: eval_run.id,
+            CHUNK_CONFIG_INDEX: chunk_index,
+        },
         raw_output_url=raw_output_url,
+        total_items=len(results),
     )
 
 
@@ -413,7 +417,7 @@ def _merge_response_chunks(
     ordered by index and de-duplicated per index — a healer re-enqueue may race
     a slow chunk — so the merged order, and the scores, stay reproducible.
     """
-    log_prefix = _log_prefix(eval_run)
+    log_prefix = build_log_prefix(eval_run)
     cached = _load_completed_stage(
         session=session,
         batch_job_id=eval_run.batch_job_id,
@@ -457,12 +461,17 @@ def _merge_response_chunks(
         if chunk_job_by_index
         else None
     )
-    batch_job = create_merged_response_job(
+    batch_job = create_stage_job(
         session=session,
         eval_run=eval_run,
-        model=model,
-        results=results,
+        job_type=JOB_TYPE_EVALUATION_FAST,
+        config={
+            "endpoint": RESPONSES_ENDPOINT,
+            "model": model,
+            "usage": sum_usage(results, RESPONSE_USAGE_KEYS),
+        },
         raw_output_url=raw_output_url,
+        total_items=len(results),
     )
 
     # batch_job_id / total_items aren't on EvaluationRunUpdate; set them directly.
@@ -537,12 +546,17 @@ def _stage2_embeddings(
         filename=f"embeddings_{eval_run.id}.json",
         results=embedding_results,
     )
-    batch_job = create_embedding_job(
+    batch_job = create_stage_job(
         session=session,
         eval_run=eval_run,
-        embedding_model=EMBEDDING_MODEL,
-        results=embedding_results,
+        job_type=JOB_TYPE_EMBEDDING_FAST,
+        config={
+            "endpoint": EMBEDDINGS_ENDPOINT,
+            "embedding_model": EMBEDDING_MODEL,
+            "usage": sum_usage(embedding_results, EMBEDDING_USAGE_KEYS),
+        },
         raw_output_url=raw_output_url,
+        total_items=len(embedding_results),
     )
     eval_run = update_evaluation_run(
         session=session,
@@ -908,7 +922,7 @@ def run_fast_evaluation(
     or score sync) and for tracing-opted-out projects; scoring falls back to
     keying by item_id. Whether the run judges is read from `eval_run.is_judge_run`.
     """
-    log_prefix = _log_prefix(eval_run)
+    log_prefix = build_log_prefix(eval_run)
     logger.info(f"[run_fast_evaluation] {log_prefix} Starting fast eval aggregation")
 
     if eval_run.status == "pending":
@@ -997,10 +1011,7 @@ def run_fast_evaluation(
             )
         ),
     )
-    # Hand the caller the full unit (summary + traces) without dirtying the row:
-    # the DB keeps summary + overall, traces live in S3 behind score_trace_url, and
-    # a plain assignment would flush every trace into `score` on the caller's next
-    # commit.
+    # Expose full score (traces live in S3) without flushing it into the row.
     set_committed_value(eval_run, "score", score)
 
     logger.info(

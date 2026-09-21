@@ -102,9 +102,11 @@ def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str,
     from app.services.evaluations.iteration_graph import mark_iteration_run_failed
 
     runs = list_processing_evaluation_iteration_runs(session=session)
-    now_ = now()
-    stall_cutoff = now_ - timedelta(hours=settings.EVAL_ITERATION_STALL_THRESHOLD_HOURS)
-    cooldown_cutoff = now_ - timedelta(
+    current_time = now()
+    stall_cutoff = current_time - timedelta(
+        hours=settings.EVAL_ITERATION_STALL_THRESHOLD_HOURS
+    )
+    cooldown_cutoff = current_time - timedelta(
         minutes=settings.EVAL_ITERATION_DISPATCH_COOLDOWN_MINUTES
     )
 
@@ -147,7 +149,7 @@ def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str,
         update_evaluation_iteration_run(
             session=session,
             iteration_run=run,
-            update=EvaluationIterationRunUpdate(last_dispatched_at=now_),
+            update=EvaluationIterationRunUpdate(last_dispatched_at=current_time),
         )
         dispatched += 1
 

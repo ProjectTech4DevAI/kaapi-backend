@@ -23,6 +23,14 @@ from app.services.llm.jobs import resolve_config_blob
 logger = logging.getLogger(__name__)
 
 
+def build_log_prefix(eval_run: EvaluationRun) -> str:
+    return (
+        f"[org={eval_run.organization_id}]"
+        f"[project={eval_run.project_id}]"
+        f"[eval={eval_run.id}]"
+    )
+
+
 def resolve_evaluation_config(
     session: Session,
     config_id: UUID,

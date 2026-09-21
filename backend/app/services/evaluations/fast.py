@@ -27,7 +27,7 @@ from app.crud.evaluations import (
     run_fast_evaluation,
 )
 from app.crud.evaluations.batch import fetch_dataset_items
-from app.crud.evaluations.core import update_evaluation_run
+from app.crud.evaluations.core import build_log_prefix, update_evaluation_run
 from app.crud.evaluations.dataset import (
     DATASET_META_DUPLICATION_FACTOR,
     download_csv_from_object_store,
@@ -499,11 +499,7 @@ def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None
             start = chunk_index * settings.EVAL_FAST_CHUNK_SIZE
             items_slice = dataset_items[start : start + settings.EVAL_FAST_CHUNK_SIZE]
 
-            log_prefix = (
-                f"[org={eval_run.organization_id}]"
-                f"[project={eval_run.project_id}]"
-                f"[eval={eval_run.id}]"
-            )
+            log_prefix = build_log_prefix(eval_run)
             run_response_chunk(
                 session=session,
                 openai_client=openai_client,

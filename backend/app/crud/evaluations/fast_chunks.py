@@ -13,11 +13,6 @@ from sqlalchemy import Integer
 from sqlmodel import Session, select
 
 from app.core.cloud.storage import CloudStorage
-from app.crud.evaluations.fast_results import (
-    EMBEDDING_USAGE_KEYS,
-    RESPONSE_USAGE_KEYS,
-    sum_usage,
-)
 from app.crud.job import create_batch_job, delete_batch_job
 from app.models.batch_job import BatchJob, BatchJobCreate
 from app.models.evaluation import EvaluationRun, RunModeEnum
@@ -33,8 +28,8 @@ JOB_TYPE_EMBEDDING_FAST = "embedding_fast"
 CHUNK_CONFIG_RUN_ID = "eval_run_id"
 CHUNK_CONFIG_INDEX = "chunk_index"
 
-_RESPONSES_ENDPOINT = "/v1/responses"
-_EMBEDDINGS_ENDPOINT = "/v1/embeddings"
+RESPONSES_ENDPOINT = "/v1/responses"
+EMBEDDINGS_ENDPOINT = "/v1/embeddings"
 
 
 def list_response_chunk_jobs(*, session: Session, eval_run_id: int) -> list[BatchJob]:
@@ -58,7 +53,7 @@ def get_chunk_job(
     return session.exec(statement).first()
 
 
-def _create_stage_job(
+def create_stage_job(
     *,
     session: Session,
     eval_run: EvaluationRun,
@@ -67,6 +62,7 @@ def _create_stage_job(
     raw_output_url: str | None,
     total_items: int,
 ) -> BatchJob:
+    """Mark one fast stage (or chunk) done; a `raw_output_url` is the retry guard."""
     return create_batch_job(
         session=session,
         batch_job_create=BatchJobCreate(
@@ -78,78 +74,6 @@ def _create_stage_job(
             organization_id=eval_run.organization_id,
             project_id=eval_run.project_id,
         ),
-    )
-
-
-def create_response_chunk_job(
-    *,
-    session: Session,
-    eval_run: EvaluationRun,
-    chunk_index: int,
-    model: str | None,
-    results: list[dict[str, Any]],
-    raw_output_url: str | None,
-) -> BatchJob:
-    """Mark one response chunk done."""
-    return _create_stage_job(
-        session=session,
-        eval_run=eval_run,
-        job_type=JOB_TYPE_EVALUATION_FAST_CHUNK,
-        config={
-            "endpoint": _RESPONSES_ENDPOINT,
-            "model": model,
-            "usage": sum_usage(results, RESPONSE_USAGE_KEYS),
-            CHUNK_CONFIG_RUN_ID: eval_run.id,
-            CHUNK_CONFIG_INDEX: chunk_index,
-        },
-        raw_output_url=raw_output_url,
-        total_items=len(results),
-    )
-
-
-def create_merged_response_job(
-    *,
-    session: Session,
-    eval_run: EvaluationRun,
-    model: str | None,
-    results: list[dict[str, Any]],
-    raw_output_url: str | None,
-) -> BatchJob:
-    """Mark the merged responses unit done; its id is the aggregate's retry guard."""
-    return _create_stage_job(
-        session=session,
-        eval_run=eval_run,
-        job_type=JOB_TYPE_EVALUATION_FAST,
-        config={
-            "endpoint": _RESPONSES_ENDPOINT,
-            "model": model,
-            "usage": sum_usage(results, RESPONSE_USAGE_KEYS),
-        },
-        raw_output_url=raw_output_url,
-        total_items=len(results),
-    )
-
-
-def create_embedding_job(
-    *,
-    session: Session,
-    eval_run: EvaluationRun,
-    embedding_model: str,
-    results: list[dict[str, Any]],
-    raw_output_url: str | None,
-) -> BatchJob:
-    """Mark the embeddings unit done."""
-    return _create_stage_job(
-        session=session,
-        eval_run=eval_run,
-        job_type=JOB_TYPE_EMBEDDING_FAST,
-        config={
-            "endpoint": _EMBEDDINGS_ENDPOINT,
-            "embedding_model": embedding_model,
-            "usage": sum_usage(results, EMBEDDING_USAGE_KEYS),
-        },
-        raw_output_url=raw_output_url,
-        total_items=len(results),
     )
 
 
@@ -167,10 +91,6 @@ def delete_response_chunk_artifacts(
             if job.raw_output_url:
                 storage.delete(job.raw_output_url)
             delete_batch_job(session, job)
-        logger.info(
-            f"[delete_response_chunk_artifacts] Removed {len(chunk_jobs)} chunk "
-            f"artifacts | eval_run_id={eval_run_id}"
-        )
     except Exception as exc:
         logger.warning(
             f"[delete_response_chunk_artifacts] Cleanup failed (orphans harmless) | "
