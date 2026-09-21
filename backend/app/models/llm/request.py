@@ -82,6 +82,17 @@ class TextLLMParams(ParamSerialization, SQLModel):
             "Model-specific reasoning summary preference. " "Use null/None to disable."
         ),
     )
+    thinking: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Anthropic adaptive-thinking container, forwarded to the provider as-is "
+            "(e.g. {'type': 'enabled', 'budget_tokens': 4096})"
+        ),
+    )
+    thinking_level: Literal["low", "medium", "high"] | None = Field(
+        default=None,
+        description="Google thinking level for thinking-capable Gemini models",
+    )
     temperature: float | None = Field(
         default=0.1,
         ge=0.0,

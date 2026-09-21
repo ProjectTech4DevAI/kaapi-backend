@@ -1,15 +1,42 @@
 """Tests for assessment/cron.py helper functions."""
 
 from datetime import datetime
+from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.crud.assessment import api as assessment_api
+from app.crud.assessment import core as assessment_core
 from app.crud.assessment.cron import (
     _log_config_progress,
     poll_all_pending_assessment_evaluations,
 )
-from app.models.assessment import StageStatus
+from app.models.assessment import (
+    AssessmentMethod,
+    AssessmentStatus,
+    AssessmentSubmission,
+    StageStatus,
+)
+from app.models.config.assessment_blob import AssessmentConfigBlob
+from app.models.config.config import ConfigTag
+from app.tests.utils.auth import get_user_test_auth_context
+from app.tests.utils.test_data import (
+    create_test_config,
+    create_test_evaluation_dataset,
+)
+from app.tests.utils.utils import random_lower_string
+
+_ASSESSMENT_BLOB = AssessmentConfigBlob.model_validate(
+    {
+        "input_schema": {"a": {"type": "text"}},
+        "assessment": {
+            "provider": "openai",
+            "type": "text",
+            "params": {"model": "gpt-4o", "submission": "assess {a}"},
+        },
+    }
+)
 
 
 @pytest.fixture(autouse=True)
@@ -167,6 +194,35 @@ class TestPollAllPendingAssessmentEvaluations:
         assert result["still_processing"] == 1
 
     @pytest.mark.asyncio
+    async def test_attribute_error_marks_run_failed(self) -> None:
+        """The I-2 shape bug surfaced as an AttributeError and looped forever on retry.
+
+        Session is a mock because the failure branch calls ``session.rollback()``, which
+        unwinds the ``db`` fixture's outer transaction along with the seeded rows.
+        """
+        session = MagicMock()
+        assessment = _make_assessment(id=1, status="processing")
+        run = _make_run(id=11, execution={"stage_status": StageStatus.PROCESSING})
+        session.exec.return_value.all.return_value = [assessment]
+
+        with patch(
+            "app.crud.assessment.cron.get_assessment_runs_for_assessment",
+            return_value=[run],
+        ), patch(
+            "app.crud.assessment.cron.process_run_batches",
+            new=AsyncMock(
+                side_effect=AttributeError("'list' object has no attribute 'get'")
+            ),
+        ), patch(
+            "app.crud.assessment.cron.update_assessment_run_status"
+        ) as mark_failed:
+            result = await poll_all_pending_assessment_evaluations(session=session)
+
+        assert result["failed"] == 1
+        assert result["still_processing"] == 0
+        assert mark_failed.call_args.kwargs["status"] == "FAILED"
+
+    @pytest.mark.asyncio
     async def test_deterministic_error_marks_run_failed(self) -> None:
         """A deterministic ValueError fails the run instead of retrying forever."""
         session = MagicMock()
@@ -188,3 +244,91 @@ class TestPollAllPendingAssessmentEvaluations:
         assert result["failed"] == 1
         assert result["still_processing"] == 0
         assert mark_failed.call_args.kwargs["status"] == "FAILED"
+
+
+class TestPollerAgainstRealRows:
+    """The poller's method boundary and its failure classification, on real rows."""
+
+    def _run_assessment(self, db, auth):
+        submission = AssessmentSubmission(
+            name=f"sub-{uuid4().hex[:8]}",
+            object_store_url="s3://bucket/sub.csv",
+            total_items=1,
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+        )
+        db.add(submission)
+        db.commit()
+        db.refresh(submission)
+        return assessment_core.create_assessment(
+            session=db,
+            experiment_name="exp",
+            submission_id=submission.id,
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+        )
+
+    def _batch_assessment(self, db, auth):
+        return assessment_api.create_assessment(
+            session=db,
+            method=AssessmentMethod.BATCH,
+            input={"data": [{"a": "1"}]},
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+        )
+
+    @pytest.mark.asyncio
+    async def test_batch_assessments_are_not_polled_but_run_ones_are(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        run_assessment = self._run_assessment(db, auth)
+        batch_assessment = self._batch_assessment(db, auth)
+
+        polled: list = []
+
+        def record(*, session, assessment_id):
+            polled.append(assessment_id)
+            return []
+
+        with patch(
+            "app.crud.assessment.cron.get_assessment_runs_for_assessment",
+            side_effect=record,
+        ):
+            await poll_all_pending_assessment_evaluations(session=db)
+
+        assert run_assessment.id in polled
+        assert batch_assessment.id not in polled
+
+    @pytest.mark.asyncio
+    async def test_a_run_assessments_active_run_is_polled(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        assessment = self._run_assessment(db, auth)
+        config = create_test_config(
+            db,
+            project_id=auth.project_id,
+            name=f"assess-{random_lower_string()}",
+            config_blob=_ASSESSMENT_BLOB,
+            tag=ConfigTag.ASSESSMENT,
+        )
+        run = assessment_core.create_assessment_run(
+            session=db,
+            assessment_id=assessment.id,
+            config_id=config.id,
+            config_version=1,
+        )
+        assessment_core.update_assessment_run_status(
+            session=db, run=run, status=AssessmentStatus.PROCESSING
+        )
+        assessment_core._write_exec(run, stage_status=StageStatus.PROCESSING)
+        db.add(run)
+        db.commit()
+
+        polled_run_ids: list[int] = []
+
+        async def record(*, run, session):
+            polled_run_ids.append(run.id)
+            return {"action": "still_processing"}
+
+        with patch("app.crud.assessment.cron.process_run_batches", new=record):
+            await poll_all_pending_assessment_evaluations(session=db)
+
+        assert run.id in polled_run_ids

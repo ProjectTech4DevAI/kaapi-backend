@@ -33,7 +33,7 @@ CONFIG_ID = UUID("00000000-0000-0000-0000-000000000001")
 def _make_request(provider_config_id: UUID) -> AssessmentRunCreate:
     return AssessmentRunCreate(
         experiment_name="exp-1",
-        dataset_id=7,
+        submission_id=UUID(int=7),
         input_binding=InputBinding(
             prompt="Answer: {question}",
             text_columns=["question"],
@@ -80,7 +80,7 @@ class TestStartAssessment:
         session = MagicMock()
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
         with patch(
-            "app.services.assessment.service.get_assessment_dataset_by_id",
+            "app.services.assessment.service.get_submission_by_id",
             side_effect=HTTPException(
                 status_code=404,
                 detail="Dataset 7 not found or not accessible",
@@ -99,7 +99,7 @@ class TestStartAssessment:
         request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
         with (
             patch(
-                "app.services.assessment.service.get_assessment_dataset_by_id",
+                "app.services.assessment.service.get_submission_by_id",
                 return_value=_make_dataset(),
             ),
             patch(
@@ -123,7 +123,7 @@ class TestStartAssessment:
 
         with (
             patch(
-                "app.services.assessment.service.get_assessment_dataset_by_id",
+                "app.services.assessment.service.get_submission_by_id",
                 return_value=_make_dataset(),
             ),
             patch(
@@ -159,7 +159,7 @@ class TestStartAssessment:
 
         with (
             patch(
-                "app.services.assessment.service.get_assessment_dataset_by_id",
+                "app.services.assessment.service.get_submission_by_id",
                 return_value=dataset,
             ),
             patch(
@@ -215,7 +215,7 @@ class TestStartAssessment:
 
         with (
             patch(
-                "app.services.assessment.service.get_assessment_dataset_by_id",
+                "app.services.assessment.service.get_submission_by_id",
                 return_value=dataset,
             ),
             patch(
@@ -259,7 +259,7 @@ class TestStartAssessment:
 
         with (
             patch(
-                "app.services.assessment.service.get_assessment_dataset_by_id",
+                "app.services.assessment.service.get_submission_by_id",
                 return_value=dataset,
             ),
             patch(
@@ -303,7 +303,7 @@ class TestStartAssessment:
 
         with (
             patch(
-                "app.services.assessment.service.get_assessment_dataset_by_id",
+                "app.services.assessment.service.get_submission_by_id",
                 return_value=dataset,
             ),
             patch(
@@ -350,7 +350,7 @@ class TestStartAssessment:
 
         with (
             patch(
-                "app.services.assessment.service.get_assessment_dataset_by_id",
+                "app.services.assessment.service.get_submission_by_id",
                 return_value=_make_dataset(),
             ),
             patch("app.services.assessment.service.ConfigCrud", return_value=crud),
@@ -388,7 +388,7 @@ class TestStartAssessment:
 
         with (
             patch(
-                "app.services.assessment.service.get_assessment_dataset_by_id",
+                "app.services.assessment.service.get_submission_by_id",
                 return_value=dataset,
             ),
             patch(
@@ -428,13 +428,19 @@ class TestRetryHelpers:
 
         with pytest.raises(HTTPException, match="No assessment runs"):
             _build_retry_request(
-                experiment_name="exp", dataset_id=1, input_binding=binding, runs=[]
+                experiment_name="exp",
+                submission_id=UUID(int=1),
+                input_binding=binding,
+                runs=[],
             )
 
         run = MagicMock()
         with pytest.raises(HTTPException, match="missing for retry"):
             _build_retry_request(
-                experiment_name="exp", dataset_id=1, input_binding=None, runs=[run]
+                experiment_name="exp",
+                submission_id=UUID(int=1),
+                input_binding=None,
+                runs=[run],
             )
 
         run2 = MagicMock()
@@ -443,7 +449,10 @@ class TestRetryHelpers:
         run2.config_version = None
         with pytest.raises(HTTPException, match="Config reference is missing"):
             _build_retry_request(
-                experiment_name="exp", dataset_id=1, input_binding=binding, runs=[run2]
+                experiment_name="exp",
+                submission_id=UUID(int=1),
+                input_binding=binding,
+                runs=[run2],
             )
 
         run3 = MagicMock()
@@ -451,7 +460,10 @@ class TestRetryHelpers:
         run3.config_id = CONFIG_ID
         run3.config_version = 1
         req = _build_retry_request(
-            experiment_name="exp", dataset_id=1, input_binding=binding, runs=[run3]
+            experiment_name="exp",
+            submission_id=UUID(int=1),
+            input_binding=binding,
+            runs=[run3],
         )
         assert req.experiment_name == "exp"
         assert req.input_binding.prompt == "p"
@@ -462,7 +474,7 @@ class TestRetryHelpers:
         assessment = MagicMock()
         assessment.id = ASSESSMENT_ID
         assessment.experiment_name = "exp"
-        assessment.dataset_id = 7
+        assessment.submission_id = UUID(int=7)
         assessment.input = {"prompt": "p", "text_columns": [], "attachments": []}
         run = MagicMock()
         run.assessment_id = ASSESSMENT_ID
@@ -473,8 +485,8 @@ class TestRetryHelpers:
         result = SimpleNamespace(
             assessment_id=1,
             experiment_name="exp",
-            dataset_id=7,
-            dataset_name="ds",
+            submission_id=UUID(int=7),
+            submission_name="ds",
             num_configs=1,
             runs=[],
         )
@@ -518,7 +530,7 @@ class TestResumeAssessmentRun:
             },
         }
         run.assessment = SimpleNamespace(
-            id=ASSESSMENT_ID, experiment_name="exp", dataset_id=7
+            id=ASSESSMENT_ID, experiment_name="exp", submission_id=UUID(int=7)
         )
         return run
 
@@ -541,7 +553,7 @@ class TestResumeAssessmentRun:
 
         with (
             patch(
-                "app.services.assessment.service.get_assessment_dataset_by_id",
+                "app.services.assessment.service.get_submission_by_id",
                 return_value=_make_dataset(),
             ),
             patch("app.services.assessment.service.recompute_assessment_status"),
