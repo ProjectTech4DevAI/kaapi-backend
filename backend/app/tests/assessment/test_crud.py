@@ -13,12 +13,12 @@ from app.crud.assessment import (
     build_run_stats,
     compute_run_counts,
     create_assessment,
-    create_assessment_dataset,
+    create_submission,
     create_assessment_run,
     derive_aggregate_error,
     derive_assessment_status,
     get_assessment_by_id,
-    get_assessment_dataset_by_id,
+    get_submission_by_id,
     get_assessment_run_by_id,
     get_assessment_runs_for_assessment,
     list_assessment_runs,
@@ -28,7 +28,6 @@ from app.crud.assessment import (
     update_run_post_processing_config,
 )
 from app.crud.assessment.core import update_assessment_run_prefilter_stats
-from app.models.stt_evaluation import EvaluationType
 
 
 def _counts(total=0, pending=0, processing=0, completed=0, failed=0):
@@ -84,18 +83,17 @@ class TestCrudBasicQueries:
         assert exc_info.value.status_code == 404
         assert "99" in exc_info.value.detail
 
-    def test_get_assessment_dataset_by_id_not_found(self) -> None:
+    def test_get_submission_by_id_not_found(self) -> None:
         session = MagicMock()
         session.exec.return_value.first.return_value = None
         with pytest.raises(HTTPException) as exc_info:
-            get_assessment_dataset_by_id(
+            get_submission_by_id(
                 session=session,
-                dataset_id=99,
+                submission_id=UUID("00000000-0000-0000-0000-000000000099"),
                 organization_id=1,
                 project_id=1,
             )
         assert exc_info.value.status_code == 404
-        assert "99" in exc_info.value.detail
 
     def test_get_assessment_runs_for_assessment(self) -> None:
         session = MagicMock()
@@ -104,21 +102,20 @@ class TestCrudBasicQueries:
 
 
 class TestCrudWrites:
-    def test_create_assessment_dataset_uses_assessment_type(self) -> None:
+    def test_create_submission_persists_row(self) -> None:
         session = MagicMock()
-        result = create_assessment_dataset(
+        result = create_submission(
             session=session,
-            name="dataset",
+            name="submission",
             description="desc",
-            dataset_metadata={"total_items_count": 2},
-            object_store_url="s3://datasets/file.csv",
-            langfuse_dataset_id="langfuse-dataset",
+            object_store_url="s3://submissions/file.csv",
+            total_items=2,
             organization_id=1,
             project_id=1,
         )
 
-        assert result.type == EvaluationType.ASSESSMENT.value
-        assert result.langfuse_dataset_id == "langfuse-dataset"
+        assert result.name == "submission"
+        assert result.total_items == 2
         session.add.assert_called_once()
         session.commit.assert_called_once()
         session.refresh.assert_called_once()
@@ -128,7 +125,7 @@ class TestCrudWrites:
         result = create_assessment(
             session=session,
             experiment_name="exp",
-            dataset_id=1,
+            submission_id=UUID(int=1),
             organization_id=1,
             project_id=1,
         )

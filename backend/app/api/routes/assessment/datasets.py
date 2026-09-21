@@ -1,27 +1,25 @@
-"""Assessment dataset endpoints."""
+"""Assessment submission-file endpoints."""
 
 import logging
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.cloud import get_cloud_storage
-from app.crud.assessment.dataset import (
-    delete_assessment_dataset,
-    get_assessment_dataset_by_id,
-    list_assessment_datasets,
+from app.crud.assessment.submission import (
+    delete_submission,
+    get_submission_by_id,
+    list_submissions,
 )
 from app.models.assessment import (
-    AssessmentDatasetPreview,
-    AssessmentDatasetResponse,
+    AssessmentSubmission,
+    AssessmentSubmissionPreview,
+    AssessmentSubmissionResponse,
 )
-from app.models.evaluation import EvaluationDataset
-from app.services.assessment.dataset import (
-    preview_dataset as preview_assessment_dataset,
-)
-from app.services.assessment.dataset import upload_dataset as upload_assessment_dataset
+from app.services.assessment.submission import preview_submission, upload_submission
 from app.services.assessment.validators import validate_dataset_file
 from app.utils import APIResponse, load_description
 
@@ -30,19 +28,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _dataset_to_response(
-    dataset: EvaluationDataset,
+def _submission_to_response(
+    submission: AssessmentSubmission,
     signed_url: str | None = None,
-    preview: AssessmentDatasetPreview | None = None,
-) -> AssessmentDatasetResponse:
-    metadata = dataset.dataset_metadata or {}
-    return AssessmentDatasetResponse(
-        dataset_id=dataset.id,
-        dataset_name=dataset.name,
-        description=dataset.description,
-        total_items=metadata.get("total_items_count", 0),
-        file_extension=metadata.get("file_extension"),
-        object_store_url=dataset.object_store_url,
+    preview: AssessmentSubmissionPreview | None = None,
+) -> AssessmentSubmissionResponse:
+    return AssessmentSubmissionResponse(
+        submission_id=submission.id,
+        name=submission.name,
+        description=submission.description,
+        total_items=submission.total_items,
+        object_store_url=submission.object_store_url,
         signed_url=signed_url,
         preview=preview,
     )
@@ -51,50 +47,48 @@ def _dataset_to_response(
 @router.post(
     "/datasets",
     description=load_description("assessment/upload_dataset.md"),
-    response_model=APIResponse[AssessmentDatasetResponse],
+    response_model=APIResponse[AssessmentSubmissionResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 async def upload_dataset(
     session: SessionDep,
     auth_context: AuthContextDep,
-    file: UploadFile = File(
-        ..., description="CSV or Excel file to upload as a dataset"
-    ),
-    dataset_name: str = Form(..., description="Name for the dataset"),
-    description: str | None = Form(None, description="Optional dataset description"),
-) -> APIResponse[AssessmentDatasetResponse]:
-    """Upload an assessment dataset (any CSV/Excel file, no column requirements)."""
+    file: UploadFile = File(..., description="CSV or Excel file to upload"),
+    dataset_name: str = Form(..., description="Name for the submission"),
+    description: str | None = Form(None, description="Optional description"),
+) -> APIResponse[AssessmentSubmissionResponse]:
+    """Upload a submission file (any CSV/Excel file, no column requirements)."""
     file_content, file_ext = await validate_dataset_file(file)
 
-    dataset = upload_assessment_dataset(
+    submission = upload_submission(
         session=session,
         file_content=file_content,
         file_ext=file_ext,
-        dataset_name=dataset_name,
+        submission_name=dataset_name,
         description=description,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
 
-    return APIResponse.success_response(data=_dataset_to_response(dataset))
+    return APIResponse.success_response(data=_submission_to_response(submission))
 
 
 @router.get(
     "/datasets",
     description=load_description("assessment/list_datasets.md"),
-    response_model=APIResponse[list[AssessmentDatasetResponse]],
+    response_model=APIResponse[list[AssessmentSubmissionResponse]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def list_datasets(
     session: SessionDep,
     auth_context: AuthContextDep,
     limit: int = Query(
-        default=50, ge=1, le=100, description="Maximum number of datasets to return"
+        default=50, ge=1, le=100, description="Maximum number of records to return"
     ),
-    offset: int = Query(default=0, ge=0, description="Number of datasets to skip"),
-) -> APIResponse[list[AssessmentDatasetResponse]]:
-    """List assessment datasets."""
-    datasets = list_assessment_datasets(
+    offset: int = Query(default=0, ge=0, description="Number of records to skip"),
+) -> APIResponse[list[AssessmentSubmissionResponse]]:
+    """List uploaded submission files."""
+    submissions = list_submissions(
         session=session,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -103,18 +97,18 @@ def list_datasets(
     )
 
     return APIResponse.success_response(
-        data=[_dataset_to_response(dataset) for dataset in datasets]
+        data=[_submission_to_response(submission) for submission in submissions]
     )
 
 
 @router.get(
     "/datasets/{dataset_id}",
     description=load_description("assessment/get_dataset.md"),
-    response_model=APIResponse[AssessmentDatasetResponse],
+    response_model=APIResponse[AssessmentSubmissionResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def get_dataset(
-    dataset_id: int,
+    dataset_id: UUID,
     session: SessionDep,
     auth_context: AuthContextDep,
     include_signed_url: bool = Query(
@@ -132,31 +126,31 @@ def get_dataset(
             ),
         ),
     ] = None,
-) -> APIResponse[AssessmentDatasetResponse]:
-    """Get a specific assessment dataset."""
-    dataset = get_assessment_dataset_by_id(
+) -> APIResponse[AssessmentSubmissionResponse]:
+    """Get one uploaded submission file."""
+    submission = get_submission_by_id(
         session=session,
-        dataset_id=dataset_id,
+        submission_id=dataset_id,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
 
     signed_url = None
-    if include_signed_url and dataset.object_store_url:
+    if include_signed_url and submission.object_store_url:
         storage = get_cloud_storage(
             session=session, project_id=auth_context.project_.id
         )
-        signed_url = storage.get_signed_url(dataset.object_store_url)
+        signed_url = storage.get_signed_url(submission.object_store_url)
 
-    preview: AssessmentDatasetPreview | None = None
+    preview: AssessmentSubmissionPreview | None = None
     if limit_rows is not None:
-        headers, rows = preview_assessment_dataset(
+        headers, rows = preview_submission(
             session=session,
-            dataset=dataset,
+            submission=submission,
             project_id=auth_context.project_.id,
             limit=limit_rows,
         )
-        preview = AssessmentDatasetPreview(
+        preview = AssessmentSubmissionPreview(
             headers=headers,
             rows=rows,
             returned_rows=len(rows),
@@ -164,7 +158,7 @@ def get_dataset(
         )
 
     return APIResponse.success_response(
-        data=_dataset_to_response(dataset, signed_url=signed_url, preview=preview)
+        data=_submission_to_response(submission, signed_url=signed_url, preview=preview)
     )
 
 
@@ -175,28 +169,28 @@ def get_dataset(
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def delete_dataset(
-    dataset_id: int,
+    dataset_id: UUID,
     session: SessionDep,
     auth_context: AuthContextDep,
 ) -> APIResponse[dict]:
-    """Delete an assessment dataset."""
-    dataset = get_assessment_dataset_by_id(
+    """Delete an uploaded submission file."""
+    submission = get_submission_by_id(
         session=session,
-        dataset_id=dataset_id,
+        submission_id=dataset_id,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
 
-    dataset_name = dataset.name
-    error = delete_assessment_dataset(session=session, dataset=dataset)
+    submission_name = submission.name
+    error = delete_submission(session=session, submission=submission)
     if error:
         raise HTTPException(status_code=400, detail=error)
 
     return APIResponse.success_response(
         data={
             "message": (
-                f"Successfully deleted dataset '{dataset_name}' (id={dataset_id})"
+                f"Successfully deleted submission '{submission_name}' (id={dataset_id})"
             ),
-            "dataset_id": dataset_id,
+            "submission_id": str(dataset_id),
         }
     )
