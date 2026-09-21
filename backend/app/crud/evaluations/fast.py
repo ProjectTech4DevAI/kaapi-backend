@@ -65,11 +65,12 @@ from app.crud.evaluations.fast_chunks import (
     JOB_TYPE_EVALUATION_FAST,
     JOB_TYPE_EVALUATION_FAST_CHUNK,
     RESPONSES_ENDPOINT,
-    create_stage_job,
     delete_response_chunk_artifacts,
     get_chunk_job,
     list_response_chunk_jobs,
 )
+from app.crud.job import create_batch_job
+from app.models.batch_job import BatchJobCreate
 from app.crud.evaluations.fast_cosine import (
     build_item_refs,
     classify_empty_side,
@@ -287,9 +288,6 @@ def _load_completed_stage(
     existing = get_batch_job(session=session, batch_job_id=batch_job_id)
     if not (existing and existing.raw_output_url):
         return None
-    logger.info(
-        f"[{stage}] {log_prefix} Skipping (already done) | batch_job_id={existing.id}"
-    )
     return _load_unit_from_s3(
         session=session, project_id=project_id, url=existing.raw_output_url
     )
@@ -342,25 +340,11 @@ def run_response_chunk(
         session=session, eval_run_id=eval_run.id, chunk_index=chunk_index
     )
     if existing and existing.raw_output_url:
-        logger.info(
-            f"[run_response_chunk] {log_prefix} Skipping chunk (already done) | "
-            f"chunk_index={chunk_index} | batch_job_id={existing.id}"
-        )
         return
-
-    logger.info(
-        f"[run_response_chunk] {log_prefix} Running chunk | "
-        f"chunk_index={chunk_index} | items={len(dataset_items_slice)} | "
-        f"model={config.model} | concurrency={settings.EVAL_FAST_API_CONCURRENCY}"
-    )
 
     base_params, mapper_warnings = map_kaapi_to_openai_params(
         session=session, kaapi_params=config
     )
-    if mapper_warnings:
-        logger.info(
-            f"[run_response_chunk] {log_prefix} Mapper warnings: {mapper_warnings}"
-        )
 
     # Ask OpenAI to return the file_search hits so knowledge_base can judge them.
     # tool_choice stays at the model default (auto) — consistent with normal calls;
@@ -377,10 +361,6 @@ def run_response_chunk(
     )
 
     failed_count = sum(1 for r in results if r.get("failed"))
-    logger.info(
-        f"[run_response_chunk] {log_prefix} Chunk finished | "
-        f"chunk_index={chunk_index} | total={len(results)} | failed={failed_count}"
-    )
 
     raw_output_url = _upload_unit_to_s3(
         session=session,
@@ -389,19 +369,24 @@ def run_response_chunk(
         filename=f"responses_{eval_run.id}_{chunk_index}.json",
         results=results,
     )
-    create_stage_job(
+    create_batch_job(
         session=session,
-        eval_run=eval_run,
-        job_type=JOB_TYPE_EVALUATION_FAST_CHUNK,
-        config={
-            "endpoint": RESPONSES_ENDPOINT,
-            "model": config.model,
-            "usage": sum_usage(results, RESPONSE_USAGE_KEYS),
-            CHUNK_CONFIG_RUN_ID: eval_run.id,
-            CHUNK_CONFIG_INDEX: chunk_index,
-        },
-        raw_output_url=raw_output_url,
-        total_items=len(results),
+        batch_job_create=BatchJobCreate(
+            provider="openai",
+            job_type=JOB_TYPE_EVALUATION_FAST_CHUNK,
+            config={
+                "run_mode": "fast",
+                "endpoint": RESPONSES_ENDPOINT,
+                "model": config.model,
+                "usage": sum_usage(results, RESPONSE_USAGE_KEYS),
+                CHUNK_CONFIG_RUN_ID: eval_run.id,
+                CHUNK_CONFIG_INDEX: chunk_index,
+            },
+            raw_output_url=raw_output_url,
+            total_items=len(results),
+            organization_id=eval_run.organization_id,
+            project_id=eval_run.project_id,
+        ),
     )
 
 
@@ -444,11 +429,6 @@ def _merge_response_chunks(
             )
         )
 
-    logger.info(
-        f"[_merge_response_chunks] {log_prefix} Merged chunks | "
-        f"chunks={len(chunk_job_by_index)} | items={len(results)}"
-    )
-
     raw_output_url = _upload_unit_to_s3(
         session=session,
         project_id=eval_run.project_id,
@@ -461,17 +441,22 @@ def _merge_response_chunks(
         if chunk_job_by_index
         else None
     )
-    batch_job = create_stage_job(
+    batch_job = create_batch_job(
         session=session,
-        eval_run=eval_run,
-        job_type=JOB_TYPE_EVALUATION_FAST,
-        config={
-            "endpoint": RESPONSES_ENDPOINT,
-            "model": model,
-            "usage": sum_usage(results, RESPONSE_USAGE_KEYS),
-        },
-        raw_output_url=raw_output_url,
-        total_items=len(results),
+        batch_job_create=BatchJobCreate(
+            provider="openai",
+            job_type=JOB_TYPE_EVALUATION_FAST,
+            config={
+                "run_mode": "fast",
+                "endpoint": RESPONSES_ENDPOINT,
+                "model": model,
+                "usage": sum_usage(results, RESPONSE_USAGE_KEYS),
+            },
+            raw_output_url=raw_output_url,
+            total_items=len(results),
+            organization_id=eval_run.organization_id,
+            project_id=eval_run.project_id,
+        ),
     )
 
     # batch_job_id / total_items aren't on EvaluationRunUpdate; set them directly.
@@ -504,11 +489,6 @@ def _stage2_embeddings(
 
     # Only embed items that succeeded in Stage 1.
     embed_candidates = [r for r in response_results if not r.get("failed")]
-    logger.info(
-        f"[_stage2_embeddings] {log_prefix} Running stage 2 | "
-        f"items={len(embed_candidates)} | model={EMBEDDING_MODEL} | "
-        f"concurrency={settings.EVAL_FAST_API_CONCURRENCY}"
-    )
 
     embedding_results = _run_in_pool(
         items=embed_candidates,
@@ -525,10 +505,6 @@ def _stage2_embeddings(
     failed_count = sum(1 for r in embedding_results if r.get("failed"))
     # Threshold is over the whole dataset: Stage 1 failures count as failures too.
     total_failures = failed_count + sum(1 for r in response_results if r.get("failed"))
-    logger.info(
-        f"[_stage2_embeddings] {log_prefix} Stage 2 finished | "
-        f"total={len(embedding_results)} | failed={failed_count}"
-    )
 
     if is_failure_threshold_breached(
         failed_rows=total_failures, total_rows=len(response_results)
@@ -546,17 +522,22 @@ def _stage2_embeddings(
         filename=f"embeddings_{eval_run.id}.json",
         results=embedding_results,
     )
-    batch_job = create_stage_job(
+    batch_job = create_batch_job(
         session=session,
-        eval_run=eval_run,
-        job_type=JOB_TYPE_EMBEDDING_FAST,
-        config={
-            "endpoint": EMBEDDINGS_ENDPOINT,
-            "embedding_model": EMBEDDING_MODEL,
-            "usage": sum_usage(embedding_results, EMBEDDING_USAGE_KEYS),
-        },
-        raw_output_url=raw_output_url,
-        total_items=len(embedding_results),
+        batch_job_create=BatchJobCreate(
+            provider="openai",
+            job_type=JOB_TYPE_EMBEDDING_FAST,
+            config={
+                "run_mode": "fast",
+                "endpoint": EMBEDDINGS_ENDPOINT,
+                "embedding_model": EMBEDDING_MODEL,
+                "usage": sum_usage(embedding_results, EMBEDDING_USAGE_KEYS),
+            },
+            raw_output_url=raw_output_url,
+            total_items=len(embedding_results),
+            organization_id=eval_run.organization_id,
+            project_id=eval_run.project_id,
+        ),
     )
     eval_run = update_evaluation_run(
         session=session,
@@ -782,10 +763,6 @@ def _stage3_score_and_trace(
         nothing is written to Langfuse.
     """
     is_judge_run = eval_run.is_judge_run
-    logger.info(
-        f"[_stage3_score_and_trace] {log_prefix} Scoring stage 3 | "
-        f"judge_run={is_judge_run}"
-    )
 
     model = resolve_model_from_config(session=session, eval_run=eval_run)
     trace_id_mapping = create_langfuse_dataset_run(
@@ -923,7 +900,6 @@ def run_fast_evaluation(
     keying by item_id. Whether the run judges is read from `eval_run.is_judge_run`.
     """
     log_prefix = build_log_prefix(eval_run)
-    logger.info(f"[run_fast_evaluation] {log_prefix} Starting fast eval aggregation")
 
     if eval_run.status == "pending":
         eval_run = update_evaluation_run(
@@ -1014,8 +990,4 @@ def run_fast_evaluation(
     # Expose full score (traces live in S3) without flushing it into the row.
     set_committed_value(eval_run, "score", score)
 
-    logger.info(
-        f"[run_fast_evaluation] {log_prefix} Fast evaluation completed | "
-        f"total_items={eval_run.total_items}"
-    )
     return eval_run

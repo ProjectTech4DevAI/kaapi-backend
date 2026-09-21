@@ -61,11 +61,7 @@ def resolve_config_prompt(
     # are no instructions to grade against, not a run failure.
     try:
         params = TextLLMParams.model_validate(config.completion.params)
-    except ValidationError as exc:
-        logger.info(
-            f"[resolve_config_prompt] {log_prefix} Completion params are not text "
-            f"params; prompt metric unscoreable | error={exc}"
-        )
+    except ValidationError:
         return None
 
     sections: list[str] = []

@@ -65,10 +65,6 @@ def dispatch_fast_evaluation_barriers(session: Session) -> dict[str, Any]:
         if done >= expected and run.batch_job_id is None:
             start_fast_evaluation_aggregate(eval_run_id=run.id)
             aggregates_dispatched += 1
-            logger.info(
-                f"[dispatch_fast_evaluation_barriers] Aggregate dispatched | "
-                f"run_id={run.id} | chunks={done}/{expected}"
-            )
             continue
 
         if done < expected and run.updated_at < stall_cutoff:
@@ -153,10 +149,6 @@ def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str,
         )
         dispatched += 1
 
-    logger.info(
-        f"[dispatch_pending_evaluation_iteration_resumes] Dispatched resumes | "
-        f"count={dispatched} | in_flight_skipped={in_flight} | reaped={reaped}"
-    )
     return {
         "total": len(runs),
         "resumes_dispatched": dispatched,
@@ -167,8 +159,6 @@ def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str,
 
 async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
     """Poll text/STT/TTS evaluations, then run the fast-eval barrier and iteration resumes."""
-    logger.info("[process_all_pending_evaluations] Starting evaluation processing")
-
     try:
         text_summary = await poll_all_pending_evaluations(session=session)
 
@@ -199,15 +189,6 @@ async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
             text_summary.get("details", [])
             + stt_summary.get("details", [])
             + tts_summary.get("details", [])
-        )
-
-        logger.info(
-            f"[process_all_pending_evaluations] Completed: "
-            f"{total_processed} processed, {total_failed} failed, "
-            f"{total_still_processing} still processing | "
-            f"fast_aggregates={fast_summary['aggregates_dispatched']} | "
-            f"fast_chunks_reenqueued={fast_summary['chunks_reenqueued']} | "
-            f"iteration_resumes={iteration_summary['resumes_dispatched']}"
         )
 
         return {

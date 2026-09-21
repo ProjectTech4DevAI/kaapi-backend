@@ -53,30 +53,6 @@ def get_chunk_job(
     return session.exec(statement).first()
 
 
-def create_stage_job(
-    *,
-    session: Session,
-    eval_run: EvaluationRun,
-    job_type: str,
-    config: dict[str, Any],
-    raw_output_url: str | None,
-    total_items: int,
-) -> BatchJob:
-    """Mark one fast stage (or chunk) done; a `raw_output_url` is the retry guard."""
-    return create_batch_job(
-        session=session,
-        batch_job_create=BatchJobCreate(
-            provider="openai",
-            job_type=job_type,
-            config={"run_mode": RunModeEnum.FAST.value, **config},
-            raw_output_url=raw_output_url,
-            total_items=total_items,
-            organization_id=eval_run.organization_id,
-            project_id=eval_run.project_id,
-        ),
-    )
-
-
 def delete_response_chunk_artifacts(
     *, session: Session, storage: CloudStorage, eval_run_id: int
 ) -> None:
