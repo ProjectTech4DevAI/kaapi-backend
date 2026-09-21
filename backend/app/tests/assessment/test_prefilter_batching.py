@@ -2,8 +2,8 @@
 
 from contextlib import contextmanager
 from types import SimpleNamespace
-from uuid import UUID
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded

@@ -14,7 +14,6 @@ from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import load_json_from_object_store
 from app.crud.evaluations import (
     EvaluationScore,
-    create_evaluation_run,
     fetch_trace_scores_from_langfuse,
     get_dataset_by_id,
     get_evaluation_run_by_id,
@@ -22,6 +21,9 @@ from app.crud.evaluations import (
     resolve_evaluation_config,
     save_score,
     sort_traces_by_question_id,
+)
+from app.crud.evaluations import (
+    create_evaluation_run as _create_evaluation_run,
 )
 from app.crud.evaluations.core import update_evaluation_run
 from app.crud.evaluations.merge import apply_cosine_breakdown
@@ -66,7 +68,7 @@ def _is_run_name_conflict(error: IntegrityError) -> bool:
     return _RUN_NAME_UNIQUE_CONSTRAINT in str(error.orig or error)
 
 
-def create_evaluation_run_or_409(
+def create_evaluation_run(
     *,
     session: Session,
     run_name: str,
@@ -77,16 +79,25 @@ def create_evaluation_run_or_409(
     organization_id: int,
     project_id: int,
     run_mode: RunModeEnum = RunModeEnum.BATCH,
+    is_judge_run: bool = False,
+    callback_url: str | None = None,
+    duplication_factor: int | None = None,
+    total_items: int | None = None,
+    status: str = "pending",
     log_context: str,
 ) -> EvaluationRun:
     """Create an EvaluationRun, translating a duplicate-run_name collision into 409.
 
     The (organization_id, project_id, run_name) unique constraint guards against
-    double-click / client-retry races; on collision we roll back and raise a 409
-    instead of leaking the IntegrityError.
+    double-click / client-retry races; on collision we roll back and raise 409 if
+    the run_name already exists for this organization and project.
+
+    The v2-only params (is_judge_run, callback_url, duplication_factor, total_items,
+    status) are passed straight through and default to the v1 no-op values, so
+    existing batch callers need no change.
     """
     try:
-        return create_evaluation_run(
+        return _create_evaluation_run(
             session=session,
             run_name=run_name,
             dataset_name=dataset_name,
@@ -96,6 +107,11 @@ def create_evaluation_run_or_409(
             organization_id=organization_id,
             project_id=project_id,
             run_mode=run_mode,
+            is_judge_run=is_judge_run,
+            callback_url=callback_url,
+            duplication_factor=duplication_factor,
+            total_items=total_items,
+            status=status,
         )
     except IntegrityError as exc:
         session.rollback()
@@ -308,7 +324,7 @@ def validate_and_start_batch_evaluation(
     )
 
     # Step 3: Create EvaluationRun record with config references
-    eval_run = create_evaluation_run_or_409(
+    eval_run = create_evaluation_run(
         session=session,
         run_name=experiment_name,
         dataset_name=dataset.name,
