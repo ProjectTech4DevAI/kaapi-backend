@@ -162,6 +162,63 @@ class TestApiCrudRoundTrip:
         assert [e.id for e in listed] == [first.id, second.id]
 
 
+class TestSetResultFiles:
+    def _assessment(self, db, auth):
+        return api.create_assessment(
+            session=db,
+            method=AssessmentMethod.BATCH,
+            input={"data": [{"a": "1"}]},
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+        )
+
+    def test_second_kind_does_not_evict_the_first(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        assessment = self._assessment(db, auth)
+
+        api.set_result_files(
+            session=db,
+            assessment=assessment,
+            files={"results": {"url": "s3://b/out.jsonl", "count": 998}},
+        )
+        api.set_result_files(
+            session=db,
+            assessment=assessment,
+            files={"errors": {"url": "s3://b/errors.jsonl", "count": 389}},
+        )
+
+        db.refresh(assessment)
+        assert assessment.result_files == {
+            "results": {"url": "s3://b/out.jsonl", "count": 998},
+            "errors": {"url": "s3://b/errors.jsonl", "count": 389},
+        }
+
+    def test_rerecording_a_kind_replaces_only_that_kind(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        assessment = self._assessment(db, auth)
+
+        api.set_result_files(
+            session=db,
+            assessment=assessment,
+            files={
+                "results": {"url": "s3://b/stale.jsonl", "count": 1},
+                "errors": {"url": "s3://b/errors.jsonl", "count": 389},
+            },
+        )
+        api.set_result_files(
+            session=db,
+            assessment=assessment,
+            files={"results": {"url": "s3://b/fresh.jsonl", "count": 998}},
+        )
+
+        db.refresh(assessment)
+        assert assessment.result_files["results"] == {
+            "url": "s3://b/fresh.jsonl",
+            "count": 998,
+        }
+        assert assessment.result_files["errors"]["count"] == 389
+
+
 class TestDeriveMethod:
     def test_response_input(self) -> None:
         assert derive_method(ResponseInput(), None) == AssessmentMethod.RESPONSE
@@ -256,6 +313,16 @@ class TestAssessmentCompletionConfigValidator:
     def test_user_set_temperature_kept(self) -> None:
         blob = AssessmentConfigBlob.model_validate(_assessment_params(temperature=0.4))
         assert blob.assessment.params["temperature"] == 0.4
+
+    def test_thinking_params_reach_the_stored_params(self) -> None:
+        # validate_params replaces params with the model dump, so a param the model
+        # does not declare is silently dropped before any mapper can see it.
+        thinking = {"type": "enabled", "budget_tokens": 4096}
+        blob = AssessmentConfigBlob.model_validate(
+            _assessment_params(thinking=thinking, thinking_level="high")
+        )
+        assert blob.assessment.params["thinking"] == thinking
+        assert blob.assessment.params["thinking_level"] == "high"
 
 
 class TestInputSchemaValidators:

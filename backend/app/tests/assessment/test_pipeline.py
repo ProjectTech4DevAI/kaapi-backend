@@ -76,6 +76,16 @@ class TestPipeline:
         )
         assert next_stage(pipeline, Stage.L2_ASSESSMENT) is None
 
+    def test_no_pipeline_is_no_stages(self) -> None:
+        assert ordered_stages(None) == []
+
+    def test_batch_api_list_pipeline_names_the_bad_shape(self) -> None:
+        # The BATCH API path writes a bare list into the same JSONB column; the legacy
+        # poller used to hit `AttributeError: 'list' object has no attribute 'get'` here.
+        batch_pipeline = [{"stage": "assessment", "kind": "ASSESSMENT"}]
+        with pytest.raises(ValueError, match="got list"):
+            ordered_stages(batch_pipeline)
+
 
 class TestAdvanceOrFinalize:
     def test_advances_to_next_pending_stage(self) -> None:
