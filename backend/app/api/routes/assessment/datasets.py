@@ -118,7 +118,7 @@ def get_dataset(
         int | None,
         Query(
             ge=1,
-            le=100,
+            le=2000,
             description=(
                 "If set, fetch the underlying file and include a preview of the "
                 "first N data rows plus column headers. Skip to avoid the file "
