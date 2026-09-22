@@ -32,6 +32,13 @@ def get_transformation_job(
     include_url: bool = Query(
         False, description="Include a signed URL for the transformed document"
     ),
+    download: bool = Query(
+        False,
+        description=(
+            "When true the signed URL forces a download under the document's "
+            "original filename; when false it opens inline in the browser"
+        ),
+    ),
 ):
     job_crud = DocTransformationJobCrud(session, current_user.project_.id)
     doc_crud = DocumentCrud(session, current_user.project_.id)
@@ -48,6 +55,7 @@ def get_transformation_job(
         doc_crud=doc_crud,
         include_url=include_url,
         storage=storage,
+        download=download,
     )
     return APIResponse.success_response(job_schema)
 
@@ -70,6 +78,13 @@ def get_multiple_transformation_jobs(
     include_url: bool = Query(
         False, description="Include a signed URL for each transformed document"
     ),
+    download: bool = Query(
+        False,
+        description=(
+            "When true the signed URL forces a download under the document's "
+            "original filename; when false it opens inline in the browser"
+        ),
+    ),
 ):
     job_crud = DocTransformationJobCrud(session, project_id=current_user.project_.id)
     doc_crud = DocumentCrud(session, project_id=current_user.project_.id)
@@ -89,6 +104,7 @@ def get_multiple_transformation_jobs(
         doc_crud=doc_crud,
         include_url=include_url,
         storage=storage,
+        download=download,
     )
 
     return APIResponse.success_response(

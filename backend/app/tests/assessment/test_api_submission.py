@@ -1,5 +1,6 @@
 """Tests for the BATCH API-client submit entrypoint (app/services/assessment/api/submission.py)."""
 
+from contextlib import contextmanager
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ from sqlmodel import select
 
 from app.core.config import settings
 from app.crud.assessment import api
+from app.crud.assessment.submission import create_submission
 from app.models.assessment import (
     Assessment,
     AssessmentCreate,
@@ -21,6 +23,18 @@ from app.services.assessment.api import submission
 from app.tests.utils.auth import get_user_test_auth_context
 from app.tests.utils.test_data import create_test_config
 from app.tests.utils.utils import random_lower_string
+
+_OPEN_ROWS = "app.services.assessment.api.submission.open_uploaded_rows"
+
+
+def _serving(rows):
+    """Stand-in for open_uploaded_rows that streams the given rows."""
+
+    @contextmanager
+    def _open(**_):
+        yield iter(rows)
+
+    return _open
 
 
 def _assessment_config(
@@ -71,6 +85,15 @@ class TestSubmit:
         with patch("app.services.assessment.api.submission.validate_callback_url"):
             yield
 
+    @pytest.fixture(autouse=True)
+    def _stub_submission_upload(self):
+        # Submit stores the rows in object storage; these cases are not about that.
+        with patch(
+            "app.services.assessment.api.submission.upload_submission_rows",
+            return_value="s3://bucket/submission.jsonl",
+        ):
+            yield
+
     def test_creates_assessment_run_and_dispatches(self, db) -> None:
         auth = get_user_test_auth_context(db)
         config = _assessment_config(db, auth.project_id)
@@ -104,12 +127,12 @@ class TestSubmit:
         assert bag["stage_status"] == AssessmentStatus.PENDING.value
         assert bag["callback_url"].startswith("https://hook.example")
 
-    def test_row_missing_declared_column_is_422(self, db) -> None:
+    def test_row_missing_strict_column_is_422(self, db) -> None:
         auth = get_user_test_auth_context(db)
         config = _assessment_config(
             db,
             auth.project_id,
-            input_schema={"a": {"type": "text"}, "b": {"type": "text"}},
+            input_schema={"a": {"type": "text"}, "b": {"type": "text", "strict": True}},
         )
         request = _request(config, [{"a": "present"}, {"a": "present", "b": "here"}])
 
@@ -269,6 +292,99 @@ class TestSubmit:
         assert latest.status == AssessmentStatus.FAILED
 
 
+class TestSubmissionDocId:
+    """The `submission_doc_id` branch: rows come from a stored submission file."""
+
+    @pytest.fixture(autouse=True)
+    def _bypass_callback_check(self):
+        with (
+            patch("app.services.assessment.api.submission.validate_callback_url"),
+            patch(
+                "app.services.assessment.api.submission.upload_submission_rows",
+                return_value="s3://bucket/submission.jsonl",
+            ),
+        ):
+            yield
+
+    def _request(self, config, submission_doc_id):
+        return AssessmentCreate.model_validate(
+            {
+                "config": {"id": str(config.id), "version": 1},
+                "input": {"submission_doc_id": str(submission_doc_id)},
+                "callback_url": "https://hook.example/cb",
+            }
+        )
+
+    def _submit(self, db, auth, config, submission_doc_id):
+        return submission.submit(
+            session=db,
+            request=self._request(config, submission_doc_id),
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+        )
+
+    def test_rows_are_read_from_the_submission(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        config = _assessment_config(db, auth.project_id)
+        stored = create_submission(
+            session=db,
+            name="rows",
+            object_store_url="s3://bucket/rows.csv",
+            total_items=2,
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+        )
+
+        with (
+            patch(_OPEN_ROWS, _serving([{"a": "one"}, {"a": "two"}])),
+            patch("app.celery.tasks.job_execution.run_assessment_api_batch"),
+        ):
+            response = self._submit(db, auth, config, stored.id)
+
+        assert response.status == AssessmentStatus.PROCESSING
+
+    def test_unknown_submission_is_404(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        config = _assessment_config(db, auth.project_id)
+        with pytest.raises(HTTPException) as exc:
+            self._submit(db, auth, config, uuid4())
+        assert exc.value.status_code == 404
+
+    def test_unreadable_submission_is_502(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        config = _assessment_config(db, auth.project_id)
+        stored = create_submission(
+            session=db,
+            name="unreadable",
+            object_store_url="s3://bucket/rows.csv",
+            total_items=1,
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+        )
+
+        with patch(_OPEN_ROWS, side_effect=RuntimeError("s3 down")):
+            with pytest.raises(HTTPException) as exc:
+                self._submit(db, auth, config, stored.id)
+        assert exc.value.status_code == 502
+
+    def test_empty_submission_is_422(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        config = _assessment_config(db, auth.project_id)
+        stored = create_submission(
+            session=db,
+            name="empty",
+            object_store_url="s3://bucket/rows.csv",
+            total_items=0,
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+        )
+
+        with patch(_OPEN_ROWS, _serving([])):
+            with pytest.raises(HTTPException) as exc:
+                self._submit(db, auth, config, stored.id)
+        assert exc.value.status_code == 422
+
+
 class TestCallbackUrlValidation:
     """BUG 3 regression: submission.submit validates callback_url up front (HTTPS +
     SSRF/private-IP guard) and maps failure to 422, instead of only at delivery time."""
@@ -319,6 +435,10 @@ class TestCallbackUrlValidation:
                 "app.services.assessment.api.submission.validate_callback_url"
             ) as validate,
             patch("app.celery.tasks.job_execution.run_assessment_api_batch") as task,
+            patch(
+                "app.services.assessment.api.submission.upload_submission_rows",
+                return_value="s3://bucket/submission.jsonl",
+            ),
         ):
             response = self._submit(db, auth, config, "https://example.com/hook")
         validate.assert_called_once_with("https://example.com/hook")
@@ -329,7 +449,13 @@ class TestCallbackUrlValidation:
 class TestCreateAssessmentRoute:
     @pytest.fixture(autouse=True)
     def _bypass_callback_check(self):
-        with patch("app.services.assessment.api.submission.validate_callback_url"):
+        with (
+            patch("app.services.assessment.api.submission.validate_callback_url"),
+            patch(
+                "app.services.assessment.api.submission.upload_submission_rows",
+                return_value="s3://bucket/submission.jsonl",
+            ),
+        ):
             yield
 
     def test_batch_input_dispatches_and_returns_202_body(
