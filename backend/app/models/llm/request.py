@@ -82,6 +82,17 @@ class TextLLMParams(ParamSerialization, SQLModel):
             "Model-specific reasoning summary preference. " "Use null/None to disable."
         ),
     )
+    thinking: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Anthropic adaptive-thinking container, forwarded to the provider as-is "
+            "(e.g. {'type': 'enabled', 'budget_tokens': 4096})"
+        ),
+    )
+    thinking_level: Literal["low", "medium", "high"] | None = Field(
+        default=None,
+        description="Google thinking level for thinking-capable Gemini models",
+    )
     temperature: float | None = Field(
         default=0.1,
         ge=0.0,
@@ -589,6 +600,10 @@ class LLMCallRequest(SQLModel):
         default=False,
         description="Whether to include the raw LLM provider response in the output",
     )
+    include_guardrail_metadata: bool = Field(
+        default=False,
+        description="Include per-validator guardrail metadata (input/output text, pass/fail) in the response",
+    )
     request_metadata: dict[str, Any] | None = Field(
         default=None,
         description=(
@@ -761,6 +776,16 @@ class LlmCall(SQLModel, table=True):
             JSONB,
             nullable=True,
             comment="Configuration: {config_id, config_version} for stored config OR {config_blob} for ad-hoc config",
+        ),
+    )
+
+    metadata_: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            "metadata",
+            JSONB,
+            nullable=True,
+            comment="Future-proof extensibility catch-all (e.g. guardrail results)",
         ),
     )
 

@@ -33,10 +33,6 @@ logger = logging.getLogger(__name__)
 DATASET_META_ORIGINAL_ITEMS = "original_items_count"
 DATASET_META_TOTAL_ITEMS = "total_items_count"
 DATASET_META_DUPLICATION_FACTOR = "duplication_factor"
-# v2 marker: the stored CSV holds only the original rows and duplication is applied
-# at run time. Absent/false means the S3 data is already physically duplicated (v1),
-# so the run reads it as-is and must not multiply again.
-DATASET_META_DUPLICATE_AT_RUNTIME = "duplicate_at_runtime"
 
 
 def create_evaluation_dataset(

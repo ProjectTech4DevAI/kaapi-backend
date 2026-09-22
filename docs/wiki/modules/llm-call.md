@@ -10,7 +10,12 @@ All paths relative to `backend/app/`.
 - `api/routes/llm_chain.py` — chains
 - `api/routes/llm_sts.py` — speech-to-speech
 - `api/routes/config/config.py`, `api/routes/config/version.py` — saved config CRUD + versions
-- `api/routes/guardrails.py` — guardrail validators
+- `api/routes/guardrails.py` — `POST /guardrails` (async job) + `GET /guardrails/{job_id}` (poll), plus thin proxies over the internal kaapi-guardrails management API:
+  - `GET /guardrails` — validator catalogue
+  - `/guardrails/ban_lists` — POST, GET (`offset`, `limit`); `/{id}` GET/PATCH/DELETE
+  - `/guardrails/llm_prompt_configs` — POST, GET (`validator_name`, `offset`, `limit`); `/{id}` GET/PATCH/DELETE
+  - `/guardrails/validators/configs` — POST, GET (`ids`, `stage`, `type`); `/{id}` GET/PATCH/DELETE
+  - Gotcha: the fixed `/guardrails/*` paths must stay declared above `GET /guardrails/{job_id}` — FastAPI matches in declaration order and won't fall through on a UUID parse failure.
 
 ## Tables (SQLModel)
 | Table | Model |
@@ -23,11 +28,13 @@ All paths relative to `backend/app/`.
 - `LLMCallConfig` — one-of: saved reference (`id` + `version`) XOR ad-hoc `blob` (validator-enforced)
 - `ConfigBlob` — `completion` + optional `prompt_template` (`PromptTemplate.template`, plain string; `{{input}}` interpolation is llm-chain-only) + `input_guardrails`/`output_guardrails`
 - `CompletionConfig` — discriminated union on `provider`: `KaapiCompletionConfig` (standardized params: `TextLLMParams`/`STTLLMParams`/`TTSLLMParams`), `NativeCompletionConfig` (pass-through), `ProxyCompletionConfig` (client's own endpoint)
+- `TextLLMParams` reasoning knobs: `reasoning` + `effort` (OpenAI-style), `thinking` (Anthropic adaptive-thinking container, forwarded as-is) and `thinking_level` (Gemini). A knob must be **declared here** to survive config save — pydantic's default extra policy is ignore, so an undeclared key is dropped silently at validation with no error.
 - `QueryParams` — per-call input + `ConversationConfig`
 - `models/guardrails/` — validator config shapes
 
 ## Services / CRUD
 - `services/llm/` — `mappers.py` (Kaapi params → provider API), `providers/`, `chain/`, `guardrails.py`, `jobs.py`
+- `mappers.py` is the **only** param mapper in the codebase; the assessment fork was merged back into it. Callers: `crud/evaluations/{batch,fast,judge}.py`, `crud/assessment/batch.py`, `services/assessment/api/batch.py`, `services/assessment/prefilter/request_builder.py`. Structured output is keyed `output_schema` for every provider (OpenAI `text.format`, Anthropic `output_config.format`, Gemini `output_schema`), and Anthropic reads `effort` into `output_config.effort`. Every param that only assessment set (`top_p`, `max_output_tokens`, `thinking_level`, `thinking`, `output_schema`) defaults to `None` on `TextLLMParams` and is dropped by `ParamSerialization._dump_compact`, so a config that does not set it maps exactly as before. Anthropic never receives `temperature`/`top_p`: the Messages API returns 400 for a non-default sampling value on every Claude model Kaapi serves, so the mapper drops both, warning only when the value was not Anthropic's own default of 1.0. `normalize_llm_text` no longer lives here; it moved to `services/assessment/validators.py`, the only place that calls it.
 - `services/guardrails/` — validator execution
 - `crud/llm.py`, `crud/llm_chain.py`, `crud/config/` — persistence
 
