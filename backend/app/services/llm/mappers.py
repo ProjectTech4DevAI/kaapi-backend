@@ -272,6 +272,8 @@ def map_kaapi_to_google_params(
         - thinking_level → thinking_config.thinking_level (text only)
         - output_schema → output_schema, converted to Gemini's shape (text only)
         - knowledge_base_ids → FileSearch tool store names (text only)
+        - video_part_config → Gemini videoMetadata/mediaResolution defaults carried
+          on every video content part (text only)
 
     Returns:
         Tuple of:
@@ -333,6 +335,12 @@ def map_kaapi_to_google_params(
             google_params["output_schema"] = _convert_json_schema_to_google(
                 output_schema
             )
+
+        # NOTE: Google Gemini Video Config (using default values for fps and mediaResolution)
+        google_params["video_part_config"] = {
+            "videoMetadata": {"fps": 1.0},
+            "mediaResolution": {"level": "MEDIA_RESOLUTION_LOW"},
+        }
 
     elif completion_type == CompletionType.TTS:
         # TTS mode - voice, language, response_format

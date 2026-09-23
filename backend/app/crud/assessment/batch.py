@@ -189,6 +189,7 @@ def build_google_jsonl(
             parts.append({"text": text_prompt})
 
         # Attachments (Gemini uses file_data for inline content)
+        video_part_config = google_params.get("video_part_config")
         for att in attachments:
             cell_value = row.get(att.column, "")
             parts.extend(
@@ -196,6 +197,7 @@ def build_google_jsonl(
                     cell_value,
                     att,
                     type_override=attachment_type_for_row(att, row),
+                    video_part_config=video_part_config,
                 )
             )
 

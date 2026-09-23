@@ -9,6 +9,11 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.models.assessment import AssessmentAttachment
+from app.models.config.assessment_blob import (
+    ATTACHMENT_COLUMN_TYPES,
+    IMAGE_COLUMN_TYPE,
+    VIDEO_COLUMN_TYPE,
+)
 from app.models.llm.constants import KaapiProvider
 from app.services.buckets.attachments import is_gcs_uri, resolve_attachments
 
@@ -26,6 +31,24 @@ _IMAGE_MIME_BY_EXT = {
     ".heic": "image/heic",
     ".heif": "image/heif",
 }
+
+_VIDEO_MIME_BY_EXT = {
+    ".mp4": "video/mp4",
+    ".mov": "video/mov",
+    ".mpeg": "video/mpeg",
+    ".mpg": "video/mpg",
+    ".avi": "video/avi",
+    ".wmv": "video/wmv",
+    ".flv": "video/x-flv",
+    ".webm": "video/webm",
+    ".3gp": "video/3gpp",
+}
+
+_PDF_MIME = "application/pdf"
+_DEFAULT_IMAGE_MIME = "image/png"
+_DEFAULT_VIDEO_MIME = "video/mp4"
+
+YOUTUBE_HOSTS = ("youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com")
 
 
 def split_attachment_urls(value: str) -> list[str]:
@@ -125,15 +148,23 @@ def _guess_image_mime_from_url(url: str) -> str | None:
     return None
 
 
+def _resolve_video_mime_from_url(url: str) -> str | None:
+    path = urlparse(url).path or ""
+    for ext, mime in _VIDEO_MIME_BY_EXT.items():
+        if path.lower().endswith(ext):
+            return mime
+    return None
+
+
 def resolve_item_type(declared: str, type_override: str | None = None) -> str | None:
-    """Resolve an attachment item as 'image' or 'pdf' from the user-declared type.
+    """Resolve an attachment item as 'image', 'pdf' or 'video' from the declared type.
 
     A per-row ``type_override`` (for 'mixed' columns) wins, else the column's declared
     ``type``. Returns None when the type stays unresolved (e.g. a 'mixed' row whose
     value didn't map to a concrete type) so callers can skip rather than guess.
     """
     item_type = type_override or declared
-    return item_type if item_type in ("image", "pdf") else None
+    return item_type if item_type in ATTACHMENT_COLUMN_TYPES else None
 
 
 def _normalize_type_value(value: str) -> str:
@@ -153,7 +184,7 @@ def attachment_type_for_row(
 ) -> str | None:
     """For a 'mixed' column, resolve this row's type from type_column + type_value_map.
 
-    Returns 'image'/'pdf', or None to let normal detection (extension/declared) decide.
+    Returns a concrete attachment type, or None to let normal detection decide.
     """
     type_column = getattr(att, "type_column", None)
     type_value_map = getattr(att, "type_value_map", None)
@@ -162,7 +193,7 @@ def attachment_type_for_row(
 
     normalized_map: dict[str, str] = {}
     for raw_values, mapped_type in type_value_map.items():
-        if mapped_type not in ("image", "pdf"):
+        if mapped_type not in ATTACHMENT_COLUMN_TYPES:
             continue
         for value in _split_type_values(raw_values):
             normalized_map[value] = mapped_type
@@ -182,7 +213,7 @@ def resolve_attachment_values(
     att: AssessmentAttachment,
     type_override: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Convert one dataset cell into one or more OpenAI-style input objects (by URL)."""
+    """Resolve one dataset cell into OpenAI-supported content params (by URL)."""
     value = value.strip()
     if not value:
         return []
@@ -194,10 +225,13 @@ def resolve_attachment_values(
             att.column,
         )
         return []
+    # Openai doesn't support video attachments
+    if item_type == VIDEO_COLUMN_TYPE:
+        return []
     resolved: list[dict[str, Any]] = []
     for item_value in split_attachment_urls(value):
         url = to_direct_attachment_url(item_value, item_type)
-        if item_type == "image":
+        if item_type == IMAGE_COLUMN_TYPE:
             resolved.append({"type": "input_image", "image_url": url})
         else:
             resolved.append({"type": "input_file", "file_url": url})
@@ -221,25 +255,40 @@ def build_anthropic_attachment_parts(
             att.column,
         )
         return []
+    # Anthropic doesn't support video attachments
+    if item_type == VIDEO_COLUMN_TYPE:
+        return []
     blocks: list[dict[str, Any]] = []
     for item_value in split_attachment_urls(value):
         url = to_direct_attachment_url(item_value, item_type)
-        if item_type == "image":
+        if item_type == IMAGE_COLUMN_TYPE:
             blocks.append({"type": "image", "source": {"type": "url", "url": url}})
         else:
             blocks.append({"type": "document", "source": {"type": "url", "url": url}})
     return blocks
 
 
+def build_gemini_video_part(
+    url: str, video_part_config: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """One Gemini ``fileData`` video part; a YouTube url must carry no mimeType."""
+    file_data: dict[str, Any] = {"fileUri": url}
+    if (urlparse(url).hostname or "").lower() not in YOUTUBE_HOSTS:
+        file_data["mimeType"] = _resolve_video_mime_from_url(url) or _DEFAULT_VIDEO_MIME
+    return {"fileData": file_data, **(video_part_config or {})}
+
+
 def build_gemini_attachment_parts(
     value: str,
     att: AssessmentAttachment,
     type_override: str | None = None,
+    video_part_config: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Convert one dataset cell into one or more Gemini content parts (by URL).
 
     Mirrors the per-item type routing used for the L2 batch so the same
-    image/pdf handling applies to prefilter (topic relevance) calls.
+    image/pdf/video handling applies to prefilter (topic relevance) calls.
+    ``video_part_config`` comes from the Google mapper, already wire-shaped.
     """
     value = value.strip()
     if not value:
@@ -255,9 +304,11 @@ def build_gemini_attachment_parts(
     parts: list[dict[str, Any]] = []
     for item_value in split_attachment_urls(value):
         url = to_direct_attachment_url(item_value, item_type)
-        if item_type == "image":
-            mime_type = _guess_image_mime_from_url(url) or "image/png"
+        if item_type == IMAGE_COLUMN_TYPE:
+            mime_type = _guess_image_mime_from_url(url) or _DEFAULT_IMAGE_MIME
             parts.append({"fileData": {"mimeType": mime_type, "fileUri": url}})
+        elif item_type == VIDEO_COLUMN_TYPE:
+            parts.append(build_gemini_video_part(url, video_part_config))
         else:
-            parts.append({"fileData": {"mimeType": "application/pdf", "fileUri": url}})
+            parts.append({"fileData": {"mimeType": _PDF_MIME, "fileUri": url}})
     return parts
