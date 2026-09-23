@@ -6,8 +6,8 @@ the same transport the response path uses. One inline attempt, no retry.
 """
 
 import logging
-from typing import Any
 
+from pydantic import JsonValue
 from sqlmodel import Session
 
 from app.models.assessment import (
@@ -16,7 +16,7 @@ from app.models.assessment import (
     AssessmentCallback,
     AssessmentStatus,
 )
-from app.services.assessment.api.result_files import build_callback_metadata
+from app.services.assessment.api.result_files import presign_result_files
 from app.utils import get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ def deliver(
     assessment: Assessment,
     result: AssessmentBatchResult,
     callback_url: str,
-    request_metadata: dict[str, Any] | None,
+    request_metadata: dict[str, JsonValue] | None,
     failure_message: str | None,
 ) -> bool:
     """POST the assessment result to ``callback_url`` (HMAC-signed). Returns whether it was sent.
@@ -47,7 +47,7 @@ def deliver(
     )
 
     try:
-        metadata = build_callback_metadata(session=session, assessment=assessment)
+        files = presign_result_files(session=session, assessment=assessment)
     except Exception:
         # A metadata bug must never cost the client its result.
         logger.error(
@@ -55,7 +55,7 @@ def deliver(
             assessment.id,
             exc_info=True,
         )
-        metadata = None
+        files = None
 
     sent = send_callback(
         callback_url,
@@ -63,15 +63,14 @@ def deliver(
             "success": assessment.status != AssessmentStatus.FAILED,
             "data": callback.model_dump(mode="json"),
             "error": failure_message,
-            "metadata": metadata,
+            "metadata": {"files": files.model_dump()} if files else None,
         },
         webhook_secret=webhook_secret,
     )
     logger.info(
-        "[deliver] Callback %s | assessment_id=%s | status=%s | result_files=%s",
+        "[deliver] Callback %s | assessment_id=%s | status=%s | files=%s",
         "sent" if sent else "failed",
         assessment.id,
         assessment.status,
-        sorted((metadata or {}).get("result_files", {})),
     )
     return sent
