@@ -2,6 +2,7 @@ import multiprocessing
 import os
 import secrets
 import warnings
+from datetime import timedelta
 from typing import Any, Literal, Self
 
 from pydantic import (
@@ -196,10 +197,13 @@ class Settings(BaseSettings):
     EVAL_FAST_STALL_THRESHOLD_MINUTES: int = 15
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
-    # AI-assisted prompt improvement settings.
-    # See docs/srd-ai-prompt-improvement.md for the full design rationale.
-    # Platform-owned Anthropic key shared by every org/project for this feature,
-    # so prompt improvement works without per-project credentials.
+    DELETE_ROLLING_WINDOW_HOURS: int = 168
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def DELETE_ROLLING_WINDOW_TIMEDELTA(self) -> timedelta:
+        return timedelta(hours=self.DELETE_ROLLING_WINDOW_HOURS)
+
     ANTHROPIC_API_KEY: str = ""
     PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"
 
