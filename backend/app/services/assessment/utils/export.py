@@ -1,4 +1,4 @@
-"""Export utilities for assessment results (CSV, XLSX, JSON)."""
+"""(LEGACY) (Export utilities for assessment results (CSV, XLSX, JSON)."""
 
 import csv
 import io
@@ -21,10 +21,11 @@ from app.models.assessment import (
     Assessment,
     AssessmentExportRow,
     AssessmentRun,
+    AssessmentStatus,
+    AssessmentSubmission,
     Stage,
 )
 from app.models.batch_job import BatchJob
-from app.models.evaluation import EvaluationDataset
 from app.services.assessment.prefilter.duplicate_detection import (
     parse_duplicate_detection_results,
 )
@@ -42,22 +43,22 @@ _XLSX_ILLEGAL_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff
 logger = logging.getLogger(__name__)
 
 
-def _load_dataset_rows(
+def _load_submission_rows(
     session: Session,
-    dataset: EvaluationDataset,
+    submission: AssessmentSubmission,
 ) -> list[dict[str, str]]:
     # Imported lazily: app.crud.assessment.batch pulls this module via
     # app.services.assessment.utils, so a top-level import would be circular.
-    from app.crud.assessment.batch import _load_dataset_rows as load_dataset_rows
+    from app.crud.assessment.batch import load_submission_file_rows
 
-    return load_dataset_rows(session, dataset)
+    return load_submission_file_rows(session=session, submission=submission)
 
 
 def _stage_batch_job(
     session: Session, run: AssessmentRun, stage: str
 ) -> BatchJob | None:
-    """The batch job a run produced for a given stage, via stage_batches."""
-    batch_id = (run.stage_batches or {}).get(stage)
+    """The batch job a run produced for a given stage, via the execution bag's stage_batches."""
+    batch_id = ((run.execution or {}).get("stage_batches") or {}).get(stage)
     return get_batch_job(session=session, batch_job_id=batch_id) if batch_id else None
 
 
@@ -112,7 +113,7 @@ def _expand_input_columns(
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Expand ``input_data`` dict into separate input columns.
 
-    Uses the original column names from the dataset (no prefix).
+    Uses the original column names from the submission (no prefix).
 
     Returns:
         (expanded_rows with input_data replaced by individual columns,
@@ -143,7 +144,7 @@ def _expand_input_columns(
     collisions = {key: value for key, value in key_map.items() if key != value}
     if collisions:
         logger.warning(
-            "[_expand_input_columns] Input dataset columns conflict with reserved "
+            "[_expand_input_columns] Input submission columns conflict with reserved "
             "export fields and were namespaced: %s",
             collisions,
         )
@@ -401,10 +402,11 @@ def _load_parsed_results_for_run(
         return None
 
     # 1. Try object store (S3)
-    if run.object_store_url:
+    object_store_url = (run.execution or {}).get("object_store_url")
+    if object_store_url:
         try:
             storage = get_cloud_storage(session, project_id=parent.project_id)
-            body = storage.stream(run.object_store_url)
+            body = storage.stream(object_store_url)
             raw_results = parse_stored_results(body.read().decode("utf-8"))
             if raw_results:
                 return parse_assessment_output(raw_results, batch_job.provider)
@@ -442,33 +444,33 @@ def _load_parsed_results_for_run(
         "[_load_parsed_results_for_run] No results available for run id=%s "
         "(object_store_url=%s, provider_output_file_id=%s)",
         run.id,
-        run.object_store_url,
+        object_store_url,
         batch_job.provider_output_file_id,
     )
     return None
 
 
-def _load_dataset_rows_for_run(
+def _load_submission_rows_for_run(
     session: Session,
     run: AssessmentRun,
     assessment: Assessment,
 ) -> list[dict[str, str]]:
-    """Load original dataset rows for input-output correlation.
+    """Load the original submission rows for input-output correlation.
 
-    Returns an empty list if the dataset is not available.
+    Returns an empty list if the submission is not available.
     """
     try:
-        dataset = session.get(EvaluationDataset, assessment.dataset_id)
-        if not dataset or not dataset.object_store_url:
+        submission = session.get(AssessmentSubmission, assessment.submission_id)
+        if not submission or not submission.object_store_url:
             logger.warning(
-                "[_load_dataset_rows_for_run] Dataset not available for run id=%s",
+                "[_load_submission_rows_for_run] Submission not available for run id=%s",
                 run.id,
             )
             return []
-        return _load_dataset_rows(session, dataset)
+        return _load_submission_rows(session, submission)
     except Exception as exc:
         logger.warning(
-            "[_load_dataset_rows_for_run] Failed to load dataset for run id=%s: %s",
+            "[_load_submission_rows_for_run] Failed to load submission for run id=%s: %s",
             run.id,
             exc,
         )
@@ -567,13 +569,13 @@ def _load_l2_results_for_run(
 def _row_result_status(
     prefilter_passed: bool,
     l2_item: dict[str, Any] | None,
-    run_status: str,
+    run_status: AssessmentStatus,
 ) -> str:
     """Per-row status: rejected, failed, passed, or processing (batch not done)."""
     if not prefilter_passed:
         return "prefilter_rejected"
     if l2_item is None:
-        return "failed" if run_status == "failed" else "processing"
+        return "failed" if run_status == AssessmentStatus.FAILED else "processing"
     return "failed" if l2_item.get("error") else "passed"
 
 
@@ -592,27 +594,24 @@ def load_export_rows_for_run(
         )
         return []
 
-    dataset = session.get(EvaluationDataset, assessment.dataset_id)
-    dataset_name = dataset.name if dataset else None
-    dataset_rows = _load_dataset_rows_for_run(session, run, assessment)
+    submission_rows = _load_submission_rows_for_run(session, run, assessment)
 
     prefilter_by_row_id = _load_prefilter_results(session, run, assessment)
     l2_by_row_id = _load_l2_results_for_run(session, run, assessment)
     has_prefilter = bool(prefilter_by_row_id)
 
-    if dataset_rows:
+    if submission_rows:
         rows = [
             _build_export_row(
                 run=run,
                 assessment=assessment,
-                dataset_name=dataset_name,
                 row_id=f"row_{row_idx}",
                 input_data=input_data,
                 prefilter_item=prefilter_by_row_id.get(f"row_{row_idx}"),
                 l2_item=l2_by_row_id.get(f"row_{row_idx}"),
                 has_prefilter=has_prefilter,
             )
-            for row_idx, input_data in enumerate(dataset_rows)
+            for row_idx, input_data in enumerate(submission_rows)
         ]
         return rows
 
@@ -624,7 +623,6 @@ def load_export_rows_for_run(
         _build_export_row(
             run=run,
             assessment=assessment,
-            dataset_name=dataset_name,
             row_id=row_id,
             input_data=None,
             prefilter_item=prefilter_by_row_id.get(row_id),
@@ -638,7 +636,6 @@ def load_export_rows_for_run(
 def _build_export_row(
     run: AssessmentRun,
     assessment: Assessment,
-    dataset_name: str | None,
     row_id: str,
     input_data: dict[str, str] | None,
     prefilter_item: dict[str, Any] | None,
@@ -657,11 +654,8 @@ def _build_export_row(
     return AssessmentExportRow(
         assessment_id=run.assessment_id,
         experiment_name=assessment.experiment_name,
-        dataset_id=assessment.dataset_id,
-        dataset_name=dataset_name,
-        run_id=run.id,
-        run_name=assessment.experiment_name,
-        run_status=run.status,
+        execution_id=run.id,
+        execution_status=run.status,
         config_id=run.config_id,
         config_version=run.config_version,
         row_id=row_id,
@@ -696,7 +690,7 @@ def sort_export_rows(
         key=lambda row: (
             row.config_version or 0,
             _row_index(row.row_id),
-            row.run_id,
+            row.execution_id,
         )
     )
     return export_rows

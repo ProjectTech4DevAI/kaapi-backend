@@ -19,6 +19,7 @@ External boundaries mocked: OpenAI (embeddings + the judge completion at
 
 import json
 from collections.abc import Iterator
+from contextlib import ExitStack
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -29,15 +30,17 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.crud.evaluations.fast import (
-    CHUNK_CONFIG_INDEX,
-    CHUNK_CONFIG_RUN_ID,
-    JOB_TYPE_EVALUATION_FAST_CHUNK,
-    PROMPT_TEMPLATE_LABEL,
-    _format_top_kb_matches,
     _responses_call_for_item,
     run_fast_evaluation,
     run_response_chunk,
 )
+from app.crud.evaluations.fast_chunks import (
+    CHUNK_CONFIG_INDEX,
+    CHUNK_CONFIG_RUN_ID,
+    JOB_TYPE_EVALUATION_FAST_CHUNK,
+)
+from app.crud.evaluations.fast_traces import format_top_kb_matches
+from app.crud.evaluations.judge_stage import PROMPT_TEMPLATE_LABEL
 from app.crud.evaluations.score import (
     GROUND_TRUTH_SCORE_NAME,
     JUDGE_FAILED_REASON,
@@ -50,11 +53,12 @@ from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import (
     ConfigBlob,
-    KaapiCompletionConfig,
     PromptTemplate,
     TextLLMParams,
+    build_kaapi_completion_config,
 )
 from app.models.response import FileResultChunk
+from app.services.llm.providers.claude import STOP_REASON_COMPLETE
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import (
     create_test_config,
@@ -86,7 +90,7 @@ def _make_text_config(
     if instructions is not None:
         params["instructions"] = instructions
     blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params=params,
@@ -192,15 +196,18 @@ def _raw_judge_response(text: str, *, usage=(12, 6, 18)):
     )
 
 
-# Default plain-text stub for the best-effort run-level AI summary. It rides a
-# separate `responses.create` call (the judge is patched at _create_judge_response,
-# so it never reaches this mock). A bare MagicMock output would poison the score
-# JSONB, so every judged run's summary boundary is stubbed with a real string.
+# Default stub for the best-effort run-level AI summary. It rides its own
+# Anthropic client, separate from the judge (patched at _create_judge_response).
+# A bare MagicMock output would poison the score JSONB, so every judged run's
+# summary boundary is stubbed with a real string.
 DEFAULT_RUN_SUMMARY = "Overall the run performed reasonably; strongest on ground truth."
 
 
-def _summary_response(text: str):
-    return SimpleNamespace(output_text=text, output=[])
+def _summary_response(text: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        content=[SimpleNamespace(type="text", text=text)],
+        stop_reason=STOP_REASON_COMPLETE,
+    )
 
 
 @pytest.fixture
@@ -273,6 +280,7 @@ def _run_pipeline(
     judge_side_effect,
     mock_cost: bool = False,
     summary_side_effect=None,
+    summary_client: MagicMock | None = None,
 ) -> tuple[EvaluationRun, MagicMock]:
     """Run `run_fast_evaluation` for a judged run with all externals stubbed.
 
@@ -281,16 +289,19 @@ def _run_pipeline(
     Returns the run plus the OpenAI mock so callers can assert the embedding path
     was (v1) or was not (v2 judge) exercised.
 
-    The run-level AI summary is a separate `responses.create` call; by default it
-    returns `DEFAULT_RUN_SUMMARY`. Pass `summary_side_effect` (e.g. an exception) to
-    drive the best-effort failure path.
+    The run-level AI summary is a separate Anthropic `messages.create` call; by
+    default it returns `DEFAULT_RUN_SUMMARY`. Pass `summary_side_effect` (e.g. an
+    exception) to drive the best-effort failure path, or `summary_client` to keep a
+    handle on the call and inspect the brief it received.
     """
     fake_openai = MagicMock()
     fake_openai.embeddings.create.return_value = _fake_embedding_response()
+
+    summary_client = summary_client or MagicMock()
     if summary_side_effect is not None:
-        fake_openai.responses.create.side_effect = summary_side_effect
+        summary_client.messages.create.side_effect = summary_side_effect
     else:
-        fake_openai.responses.create.return_value = _summary_response(
+        summary_client.messages.create.return_value = _summary_response(
             DEFAULT_RUN_SUMMARY
         )
 
@@ -305,6 +316,13 @@ def _run_pipeline(
             "app.crud.evaluations.fast.save_score", side_effect=_persist_score_into(db)
         ),
         patch("app.crud.evaluations.judge._create_judge_response", side_effect=_judge),
+        # Unset in .env.test, which would short-circuit the summary before its
+        # client is built.
+        patch.object(settings, "ANTHROPIC_API_KEY", "sk-test"),
+        patch(
+            "app.crud.evaluations.summary.ClaudeProvider.create_client",
+            return_value=summary_client,
+        ),
     ]
     if mock_cost:
         ctx.append(
@@ -314,19 +332,12 @@ def _run_pipeline(
             )
         )
 
-    with ctx[0], ctx[1], ctx[2]:
-        if mock_cost:
-            with ctx[3]:
-                result = run_fast_evaluation(
-                    session=db,
-                    openai_client=fake_openai,
-                    langfuse=None,
-                    eval_run=eval_run,
-                )
-        else:
-            result = run_fast_evaluation(
-                session=db, openai_client=fake_openai, langfuse=None, eval_run=eval_run
-            )
+    with ExitStack() as stack:
+        for context_manager in ctx:
+            stack.enter_context(context_manager)
+        result = run_fast_evaluation(
+            session=db, openai_client=fake_openai, langfuse=None, eval_run=eval_run
+        )
     return result, fake_openai
 
 
@@ -921,6 +932,74 @@ class TestRunOverallSummary:
         for name, avg in summary_avgs.items():
             assert breakdown_by_name[name]["score"] == round(avg, 2)
 
+    def test_summary_brief_carries_the_scored_traces(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ) -> None:
+        # The summary must be generated AFTER the traces are built: rolled up first,
+        # it would brief the model on an empty trace list.
+        eval_run = self._seed_all_three_metrics_run(
+            db=db, user_api_key=user_api_key, store=_s3_store
+        )
+        summary_client = MagicMock()
+
+        _run_pipeline(
+            db=db,
+            eval_run=eval_run,
+            judge_side_effect=self._all_three_judge,
+            summary_client=summary_client,
+        )
+
+        brief = summary_client.messages.create.call_args.kwargs["messages"][0][
+            "content"
+        ]
+        assert eval_run.run_name in brief
+        assert BOT_INSTRUCTIONS in brief
+        payload = json.loads(brief.split("## Per-question judge traces (JSON)\n", 1)[1])
+
+        assert [trace["question_id"] for trace in payload] == ["item-1"]
+        assert payload[0]["question"] == "Q1"
+        assert payload[0]["ground_truth_answer"] == "golden-1"
+        assert payload[0]["llm_answer"] == "generated for Q1"
+        scores = payload[0]["scores"]
+        assert {s["name"] for s in scores} == {
+            GROUND_TRUTH_SCORE_NAME,
+            PROMPT_SCORE_NAME,
+            KNOWLEDGE_BASE_SCORE_NAME,
+        }
+        assert {s["name"]: s["value"] for s in scores} == {
+            GROUND_TRUTH_SCORE_NAME: 4,
+            PROMPT_SCORE_NAME: 2,
+            KNOWLEDGE_BASE_SCORE_NAME: 3,
+        }
+        gt = next(s for s in scores if s["name"] == GROUND_TRUTH_SCORE_NAME)
+        assert gt["rationale"] == "gt"
+
+    def test_run_override_drives_the_summary_repetition_math(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        """The run's persisted duplication_factor feeds "asked N times", not the
+        dataset metadata: dataset factor is 1, the run override is 7 → brief says 7."""
+        eval_run = self._seed_all_three_metrics_run(
+            db=db, user_api_key=user_api_key, store=_s3_store
+        )
+        eval_run.duplication_factor = 7
+        db.add(eval_run)
+        db.commit()
+        db.refresh(eval_run)
+        summary_client = MagicMock()
+
+        _run_pipeline(
+            db=db,
+            eval_run=eval_run,
+            judge_side_effect=self._all_three_judge,
+            summary_client=summary_client,
+        )
+
+        brief = summary_client.messages.create.call_args.kwargs["messages"][0][
+            "content"
+        ]
+        assert "Duplication factor: 7" in brief
+
     def test_summary_failure_leaves_overall_intact_with_null_ai_summary(
         self, db: Session, user_api_key: TestAuthContext, _s3_store
     ):
@@ -1342,10 +1421,10 @@ class TestVerdictBandOnTraceScores:
 
 
 class TestFormatTopKbMatches:
-    """`_format_top_kb_matches` — the human 'Top matches: ...' string for KB comments."""
+    """`format_top_kb_matches` — the human 'Top matches: ...' string for KB comments."""
 
     def test_formats_filename_and_percent_to_one_decimal(self) -> None:
-        result = _format_top_kb_matches(
+        result = format_top_kb_matches(
             [
                 {"filename": "biu-1.pdf", "score": 0.906},
                 {"filename": "faq.pdf", "score": 0.663},
@@ -1354,7 +1433,7 @@ class TestFormatTopKbMatches:
         assert result == "biu-1.pdf (90.6%), faq.pdf (66.3%)"
 
     def test_includes_all_chunks_regardless_of_score(self) -> None:
-        result = _format_top_kb_matches(
+        result = format_top_kb_matches(
             [
                 {"filename": "hi.pdf", "score": 0.9},
                 {"filename": "lo.pdf", "score": 0.5},
@@ -1364,18 +1443,18 @@ class TestFormatTopKbMatches:
 
     def test_caps_at_three_matches(self) -> None:
         chunks = [{"filename": f"f{i}.pdf", "score": 0.9 - i * 0.01} for i in range(5)]
-        result = _format_top_kb_matches(chunks)
+        result = format_top_kb_matches(chunks)
         assert result == "f0.pdf (90.0%), f1.pdf (89.0%), f2.pdf (88.0%)"
 
     def test_missing_filename_renders_unknown(self) -> None:
-        assert _format_top_kb_matches([{"score": 0.9}]) == "unknown (90.0%)"
+        assert format_top_kb_matches([{"score": 0.9}]) == "unknown (90.0%)"
         assert (
-            _format_top_kb_matches([{"filename": None, "score": 0.8}])
+            format_top_kb_matches([{"filename": None, "score": 0.8}])
             == "unknown (80.0%)"
         )
 
     def test_empty_input_is_empty_string(self) -> None:
-        assert _format_top_kb_matches([]) == ""
+        assert format_top_kb_matches([]) == ""
 
 
 class TestFileSearchIncludeParam:
@@ -1412,7 +1491,6 @@ class TestFileSearchIncludeParam:
                 config=TextLLMParams(model="gpt-4o"),
                 dataset_items_slice=[{"id": "item-1"}],
                 chunk_index=0,
-                log_prefix="[test]",
             )
         return captured
 

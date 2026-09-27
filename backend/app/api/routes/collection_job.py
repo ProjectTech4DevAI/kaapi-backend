@@ -35,7 +35,7 @@ def collection_job_info(
     session: SessionDep,
     current_user: AuthContextDep,
     job_id: UUID = FastPath(description="Collection job to retrieve"),
-):
+) -> APIResponse[CollectionJobPublic]:
     collection_job_crud = CollectionJobCrud(session, current_user.project_.id)
     collection_job = collection_job_crud.read_one(job_id)
 
@@ -54,8 +54,8 @@ def collection_job_info(
             job_out.collection = CollectionIDPublic(id=collection_job.collection_id)
 
     if collection_job.status == CollectionJobStatus.FAILED:
-        raw_error = getattr(collection_job, "error_message", None)
-        error_message = extract_error_message(raw_error)
-        job_out.error_message = error_message
+        raw_error = collection_job.error_message
+        if raw_error:
+            job_out.error_message = extract_error_message(raw_error)
 
-    return APIResponse.success_response(data=job_out)
+    return APIResponse[CollectionJobPublic].success_response(data=job_out)

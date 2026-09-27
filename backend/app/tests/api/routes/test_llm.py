@@ -12,8 +12,8 @@ from app.models.llm.request import (
     LLMCallConfig,
     ConfigBlob,
     NativeCompletionConfig,
-    KaapiCompletionConfig,
     QueryParams,
+    build_kaapi_completion_config,
 )
 from app.models.llm import LLMCallRequest
 from app.tests.utils.auth import TestAuthContext
@@ -91,7 +91,7 @@ def test_llm_call_with_kaapi_config(
             query=QueryParams(input="Explain quantum computing"),
             config=LLMCallConfig(
                 blob=ConfigBlob(
-                    completion=KaapiCompletionConfig(
+                    completion=build_kaapi_completion_config(
                         provider="openai",
                         type="text",
                         params={

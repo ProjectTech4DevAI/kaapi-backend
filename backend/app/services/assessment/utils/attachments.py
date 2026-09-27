@@ -1,17 +1,16 @@
-"""Attachment resolution utilities for assessment batch builds.
-
-URL-only: dataset cells hold attachment URLs. Handles Google Drive URL
-normalization and conversion of cell values into provider input objects.
-Attachments are passed to providers by reference (URL), never inlined as base64,
-to keep the batch build memory-light.
-"""
+"""Attachment utilities for assessment batch builds: URL normalization, gs:// resolution, provider parts."""
 
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlparse
 
+from sqlmodel import Session
+
+from app.core.config import settings
 from app.models.assessment import AssessmentAttachment
+from app.models.llm.constants import KaapiProvider
+from app.services.buckets.attachments import is_gcs_uri, resolve_attachments
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +31,61 @@ _IMAGE_MIME_BY_EXT = {
 def split_attachment_urls(value: str) -> list[str]:
     """Split comma/newline separated attachment URLs from a single dataset cell."""
     return [part.strip() for part in re.split(r"[\n,]+", value) if part.strip()]
+
+
+def rewrite_gcs_attachment_urls(
+    *,
+    session: Session,
+    rows: list[dict[str, str]],
+    attachments: list[AssessmentAttachment],
+    llm_provider: str,
+    project_id: int,
+    organization_id: int,
+) -> list[dict[str, str]]:
+    """Replace gs:// tokens in attachment cells with LLM-reachable URLs.
+
+    Bulk-resolves every gs:// URI across the batch once, then rewrites each cell;
+    non-gs values are left as-is.
+    """
+    gcs_uris = {
+        attachment_url
+        for row in rows
+        for att in attachments
+        for attachment_url in split_attachment_urls(row.get(att.column, ""))
+        if is_gcs_uri(attachment_url)
+    }
+    if not gcs_uris:
+        return rows
+
+    resolved = resolve_attachments(
+        session=session,
+        source=list(gcs_uris),
+        llm_provider=cast(KaapiProvider, llm_provider),
+        project_id=project_id,
+        organization_id=organization_id,
+        expires_in=settings.MAX_SIGNED_URL_EXPIRY_SECONDS,
+    )
+    assert isinstance(resolved, dict)  # list input always yields a dict
+
+    rewritten: list[dict[str, str]] = []
+    for row in rows:
+        new_row = dict(row)
+        for att in attachments:
+            value = row.get(att.column)
+            if not value:
+                continue
+            rewritten_urls: list[str] = []
+            for attachment_url in split_attachment_urls(value):
+                target = resolved.get(attachment_url)
+                if target is None and is_gcs_uri(attachment_url):
+                    logger.warning(
+                        "[rewrite_gcs_attachment_urls] Unresolved gs:// attachment | column=%s",
+                        att.column,
+                    )
+                rewritten_urls.append(target or attachment_url)
+            new_row[att.column] = ", ".join(rewritten_urls)
+        rewritten.append(new_row)
+    return rewritten
 
 
 def to_direct_attachment_url(url: str, attachment_type: str) -> str:

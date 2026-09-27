@@ -81,7 +81,7 @@ def _raise_genai_error(
 
 class GeminiCrud:
     def __init__(self, client: genai.Client) -> None:
-        if client is None:
+        if client is None:  # pyright: ignore[reportUnnecessaryComparison]
             logger.error("[GeminiCrud] Gemini client is not configured")
             raise ValueError("Gemini client is not configured")
 
@@ -104,6 +104,10 @@ class GeminiFileSearchStoreCrud(GeminiCrud):
                 resource="<new store>",
             )
 
+        if store.name is None:
+            raise RuntimeError(
+                "[GEMINI] File search store created without a name; cannot use as knowledge_base_id"
+            )
         logger.info(
             f"[GeminiFileSearchStoreCrud.create] File search store created | "
             f"store_name={store.name}"

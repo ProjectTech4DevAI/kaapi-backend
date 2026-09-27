@@ -112,12 +112,12 @@ class TestDefaults:
         rag = blocks[1].config.blob.completion.params
         tts = blocks[2].config.blob.completion.params
 
-        assert stt["model"] == DEFAULT_STT_MODEL
-        assert rag["model"] == DEFAULT_RAG_MODEL
-        assert rag["temperature"] == 0.1
-        assert tts["model"] == DEFAULT_TTS_MODEL
-        assert tts["voice"] == DEFAULT_TTS_VOICE
-        assert tts["response_format"] == "ogg"
+        assert stt.model == DEFAULT_STT_MODEL
+        assert rag.model == DEFAULT_RAG_MODEL
+        assert rag.temperature == 0.1
+        assert tts.model == DEFAULT_TTS_MODEL
+        assert tts.voice == DEFAULT_TTS_VOICE
+        assert tts.response_format == "ogg"
 
     def test_rag_block_always_has_knowledge_base_ids(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -129,7 +129,7 @@ class TestDefaults:
                 SpeechToSpeechRequest(query=audio_input, knowledge_base_ids=kb_ids),
             )
         rag_params = _chain_request(mock).blocks[1].config.blob.completion.params
-        assert rag_params["knowledge_base_ids"] == kb_ids
+        assert rag_params.knowledge_base_ids == kb_ids
 
     def test_stt_and_rag_are_intermediate_tts_is_not(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -155,7 +155,7 @@ class TestDefaults:
                 SpeechToSpeechRequest(query=audio_input, knowledge_base_ids=kb_ids),
             )
         stt_params = _chain_request(mock).blocks[0].config.blob.completion.params
-        assert stt_params["input_language"] == "auto"
+        assert stt_params.input_language == "auto"
 
 
 # ---------- Language resolution ----------
@@ -176,7 +176,7 @@ class TestLanguageResolution:
                 ),
             )
         tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
-        assert tts_params["language"] == "hi-IN"
+        assert tts_params.language == "hi-IN"
 
     def test_explicit_output_language_overrides_input(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -193,7 +193,7 @@ class TestLanguageResolution:
                 ),
             )
         tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
-        assert tts_params["language"] == "ta-IN"
+        assert tts_params.language == "ta-IN"
 
     def test_auto_input_without_output_yields_detected_marker(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -209,7 +209,7 @@ class TestLanguageResolution:
                 SpeechToSpeechRequest(query=audio_input, knowledge_base_ids=kb_ids),
             )
         tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
-        assert tts_params["language"] == "{{detected}}"
+        assert tts_params.language == "{{detected}}"
 
     def test_unknown_input_without_output_also_yields_detected_marker(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -227,7 +227,7 @@ class TestLanguageResolution:
                 ),
             )
         tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
-        assert tts_params["language"] == "{{detected}}"
+        assert tts_params.language == "{{detected}}"
 
     def test_auto_input_with_pinned_output(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -244,8 +244,8 @@ class TestLanguageResolution:
             )
         stt_params = _chain_request(mock).blocks[0].config.blob.completion.params
         tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
-        assert stt_params["input_language"] == "auto"
-        assert tts_params["language"] == "kn-IN"
+        assert stt_params.input_language == "auto"
+        assert tts_params.language == "kn-IN"
 
     @pytest.mark.parametrize(
         "raw,normalised",
@@ -270,7 +270,7 @@ class TestLanguageResolution:
             )
         assert response.status_code == 200
         tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
-        assert tts_params["language"] == normalised
+        assert tts_params.language == normalised
 
     def test_route_always_owns_stt_input_language(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -290,7 +290,7 @@ class TestLanguageResolution:
                 ),
             )
         stt_params = _chain_request(mock).blocks[0].config.blob.completion.params
-        assert stt_params["input_language"] == "bn-IN"
+        assert stt_params.input_language == "bn-IN"
 
     def test_route_always_owns_tts_language(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -310,7 +310,7 @@ class TestLanguageResolution:
                 ),
             )
         tts_params = _chain_request(mock).blocks[2].config.blob.completion.params
-        assert tts_params["language"] == "te-IN"
+        assert tts_params.language == "te-IN"
 
 
 # ---------- Provider combos ----------
@@ -346,7 +346,7 @@ class TestProviders:
             )
         stt_completion = _chain_request(mock).blocks[0].config.blob.completion
         assert stt_completion.provider == "google"
-        assert stt_completion.params["model"] == "gemini-2.5-pro"
+        assert stt_completion.params.model == "gemini-2.5-pro"
 
     def test_all_three_providers_set_independently(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -393,9 +393,9 @@ class TestInlineOverrides:
                 ),
             )
         rag_params = _chain_request(mock).blocks[1].config.blob.completion.params
-        assert rag_params["model"] == "gpt-4o-mini"
-        assert rag_params["instructions"] == "Be brief."
-        assert rag_params["temperature"] == 0.5
+        assert rag_params.model == "gpt-4o-mini"
+        assert rag_params.instructions == "Be brief."
+        assert rag_params.temperature == 0.5
 
     def test_rag_inline_still_injects_kb_ids(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -412,7 +412,7 @@ class TestInlineOverrides:
                 ),
             )
         rag_params = _chain_request(mock).blocks[1].config.blob.completion.params
-        assert rag_params["knowledge_base_ids"] == kb_ids
+        assert rag_params.knowledge_base_ids == kb_ids
 
 
 # ---------- Stored config references ----------
@@ -541,48 +541,61 @@ class TestErrorPaths:
     def test_invalid_input_language_returns_422(
         self, client, user_api_key_header, audio_input, kb_ids
     ):
-        response = _post(
-            client,
-            user_api_key_header,
-            SpeechToSpeechRequest(
-                query=audio_input,
-                knowledge_base_ids=kb_ids,
-                input_language="hindi",
-            ),
-        )
+        # "klingon" isn't a recognized language name/code, so it can't be
+        # constructed into a SpeechToSpeechRequest in Python — post the raw
+        # dict so the invalid value reaches FastAPI's own request validation.
+        payload = SpeechToSpeechRequest(
+            query=audio_input, knowledge_base_ids=kb_ids
+        ).model_dump(mode="json")
+        payload["input_language"] = "klingon"
+        response = client.post(URL, json=payload, headers=user_api_key_header)
         assert response.status_code == 422
-        assert "input language" in response.json()["error"].lower()
+        assert isinstance(response.json()["errors"], list)
 
     def test_invalid_output_language_returns_422(
         self, client, user_api_key_header, audio_input, kb_ids
     ):
-        response = _post(
-            client,
-            user_api_key_header,
-            SpeechToSpeechRequest(
-                query=audio_input,
-                knowledge_base_ids=kb_ids,
-                output_language="english",
-            ),
-        )
+        payload = SpeechToSpeechRequest(
+            query=audio_input, knowledge_base_ids=kb_ids
+        ).model_dump(mode="json")
+        payload["output_language"] = "klingon"
+        response = client.post(URL, json=payload, headers=user_api_key_header)
         assert response.status_code == 422
-        assert "output language" in response.json()["error"].lower()
+        assert isinstance(response.json()["errors"], list)
+
+    @pytest.mark.parametrize(
+        "alias,canonical",
+        [("hindi", "hi-IN"), ("english", "en-IN"), ("hi", "hi-IN"), ("ta-in", "ta-IN")],
+    )
+    def test_language_aliases_normalize_to_bcp47(
+        self, client, user_api_key_header, audio_input, kb_ids, alias, canonical
+    ):
+        """Friendly names/bare codes (e.g. 'hindi') must resolve the same as
+        the canonical BCP-47 tag, not 422."""
+        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
+            payload = SpeechToSpeechRequest(
+                query=audio_input, knowledge_base_ids=kb_ids
+            ).model_dump(mode="json")
+            payload["input_language"] = alias
+            response = client.post(URL, json=payload, headers=user_api_key_header)
+        assert response.status_code == 200
+        assert _chain_request(mock).request_metadata["input_language"] == canonical
 
     @pytest.mark.parametrize("forbidden", ["unknown", "auto"])
     def test_detection_sentinels_rejected_as_output_language(
-        self, client, user_api_key_header, audio_input, kb_ids, forbidden
+        self, audio_input, kb_ids, forbidden
     ):
-        """'unknown' / 'auto' are STT-only sentinels; TTS needs a concrete language."""
-        response = _post(
-            client,
-            user_api_key_header,
+        """'unknown' / 'auto' are STT-only sentinels; TTS needs a concrete language.
+
+        Rejected by SpeechToSpeechRequest's own model_validator, so it 422s at
+        construction time — before the request ever reaches the route.
+        """
+        with pytest.raises(ValidationError, match="output_language"):
             SpeechToSpeechRequest(
                 query=audio_input,
                 knowledge_base_ids=kb_ids,
                 output_language=forbidden,
-            ),
-        )
-        assert response.status_code == 422
+            )
 
     def test_auto_as_input_language_is_valid(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -653,7 +666,7 @@ class TestEdgeCases:
                 SpeechToSpeechRequest(query=audio_input, knowledge_base_ids=many_kbs),
             )
         rag_params = _chain_request(mock).blocks[1].config.blob.completion.params
-        assert rag_params["knowledge_base_ids"] == many_kbs
+        assert rag_params.knowledge_base_ids == many_kbs
 
     def test_kb_ids_overwrite_user_supplied_kb_ids_in_rag_params(
         self, client, user_api_key_header, audio_input, kb_ids
@@ -675,4 +688,4 @@ class TestEdgeCases:
                 ),
             )
         rag_params = _chain_request(mock).blocks[1].config.blob.completion.params
-        assert rag_params["knowledge_base_ids"] == kb_ids
+        assert rag_params.knowledge_base_ids == kb_ids

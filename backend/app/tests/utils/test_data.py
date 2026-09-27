@@ -33,7 +33,7 @@ from app.models import (
     UserProject,
 )
 from app.models.config.config import ConfigTag
-from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
+from app.models.llm import NativeCompletionConfig, build_kaapi_completion_config
 from app.tests.utils.user import create_random_user
 from app.tests.utils.utils import (
     generate_random_string,
@@ -291,7 +291,7 @@ def create_test_config(
         if use_kaapi_schema:
             # Create Kaapi-format config
             config_blob = ConfigBlob(
-                completion=KaapiCompletionConfig(
+                completion=build_kaapi_completion_config(
                     provider="openai",
                     type="text",
                     params={
@@ -386,7 +386,7 @@ def create_test_version(
             else:
                 # For Kaapi providers (openai, google)
                 config_blob = ConfigBlob(
-                    completion=KaapiCompletionConfig(
+                    completion=build_kaapi_completion_config(
                         provider=provider,
                         type=config_type,
                         params={

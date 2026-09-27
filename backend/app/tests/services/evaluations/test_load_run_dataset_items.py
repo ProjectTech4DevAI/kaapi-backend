@@ -3,8 +3,8 @@
 Covers the v2 run-time-duplication slice of the three-metric SRD
 (docs/srd-three-metric-evaluation-verdict.md, FR-21/FR-22):
 
-- FR-21: a v2 dataset (null Langfuse id, run-time-duplication marker, factor N)
-  expands each original row ×N with unique ids at run time.
+- FR-21: a v2 dataset (null Langfuse id, stored factor N) expands each original
+  row ×N with unique ids at run time — the S3-backed shape alone drives it.
 - FR-22: a v1 dataset (Langfuse-backed) is read from Langfuse as-is, never
   re-multiplied, and its S3 CSV is not touched.
 
@@ -20,7 +20,6 @@ from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.crud.evaluations.dataset import (
-    DATASET_META_DUPLICATE_AT_RUNTIME,
     DATASET_META_DUPLICATION_FACTOR,
     DATASET_META_ORIGINAL_ITEMS,
     DATASET_META_TOTAL_ITEMS,
@@ -28,6 +27,8 @@ from app.crud.evaluations.dataset import (
 )
 from app.models import EvaluationDataset
 from app.services.evaluations.fast import (
+    _load_items_from_object_store,
+    execute_fast_evaluation_chunk,
     load_run_dataset_items,
     validate_and_start_fast_evaluation,
 )
@@ -50,9 +51,8 @@ def _make_v2_dataset(
     auth: TestAuthContext,
     original_items_count: int,
     duplication_factor: int,
-    duplicate_at_runtime: bool = True,
 ) -> EvaluationDataset:
-    """A Langfuse-free dataset: null langfuse id, S3 url, run-time-dup metadata."""
+    """A Langfuse-free dataset: null langfuse id, S3 url, stored-factor metadata."""
     return create_evaluation_dataset(
         session=db,
         name=f"v2_ds_{random_lower_string()}",
@@ -60,7 +60,6 @@ def _make_v2_dataset(
             DATASET_META_ORIGINAL_ITEMS: original_items_count,
             DATASET_META_TOTAL_ITEMS: original_items_count * duplication_factor,
             DATASET_META_DUPLICATION_FACTOR: duplication_factor,
-            DATASET_META_DUPLICATE_AT_RUNTIME: duplicate_at_runtime,
         },
         object_store_url="s3://bucket/datasets/v2.csv",
         langfuse_dataset_id=None,
@@ -116,16 +115,15 @@ class TestV2RunTimeDuplication:
         assert sorted(groups) == [1, 2, 3]
         assert all(len(ids) == 4 for ids in groups.values())
 
-    def test_marker_absent_does_not_multiply(
+    def test_stored_factor_one_loads_rows_as_is(
         self, db: Session, user_api_key: TestAuthContext
     ) -> None:
-        """A null-langfuse dataset without the run-time-dup marker loads as-is."""
+        """An S3-backed dataset with stored factor 1 loads one item per row."""
         dataset = _make_v2_dataset(
             db=db,
             auth=user_api_key,
             original_items_count=5,
-            duplication_factor=5,
-            duplicate_at_runtime=False,
+            duplication_factor=1,
         )
 
         with (
@@ -138,6 +136,141 @@ class TestV2RunTimeDuplication:
             items = load_run_dataset_items(session=db, dataset=dataset, langfuse=None)
 
         assert len(items) == 5
+
+
+class TestDuplicationFactorOverride:
+    def test_override_replaces_stored_factor_for_runtime_dataset(
+        self, db: Session, user_api_key: TestAuthContext
+    ) -> None:
+        """Runtime-dup dataset stored ×5, override 2 → 8 rows × 2 = 16, not 40."""
+        dataset = _make_v2_dataset(
+            db=db, auth=user_api_key, original_items_count=8, duplication_factor=5
+        )
+
+        with (
+            patch(f"{_FAST}.get_cloud_storage", return_value=MagicMock()),
+            patch(
+                f"{_FAST}.download_csv_from_object_store",
+                return_value=_csv_bytes(8),
+            ),
+        ):
+            items = _load_items_from_object_store(
+                session=db, dataset=dataset, duplication_factor=2
+            )
+
+        assert len(items) == 16
+        assert len({item["id"] for item in items}) == 16
+        # Each original row is emitted exactly twice, keyed item_{row}_{dup}.
+        assert sorted(item["id"] for item in items) == sorted(
+            f"item_{row}_{dup}" for row in range(8) for dup in range(2)
+        )
+
+    def test_no_override_uses_stored_factor(
+        self, db: Session, user_api_key: TestAuthContext
+    ) -> None:
+        """Absent override → the dataset's stored factor (×5) is used unchanged."""
+        dataset = _make_v2_dataset(
+            db=db, auth=user_api_key, original_items_count=8, duplication_factor=5
+        )
+
+        with (
+            patch(f"{_FAST}.get_cloud_storage", return_value=MagicMock()),
+            patch(
+                f"{_FAST}.download_csv_from_object_store",
+                return_value=_csv_bytes(8),
+            ),
+        ):
+            items = _load_items_from_object_store(
+                session=db, dataset=dataset, duplication_factor=None
+            )
+
+        assert len(items) == 40
+
+    def test_load_run_dataset_items_threads_override_to_object_store(
+        self, db: Session, user_api_key: TestAuthContext
+    ) -> None:
+        """The public loader forwards the override into the S3 expansion (×3)."""
+        dataset = _make_v2_dataset(
+            db=db, auth=user_api_key, original_items_count=4, duplication_factor=5
+        )
+
+        with (
+            patch(f"{_FAST}.get_cloud_storage", return_value=MagicMock()),
+            patch(
+                f"{_FAST}.download_csv_from_object_store",
+                return_value=_csv_bytes(4),
+            ),
+        ):
+            items = load_run_dataset_items(
+                session=db, dataset=dataset, langfuse=None, duplication_factor=3
+            )
+
+        assert len(items) == 12
+
+    def test_langfuse_path_ignores_override(
+        self, db: Session, user_api_key: TestAuthContext
+    ) -> None:
+        """A v1 (Langfuse-backed) dataset is read as-is; the override never applies."""
+        dataset = create_evaluation_dataset(
+            session=db,
+            name=f"v1_ds_{random_lower_string()}",
+            dataset_metadata={
+                DATASET_META_ORIGINAL_ITEMS: 3,
+                DATASET_META_TOTAL_ITEMS: 15,
+                DATASET_META_DUPLICATION_FACTOR: 5,
+            },
+            object_store_url="s3://bucket/datasets/v1.csv",
+            langfuse_dataset_id="langfuse_override",
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        langfuse_items = [{"id": f"lf_{i}"} for i in range(15)]
+
+        with (
+            patch(f"{_FAST}.fetch_dataset_items", return_value=langfuse_items),
+            patch(f"{_FAST}.download_csv_from_object_store") as mock_download,
+        ):
+            items = load_run_dataset_items(
+                session=db,
+                dataset=dataset,
+                langfuse=MagicMock(),
+                duplication_factor=2,
+            )
+
+        assert len(items) == 15
+        mock_download.assert_not_called()
+
+
+class TestChunkReloadUsesRunFactor:
+    def test_chunk_reload_passes_run_duplication_factor(
+        self, db: Session, user_api_key: TestAuthContext
+    ) -> None:
+        """The chunk re-load must size off the run's persisted override (×7), so its
+        slice count matches the fan-out sizing rather than the stale dataset factor."""
+        run = MagicMock()
+        run.status = "processing"
+        run.duplication_factor = 7
+        run.organization_id = user_api_key.organization_id
+        run.project_id = user_api_key.project_id
+
+        loaded_items = [{"id": f"item_{i}_0"} for i in range(3)]
+
+        with (
+            patch(f"{_FAST}.Session"),
+            patch(f"{_FAST}._get_fast_run", return_value=run),
+            patch(f"{_FAST}.get_dataset_by_id", return_value=MagicMock()),
+            patch(
+                f"{_FAST}._resolve_config_and_clients",
+                return_value=(MagicMock(), MagicMock(), None),
+            ),
+            patch(
+                f"{_FAST}.load_run_dataset_items", return_value=loaded_items
+            ) as mock_load,
+            patch(f"{_FAST}.run_response_chunk"),
+        ):
+            execute_fast_evaluation_chunk(eval_run_id=123, chunk_index=0)
+
+        assert mock_load.call_args.kwargs["duplication_factor"] == 7
 
 
 class TestV1DatasetReadAsIs:

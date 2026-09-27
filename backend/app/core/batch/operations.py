@@ -118,12 +118,12 @@ def process_completed_batch(
     provider: BatchProvider,
     batch_job: BatchJob,
     upload_to_object_store: bool = True,
+    subdirectory: str | None = None,
 ) -> tuple[list[dict[str, Any]], str | None]:
-    """
-    Process a completed batch: download results and optionally upload to object store.
+    """Download a completed batch's results and optionally store them.
 
-    Returns:
-        Tuple of (results, object_store_url)
+    ``subdirectory`` overrides the default ``<job_type>/batch-<id>`` prefix.
+    Returns ``(results, object_store_url)``.
     """
     logger.info(f"[process_completed_batch] Processing | id={batch_job.id}")
 
@@ -134,7 +134,10 @@ def process_completed_batch(
         if upload_to_object_store:
             try:
                 object_store_url = upload_batch_results_to_object_store(
-                    session=session, batch_job=batch_job, results=results
+                    session=session,
+                    batch_job=batch_job,
+                    results=results,
+                    subdirectory=subdirectory,
                 )
                 logger.info(
                     f"[process_completed_batch] Uploaded to object store | {object_store_url}"
@@ -160,9 +163,12 @@ def process_completed_batch(
 
 
 def upload_batch_results_to_object_store(
-    session: Session, batch_job: BatchJob, results: list[dict[str, Any]]
+    session: Session,
+    batch_job: BatchJob,
+    results: list[dict[str, Any]],
+    subdirectory: str | None = None,
 ) -> str | None:
-    """Upload batch results to object store."""
+    """Upload batch results to object store; ``subdirectory`` overrides the default prefix."""
     logger.info(
         f"[upload_batch_results_to_object_store] Uploading | batch_job_id={batch_job.id}"
     )
@@ -170,7 +176,7 @@ def upload_batch_results_to_object_store(
     try:
         storage = get_cloud_storage(session=session, project_id=batch_job.project_id)
 
-        subdirectory = f"{batch_job.job_type}/batch-{batch_job.id}"
+        subdirectory = subdirectory or f"{batch_job.job_type}/batch-{batch_job.id}"
         filename = "results.jsonl"
 
         object_store_url = shared_upload_jsonl(

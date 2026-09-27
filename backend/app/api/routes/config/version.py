@@ -11,7 +11,6 @@ from app.models import (
     ConfigVersionUpdate,
     Message,
 )
-from app.models.config.config import ConfigTag
 from app.utils import APIResponse, load_description
 
 router = APIRouter()
@@ -29,13 +28,6 @@ def create_version(
     version_create: ConfigVersionUpdate,
     current_user: AuthContextDep,
     session: SessionDep,
-    tag: ConfigTag = Query(
-        ConfigTag.DEFAULT,
-        description=(
-            "Config scope. Use 'default' for general configs or 'ASSESSMENT' "
-            "for assessment configs."
-        ),
-    ),
 ):
     """
     Create a new version for an existing configuration.
@@ -48,7 +40,6 @@ def create_version(
         session=session,
         project_id=current_user.project_.id,
         config_id=config_id,
-        tag=tag,
     )
     version = version_crud.create_or_raise(version_create=version_create)
 
@@ -70,13 +61,6 @@ def list_versions(
     session: SessionDep,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(100, ge=1, le=100, description="Maximum records to return"),
-    tag: ConfigTag = Query(
-        ConfigTag.DEFAULT,
-        description=(
-            "Config scope. Use 'default' for general configs or 'ASSESSMENT' "
-            "for assessment configs."
-        ),
-    ),
 ):
     """
     List all versions for a specific configuration.
@@ -86,7 +70,6 @@ def list_versions(
         session=session,
         project_id=current_user.project_.id,
         config_id=config_id,
-        tag=tag,
     )
     versions = version_crud.read_all(
         skip=skip,
@@ -111,13 +94,6 @@ def get_version(
     version_number: int = Path(
         ..., ge=1, description="The version number of the config"
     ),
-    tag: ConfigTag = Query(
-        ConfigTag.DEFAULT,
-        description=(
-            "Config scope. Use 'default' for general configs or 'ASSESSMENT' "
-            "for assessment configs."
-        ),
-    ),
 ):
     """
     Get a specific version of a config.
@@ -126,7 +102,6 @@ def get_version(
         session=session,
         project_id=current_user.project_.id,
         config_id=config_id,
-        tag=tag,
     )
     version = version_crud.exists_or_raise(version_number=version_number)
     return APIResponse.success_response(
@@ -148,13 +123,6 @@ def delete_version(
     version_number: int = Path(
         ..., ge=1, description="The version number of the config"
     ),
-    tag: ConfigTag = Query(
-        ConfigTag.DEFAULT,
-        description=(
-            "Config scope. Use 'default' for general configs or 'ASSESSMENT' "
-            "for assessment configs."
-        ),
-    ),
 ):
     """
     Delete a specific version of a config.
@@ -163,7 +131,6 @@ def delete_version(
         session=session,
         project_id=current_user.project_.id,
         config_id=config_id,
-        tag=tag,
     )
     version_crud.delete_or_raise(version_number=version_number)
 

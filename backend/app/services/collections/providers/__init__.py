@@ -5,3 +5,11 @@ from app.services.collections.providers.registry import (
     LLMProvider,
     get_llm_provider,
 )
+
+__all__ = [
+    "BaseProvider",
+    "GeminiAIStudioProvider",
+    "OpenAIProvider",
+    "LLMProvider",
+    "get_llm_provider",
+]

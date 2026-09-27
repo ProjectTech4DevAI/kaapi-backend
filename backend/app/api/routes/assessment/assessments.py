@@ -1,9 +1,14 @@
-"""Parent-assessment endpoints"""
+"""Parent-assessment endpoints (LEGACY RUN pipeline).
+
+Serves submission-based RUN assessments only. The API-client BATCH path (`api.py`) has
+its own list/detail endpoints; its rows never surface here.
+"""
 
 import logging
 from typing import Any, Literal
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from sqlmodel import Session
@@ -20,10 +25,11 @@ from app.crud.assessment import (
 )
 from app.models.assessment import (
     Assessment,
+    AssessmentMethod,
     AssessmentPublic,
     AssessmentResponse,
+    AssessmentSubmission,
 )
-from app.models.evaluation import EvaluationDataset
 from app.services.assessment.service import retry_assessment as retry_assessment_service
 from app.services.assessment.utils import build_assessment_results_response
 from app.utils import APIResponse, load_description
@@ -42,12 +48,13 @@ def _build_assessment_public(
         session=session, assessment_id=assessment.id
     )
     counts = compute_run_counts(runs)
-    dataset = session.get(EvaluationDataset, assessment.dataset_id)
+    submission = session.get(AssessmentSubmission, assessment.submission_id)
     return AssessmentPublic(
         id=assessment.id,
         experiment_name=assessment.experiment_name,
-        dataset_id=assessment.dataset_id,
-        dataset_name=dataset.name if dataset else None,
+        method=assessment.method,
+        submission_id=assessment.submission_id,
+        submission_name=submission.name if submission else None,
         status=assessment.status,
         counts=counts,
         run_stats=build_run_stats(runs),
@@ -67,11 +74,11 @@ def _build_assessment_public(
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def retry_assessment(
-    assessment_id: int,
+    assessment_id: UUID,
     session: SessionDep,
     auth_context: AuthContextDep,
 ) -> APIResponse[AssessmentResponse]:
-    """Retry a parent assessment using the same dataset/config inputs."""
+    """Retry a parent assessment using the same submission/config inputs."""
     assessment = get_assessment_by_id(
         session=session,
         assessment_id=assessment_id,
@@ -125,7 +132,7 @@ def list_assessments(
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def get_assessment(
-    assessment_id: int,
+    assessment_id: UUID,
     session: SessionDep,
     auth_context: AuthContextDep,
 ) -> APIResponse[AssessmentPublic]:
@@ -150,7 +157,7 @@ def get_assessment(
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def export_assessment_results(
-    assessment_id: int,
+    assessment_id: UUID,
     session: SessionDep,
     auth_context: AuthContextDep,
     export_format: Literal["json", "csv", "xlsx"] = Query(default="json"),
@@ -162,6 +169,14 @@ def export_assessment_results(
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
+    if assessment.method != AssessmentMethod.RUN:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Assessment {assessment_id} is a {assessment.method} assessment; this "
+                f"export serves RUN only. Read its rows from GET /assessments/{assessment_id}."
+            ),
+        )
 
     runs = get_assessment_runs_for_assessment(
         session=session, assessment_id=assessment_id

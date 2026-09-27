@@ -8,13 +8,16 @@ Covers real-world scenarios, edge cases, and provider-specific requirements.
 from sqlmodel import Session
 
 from app.models.llm.request import (
-    KaapiCompletionConfig,
     NativeCompletionConfig,
     STTLLMParams,
     TextLLMParams,
     TTSLLMParams,
+    build_kaapi_completion_config,
 )
 from app.services.llm.mappers import (
+    _convert_json_schema_to_google,
+    _ensure_openai_strict_schema,
+    _strip_additional_properties,
     bcp47_to_elevenlabs_lang,
     map_kaapi_to_anthropic_params,
     map_kaapi_to_elevenlabs_params,
@@ -38,8 +41,19 @@ class TestMapKaapiToOpenAIParams:
             session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
         )
 
-        # TextLLMParams has default temperature=0.1
-        assert result == {"model": "gpt-4o", "temperature": 0.1}
+        # Unset temperature is dropped from the dump (ParamSerialization),
+        # so the provider decides the default — never a temperature the user didn't set.
+        assert result == {"model": "gpt-4o"}
+        assert warnings == []
+
+    def test_explicit_temperature_forwarded(self, db: Session):
+        kaapi_params = TextLLMParams(model="gpt-4o", temperature=0.7)
+
+        result, warnings = map_kaapi_to_openai_params(
+            session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result == {"model": "gpt-4o", "temperature": 0.7}
         assert warnings == []
 
     def test_reasoning_mapping_for_reasoning_models(self, db: Session):
@@ -55,10 +69,11 @@ class TestMapKaapiToOpenAIParams:
 
         assert result["model"] == "gpt-5"
         assert result["reasoning"] == {"effort": "high"}
-        # Temperature is suppressed for reasoning models (even default value)
         assert "temperature" not in result
-        assert len(warnings) == 1
-        assert "temperature" in warnings[0].lower()
+        # Unset temperature never reaches the mapper, so no spurious
+        # "suppressed" warning for reasoning models (explicit-temperature
+        # suppression is covered by test_temperature_suppressed_for_reasoning_models).
+        assert warnings == []
 
     def test_knowledge_base_ids_mapping(self, db: Session):
         """Test knowledge_base_ids mapping to OpenAI tools format."""
@@ -131,6 +146,45 @@ class TestMapKaapiToOpenAIParams:
         assert result["model"] == "gpt-5"
         assert result["reasoning"] == {"effort": "high", "summary": "detailed"}
 
+    def test_top_p_forwarded_for_non_reasoning_models(self, db: Session):
+        kaapi_params = TextLLMParams(model="gpt-4o", top_p=0.85)
+
+        result, warnings = map_kaapi_to_openai_params(
+            session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["top_p"] == 0.85
+        assert warnings == []
+
+    def test_top_p_suppressed_for_reasoning_models(self, db: Session):
+        kaapi_params = TextLLMParams(model="gpt-5", top_p=0.9, temperature=None)
+
+        result, warnings = map_kaapi_to_openai_params(
+            session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert "top_p" not in result
+        assert len(warnings) == 1
+        assert "top_p" in warnings[0]
+
+    def test_output_schema_sets_strict_text_format(self, db: Session):
+        result, _ = map_kaapi_to_openai_params(
+            session=db,
+            kaapi_params={
+                "model": "gpt-4o",
+                "output_schema": {
+                    "type": "object",
+                    "properties": {"score": {"type": "integer"}},
+                },
+            },
+        )
+
+        text_format = result["text"]["format"]
+        assert text_format["type"] == "json_schema"
+        assert text_format["strict"] is True
+        assert text_format["schema"]["additionalProperties"] is False
+        assert text_format["schema"]["required"] == ["score"]
+
 
 class TestMapKaapiToGoogleParams:
     """Test cases for map_kaapi_to_google_params function with completion_type."""
@@ -191,6 +245,51 @@ class TestMapKaapiToGoogleParams:
         assert "max_num_results" not in result
         assert len(warnings) == 1
         assert "max_num_results" in warnings[0]
+
+    def test_text_completion_top_p_and_max_output_tokens(self):
+        kaapi_params = TextLLMParams(
+            model="gemini-2.5-pro", top_p=0.8, max_output_tokens=512
+        )
+
+        result, warnings = map_kaapi_to_google_params(
+            kaapi_params.model_dump(exclude_none=True), completion_type="text"
+        )
+
+        assert result["top_p"] == 0.8
+        assert result["max_output_tokens"] == 512
+        assert warnings == []
+
+    def test_text_completion_thinking_level_maps_to_thinking_config(self):
+        kaapi_params = TextLLMParams(model="gemini-2.5-pro", thinking_level="high")
+
+        result, warnings = map_kaapi_to_google_params(
+            kaapi_params.model_dump(exclude_none=True), completion_type="text"
+        )
+
+        assert result["thinking_config"] == {"thinking_level": "high"}
+        assert warnings == []
+
+    def test_enum_output_schema_carries_only_the_camel_case_ordering_key(self):
+        """Vertex rejects a payload carrying both ordering spellings; the SDK dump
+        only emits the snake_case one for some schemas, and an enum triggers it."""
+        result, _ = map_kaapi_to_google_params(
+            {
+                "model": "gemini-2.5-pro",
+                "output_schema": {
+                    "type": "object",
+                    "properties": {
+                        "band": {"type": "string", "enum": ["low", "high"]},
+                        "score": {"type": "integer"},
+                    },
+                    "required": ["band", "score"],
+                },
+            },
+            completion_type="text",
+        )
+
+        google_schema = result["output_schema"]
+        assert "property_ordering" not in google_schema
+        assert google_schema["propertyOrdering"] == ["band", "score"]
 
     def test_stt_completion_with_instructions(self):
         """Test STT completion with instructions parameter."""
@@ -810,8 +909,6 @@ class TestMapKaapiToAnthropicParams:
         kaapi_params = {
             "model": "claude-sonnet-4-6",
             "instructions": "You are a helpful assistant.",
-            "temperature": 0.4,
-            "top_p": 0.9,
             "max_output_tokens": 1024,
         }
 
@@ -820,11 +917,38 @@ class TestMapKaapiToAnthropicParams:
         assert result == {
             "model": "claude-sonnet-4-6",
             "system": "You are a helpful assistant.",
-            "temperature": 0.4,
-            "top_p": 0.9,
             "max_tokens": 1024,
         }
         assert warnings == []
+
+    def test_sampling_is_always_dropped_with_a_warning(self):
+        """The Messages API returns 400 for a non-default temperature or any top_p."""
+        result, warnings = map_kaapi_to_anthropic_params(
+            {"model": "claude-sonnet-4-6", "temperature": 0.3, "top_p": 0.9}
+        )
+
+        assert "temperature" not in result
+        assert "top_p" not in result
+        assert len(warnings) == 1
+        assert "temperature" in warnings[0]
+
+    def test_default_temperature_dropped_without_a_warning(self):
+        """1.0 is Anthropic's own default, so dropping it changes nothing."""
+        result, warnings = map_kaapi_to_anthropic_params(
+            {"model": "claude-sonnet-4-6", "temperature": 1.0}
+        )
+
+        assert "temperature" not in result
+        assert warnings == []
+
+    def test_effort_is_unaffected_by_dropped_sampling(self):
+        result, warnings = map_kaapi_to_anthropic_params(
+            {"model": "claude-opus-4-8", "effort": "high", "temperature": 0.3}
+        )
+
+        assert result["output_config"] == {"effort": "high"}
+        assert "temperature" not in result
+        assert len(warnings) == 1
 
     def test_missing_model_falls_back_to_default(self):
         """Anthropic requires model — provider falls back to the centralised
@@ -858,9 +982,9 @@ class TestMapKaapiToAnthropicParams:
         assert len(warnings) == 1
         assert "knowledge_base_ids" in warnings[0]
 
-    def test_reasoning_effort_summary_collapsed_into_single_warning(self):
-        """Any of reasoning/effort/summary triggers the same advisory; only
-        one warning is emitted regardless of how many are supplied."""
+    def test_effort_wins_over_the_reasoning_alias(self):
+        """effort is canonical; reasoning is only read when effort is absent.
+        summary has no Anthropic equivalent and is dropped."""
         result, warnings = map_kaapi_to_anthropic_params(
             {
                 "model": "claude-sonnet-4-6",
@@ -870,19 +994,160 @@ class TestMapKaapiToAnthropicParams:
             }
         )
 
+        assert result["output_config"] == {"effort": "medium"}
         assert "reasoning" not in result
-        assert "effort" not in result
         assert "summary" not in result
         assert len(warnings) == 1
-        assert "reasoning" in warnings[0].lower()
+        assert "summary" in warnings[0]
 
-    def test_temperature_zero_is_preserved(self):
-        """0.0 is a valid temperature — guard against truthy-check bugs that
-        would drop it as if it were None."""
+    def test_reasoning_alias_is_read_as_effort(self):
         result, _ = map_kaapi_to_anthropic_params(
+            {"model": "claude-sonnet-4-6", "reasoning": "medium"}
+        )
+        assert result["output_config"]["effort"] == "medium"
+
+    def test_minimal_effort_is_warned_and_omitted(self):
+        """Kaapi/OpenAI expose a "minimal" rung with no Anthropic equivalent."""
+        result, warnings = map_kaapi_to_anthropic_params(
+            {"model": "claude-sonnet-4-6", "effort": "minimal"}
+        )
+
+        assert "output_config" not in result
+        assert any("minimal" in warning for warning in warnings)
+
+    def test_output_schema_maps_to_output_config_format(self):
+        result, _ = map_kaapi_to_anthropic_params(
+            {
+                "model": "claude-sonnet-4-6",
+                "output_schema": {
+                    "type": "object",
+                    "properties": {"score": {"type": "integer"}},
+                },
+            }
+        )
+
+        output_format = result["output_config"]["format"]
+        assert output_format["type"] == "json_schema"
+        assert output_format["schema"]["additionalProperties"] is False
+
+    def test_effort_shares_the_output_config_with_the_schema(self):
+        """Structured output and reasoning effort share one container."""
+        result, _ = map_kaapi_to_anthropic_params(
+            {
+                "model": "claude-sonnet-4-6",
+                "effort": "high",
+                "output_schema": {
+                    "type": "object",
+                    "properties": {"score": {"type": "integer"}},
+                },
+            }
+        )
+
+        assert result["output_config"]["effort"] == "high"
+        assert result["output_config"]["format"]["type"] == "json_schema"
+
+    def test_thinking_container_passes_through(self):
+        thinking = {"type": "enabled", "budget_tokens": 4096}
+
+        result, warnings = map_kaapi_to_anthropic_params(
+            {"model": "claude-sonnet-4-6", "thinking": thinking}
+        )
+
+        assert result["thinking"] == thinking
+        assert warnings == []
+
+    def test_thinking_level_is_warned_and_dropped(self):
+        """thinking_level is Google-only; Anthropic reads the thinking container."""
+        result, warnings = map_kaapi_to_anthropic_params(
+            {"model": "claude-sonnet-4-6", "thinking_level": "high"}
+        )
+
+        assert "thinking_level" not in result
+        assert any("thinking_level" in warning for warning in warnings)
+
+    def test_zero_temperature_is_dropped_not_ignored(self):
+        """0.0 is falsy but still a non-default value the API would reject."""
+        _, warnings = map_kaapi_to_anthropic_params(
             {"model": "claude-sonnet-4-6", "temperature": 0.0}
         )
-        assert result["temperature"] == 0.0
+        assert len(warnings) == 1
+
+
+class TestSchemaHelpers:
+    """Schema shaping shared by the OpenAI, Anthropic and Gemini mappers."""
+
+    def test_strict_schema_forbids_extras_and_requires_every_property(self):
+        result = _ensure_openai_strict_schema(
+            {"type": "object", "properties": {"name": {"type": "string"}}}
+        )
+
+        assert result["additionalProperties"] is False
+        assert result["required"] == ["name"]
+
+    def test_strict_schema_recurses_into_nested_objects_and_arrays(self):
+        result = _ensure_openai_strict_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "object",
+                        "properties": {"city": {"type": "string"}},
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "object", "properties": {"x": {}}},
+                    },
+                },
+            }
+        )
+
+        assert result["properties"]["address"]["additionalProperties"] is False
+        assert result["properties"]["tags"]["items"]["additionalProperties"] is False
+
+    def test_strict_schema_leaves_non_objects_alone(self):
+        assert "additionalProperties" not in _ensure_openai_strict_schema(
+            {"type": "string"}
+        )
+
+    def test_additional_properties_stripped_recursively(self):
+        result = _strip_additional_properties(
+            {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "child": {"type": "object", "additionalProperties": False},
+                    "list": {
+                        "type": "array",
+                        "items": {"type": "object", "additionalProperties": False},
+                    },
+                },
+            }
+        )
+
+        assert "additionalProperties" not in result
+        assert "additionalProperties" not in result["properties"]["child"]
+        assert "additionalProperties" not in result["properties"]["list"]["items"]
+
+    def test_google_schema_orders_properties_by_required(self):
+        result = _convert_json_schema_to_google(
+            {
+                "type": "object",
+                "required": ["score", "reason"],
+                "properties": {"score": {"type": "integer"}, "reason": {}},
+            }
+        )
+
+        assert result["propertyOrdering"] == ["score", "reason"]
+
+    def test_google_schema_ordering_falls_back_to_property_keys(self):
+        result = _convert_json_schema_to_google(
+            {
+                "type": "object",
+                "properties": {"a": {"type": "string"}, "b": {"type": "string"}},
+            }
+        )
+
+        assert result["propertyOrdering"] == ["a", "b"]
 
 
 class TestTransformGoogleVertexRouting:
@@ -892,7 +1157,7 @@ class TestTransformGoogleVertexRouting:
     def test_text_completion_maps_via_google_mapper(self, db: Session):
         """``google`` text completions reuse the Google mapper and produce a
         ``google-native`` config (param shape is identical to Google's)."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="google",
             type="text",
             params={"model": "gemini-2.5-pro"},
@@ -908,7 +1173,7 @@ class TestTransformGoogleVertexRouting:
     def test_unsupported_language_emits_warning(self, db: Session):
         """Languages not in BCP47_LOCALE_TO_GEMINI_LANG fall back to auto-detect
         and surface a warning, rather than silently being dropped."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="google",
             type="tts",
             params={
@@ -925,6 +1190,46 @@ class TestTransformGoogleVertexRouting:
         assert "language" not in native_config.params  # dropped
         assert len(warnings) == 1
         assert "xx-YY" in warnings[0]
+
+
+class TestTransformGoogleGCPRouting:
+    """Routing contract for the ``google-gcp`` provider."""
+
+    def test_text_completion_maps_via_google_mapper(self, db: Session):
+        """``google-gcp`` text completions reuse the Google mapper and
+        produce a ``google-gcp-native`` config."""
+        kaapi_config = build_kaapi_completion_config(
+            provider="google-gcp",
+            type="text",
+            params={"model": "gemini-2.5-pro"},
+        )
+
+        native_config, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
+
+        assert native_config.provider == "google-gcp-native"
+        assert native_config.type == "text"
+        assert native_config.params["model"] == "gemini-2.5-pro"
+        assert warnings == []
+
+    def test_stt_completion_maps_via_google_mapper(self, db: Session):
+        """``google-gcp`` STT completions reuse the Google mapper and
+        produce a ``google-gcp-native`` config."""
+        kaapi_config = build_kaapi_completion_config(
+            provider="google-gcp",
+            type="stt",
+            params={"model": "gemini-2.5-pro", "input_language": "hi-IN"},
+        )
+
+        native_config, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
+
+        assert native_config.provider == "google-gcp-native"
+        assert native_config.type == "stt"
+        assert native_config.params["input_language"] == "hi-IN"
+        assert warnings == []
 
 
 class TestBCP47ToElevenlabsLang:
@@ -983,7 +1288,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_elevenlabs_tts_config(self, db: Session):
         """Test transformation of ElevenLabs TTS config."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="elevenlabs",
             type="tts",
             params={
@@ -1009,7 +1314,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_elevenlabs_stt_config(self, db: Session):
         """Test transformation of ElevenLabs STT config."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="elevenlabs",
             type="stt",
             params={
@@ -1033,7 +1338,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_sarvamai_stt_with_saaras_model(self, db: Session):
         """Test transformation of SarvamAI STT with saaras:v3 model."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="sarvamai",
             type="stt",
             params={
@@ -1061,7 +1366,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_sarvamai_tts_with_voice(self, db: Session):
         """Test transformation of SarvamAI TTS with explicit voice."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="sarvamai",
             type="tts",
             params={
@@ -1085,7 +1390,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_google_text_completion(self, db: Session):
         """Text completions route through ``google-aistudio`` (AI Studio)."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="google-aistudio",
             type="text",
             params={
@@ -1109,7 +1414,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_google_stt_completion(self, db: Session):
         """Test transformation of Google STT completion."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="google",
             type="stt",
             params={"model": "gemini-2.5-pro", "instructions": "Transcribe accurately"},
@@ -1128,7 +1433,7 @@ class TestTransformKaapiConfigToNative:
 
     def test_transform_google_tts_completion(self, db: Session):
         """Test transformation of Google TTS completion."""
-        kaapi_config = KaapiCompletionConfig(
+        kaapi_config = build_kaapi_completion_config(
             provider="google",
             type="tts",
             params={

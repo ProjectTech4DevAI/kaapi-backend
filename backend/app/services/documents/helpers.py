@@ -1,7 +1,11 @@
+import logging
 from typing import Optional, Tuple, Iterable, Union
 from uuid import UUID
 
 from fastapi import HTTPException, UploadFile
+from sqlmodel import Session
+
+from app.core.cloud.storage import CloudStorage
 
 from app.services.doctransform.registry import (
     get_available_transformers,
@@ -11,6 +15,10 @@ from app.services.doctransform.registry import (
 )
 from app.crud import DocTransformationJobCrud, DocumentCrud
 from app.services.doctransform import job as transformation_job
+from app.services.documents.validator import (
+    DocumentValidationError,
+    validate_document_content,
+)
 from app.models import (
     DocTransformJobCreate,
     TransformationStatus,
@@ -21,6 +29,42 @@ from app.models import (
     DocTransformationJobPublic,
     TransformedDocumentPublic,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def validate_upload(
+    *,
+    src: UploadFile,
+    target_format: str | None,
+    transformer: str | None,
+) -> Tuple[str, str | None]:
+    """
+    Full pre-storage gate: extension and transformer validation plus a content
+    sanity check. Returns (source_format, actual_transformer_or_none).
+
+    Raises: HTTPException(400) on client errors.
+    """
+    if src.filename is None:
+        raise HTTPException(status_code=400, detail="Uploaded file has no filename")
+
+    source_format, actual_transformer = pre_transform_validation(
+        src_filename=src.filename,
+        target_format=target_format,
+        transformer=transformer,
+    )
+
+    try:
+        validate_document_content(file=src, source_format=source_format)
+    except DocumentValidationError as e:
+        logger.warning(
+            f"[validate_upload] Document failed sanity check | "
+            f"filename: {e.filename} | format: {source_format} | reason: {e.reason}"
+        )
+        raise HTTPException(status_code=400, detail=e.client_message)
+
+    return source_format, actual_transformer
 
 
 def calculate_file_size(file: UploadFile) -> float:
@@ -88,7 +132,7 @@ def pre_transform_validation(
 
 def schedule_transformation(
     *,
-    session,
+    session: Session,
     project_id: int,
     source_format: str,
     target_format: str | None,
@@ -119,7 +163,7 @@ def schedule_transformation(
 
     return TransformationJobInfo(
         message=f"Document accepted for transformation from {source_format} to {target_format}.",
-        job_id=str(transformation_job_id),
+        job_id=transformation_job_id,
         status=TransformationStatus.PENDING,
         transformer=actual_transformer,
         status_check_url=f"/documents/transformation/{transformation_job_id}",
@@ -135,15 +179,26 @@ def _to_public_schema(doc: Document) -> PublicDoc:
     return TransformedDocumentPublic.model_validate(doc, from_attributes=True)
 
 
+def _signed_url(document: Document, storage: CloudStorage, download: bool) -> str:
+    """
+    One URL, two behaviours: with ``download`` the link carries a
+    Content-Disposition that forces a save under the original filename, without
+    it the link is bare so browsers render it inline (iframe previews).
+    """
+    filename = document.fname if download else None
+    return storage.get_signed_url(document.object_store_url, filename=filename)
+
+
 def build_document_schema(
     *,
     document: Document,
     include_url: bool,
-    storage: object | None,
+    storage: CloudStorage | None,
+    download: bool = False,
 ) -> PublicDoc:
     schema = _to_public_schema(document)
     if include_url and storage:
-        schema.signed_url = storage.get_signed_url(document.object_store_url)
+        schema.signed_url = _signed_url(document, storage, download)
     return schema
 
 
@@ -151,13 +206,14 @@ def build_document_schemas(
     *,
     documents: Iterable[Document],
     include_url: bool,
-    storage: object | None,
+    storage: CloudStorage | None,
+    download: bool = False,
 ) -> list[PublicDoc]:
     out: list[PublicDoc] = []
     for doc in documents:
         schema = _to_public_schema(doc)
         if include_url and storage:
-            schema.signed_url = storage.get_signed_url(doc.object_store_url)
+            schema.signed_url = _signed_url(doc, storage, download)
         out.append(schema)
     return out
 
@@ -167,7 +223,8 @@ def build_job_schema(
     job: DocTransformationJob,
     doc_crud: DocumentCrud,
     include_url: bool,
-    storage: object | None,
+    storage: CloudStorage | None,
+    download: bool = False,
 ) -> DocTransformationJobPublic:
     """Build a single job schema, optionally attaching a signed URL."""
     transformed_doc_schema: TransformedDocumentPublic | None = None
@@ -181,7 +238,7 @@ def build_job_schema(
         object_url = doc.object_store_url
 
         if include_url and storage and object_url:
-            transformed_doc_schema.signed_url = storage.get_signed_url(object_url)
+            transformed_doc_schema.signed_url = _signed_url(doc, storage, download)
 
     job_schema = DocTransformationJobPublic.model_validate(job, from_attributes=True)
     return job_schema.model_copy(
@@ -194,7 +251,8 @@ def build_job_schemas(
     jobs: Iterable[DocTransformationJob],
     doc_crud: DocumentCrud,
     include_url: bool,
-    storage: object | None,
+    storage: CloudStorage | None,
+    download: bool = False,
 ) -> list[DocTransformationJobPublic]:
     """Build many job schemas efficiently."""
     out: list[DocTransformationJobPublic] = []
@@ -205,6 +263,7 @@ def build_job_schemas(
                 doc_crud=doc_crud,
                 include_url=include_url,
                 storage=storage,
+                download=download,
             )
         )
     return out

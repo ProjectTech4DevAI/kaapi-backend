@@ -9,7 +9,7 @@ result monotonic, so the pair count can only grow across resyncs (never 29 -> 27
 import itertools
 import logging
 from collections import Counter
-from typing import Any
+from typing import cast
 
 import numpy as np
 
@@ -18,6 +18,7 @@ from app.crud.evaluations.score import (
     COSINE_SCORE_NAME,
     DEFAULT_CATEGORY,
     EvaluationScore,
+    NumericSummaryScore,
     SummaryScore,
     TraceData,
     TraceScore,
@@ -126,9 +127,11 @@ def apply_cosine_breakdown(
     breakdown = summarize_unscoreable(unscoreable)
     for entry in summary_scores:
         if entry.get("name") == COSINE_SCORE_NAME:
+            # Cosine is always a NUMERIC score; only that shape carries these fields.
+            numeric_entry = cast(NumericSummaryScore, entry)
             if total_items is not None:
-                entry["total_items"] = total_items
-            entry["unscoreable"] = breakdown
+                numeric_entry["total_items"] = total_items
+            numeric_entry["unscoreable"] = breakdown
     return summary_scores
 
 
@@ -177,7 +180,7 @@ def _merge_single_trace(existing: TraceData, fresh: TraceData) -> TraceData:
     for fresh_score in fresh.get("scores", []):
         merged_scores_by_name[fresh_score["name"]] = fresh_score
 
-    merged: dict[str, Any] = {
+    merged: TraceData = {
         "trace_id": fresh.get("trace_id") or existing.get("trace_id", ""),
         "question": fresh.get("question") or existing.get("question", ""),
         "llm_answer": fresh.get("llm_answer") or existing.get("llm_answer", ""),
@@ -205,6 +208,7 @@ def _reconcile_trace(
     or ``updated``. Exactly one of ``existing``/``fresh`` may be None, never both.
     """
     if existing is None:
+        assert fresh is not None, "exactly one of existing/fresh must be set"
         return fresh, "added"
     if fresh is None:
         return existing, "reused"

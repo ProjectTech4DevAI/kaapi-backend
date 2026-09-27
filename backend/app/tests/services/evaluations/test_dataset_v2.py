@@ -6,7 +6,7 @@ Covers the v2 upload slice of the three-metric SRD
 - FR-19: creates the `evaluation_dataset` row with `langfuse_dataset_id` null and
   never touches the Langfuse client.
 - FR-20: stores only the original rows (no physical duplication) and records the
-  run-time-duplication metadata.
+  original/total counts and stored duplication factor.
 
 Object storage is the external boundary and is mocked; the dataset row lands in
 the real (transactional) DB.
@@ -19,7 +19,6 @@ from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.crud.evaluations.dataset import (
-    DATASET_META_DUPLICATE_AT_RUNTIME,
     DATASET_META_DUPLICATION_FACTOR,
     DATASET_META_ORIGINAL_ITEMS,
     DATASET_META_TOTAL_ITEMS,
@@ -68,10 +67,10 @@ class TestUploadDatasetV2:
         assert persisted.langfuse_dataset_id is None
         assert persisted.object_store_url == "s3://bucket/datasets/v2.csv"
 
-    def test_stores_original_rows_and_runtime_dup_metadata(
+    def test_stores_original_rows_and_factor_metadata(
         self, db: Session, user_api_key: TestAuthContext
     ) -> None:
-        """FR-20: original CSV stored verbatim; metadata records run-time dup."""
+        """FR-20: original CSV stored verbatim; metadata records the stored factor."""
         name = f"v2-meta-{random_lower_string()}"
         with (
             patch(f"{_DATASET}.get_cloud_storage", return_value=MagicMock()),
@@ -97,7 +96,8 @@ class TestUploadDatasetV2:
         assert mock_upload.call_args.kwargs["csv_content"] == _CSV
 
         meta = dataset.dataset_metadata
-        assert meta[DATASET_META_DUPLICATE_AT_RUNTIME] is True
+        # The removed run-time-duplication flag must not be written into v2 metadata.
+        assert "duplicate_at_runtime" not in meta
         assert meta[DATASET_META_DUPLICATION_FACTOR] == 5
         assert meta[DATASET_META_ORIGINAL_ITEMS] == 4
         assert meta[DATASET_META_TOTAL_ITEMS] == 20  # 4 rows × factor 5

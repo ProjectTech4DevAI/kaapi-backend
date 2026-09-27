@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
 from uuid import UUID, uuid4
 
+from pydantic import JsonValue
 from sqlalchemy import Column
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
@@ -134,7 +135,7 @@ class Project(ProjectBase, table=True):
 class ProjectPublic(ProjectBase):
     id: int
     organization_id: int
-    settings: dict[str, Any] = {}
+    settings: dict[str, JsonValue] = {}
     inserted_at: datetime
     updated_at: datetime
 

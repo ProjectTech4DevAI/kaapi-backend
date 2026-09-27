@@ -43,7 +43,7 @@ class Document(DocumentBase, table=True):
         description="The size of the document in kilobytes",
         sa_column_kwargs={"comment": "Size of the document in kilobytes (KB)"},
     )
-    file_id: dict | None = Field(
+    file_id: dict[str, str] | None = Field(
         default=None,
         sa_column=Column(
             JSONB,
@@ -110,8 +110,32 @@ class TransformationJobInfo(SQLModel):
 
 
 class DocumentUploadResponse(DocumentPublic):
-    signed_url: str = Field(description="A signed URL for accessing the document")
+    # Intentionally narrows the optional parent field: an upload always returns a URL.
+    signed_url: str = Field(
+        description="A signed URL for accessing the document"
+    )  # pyright: ignore[reportIncompatibleVariableOverride, reportGeneralTypeIssues]
     transformation_job: TransformationJobInfo | None = None
+
+
+class DocumentUploadRequest(SQLModel):
+    filename: str = Field(
+        min_length=1,
+        max_length=255,
+        description="Original filename including its extension, e.g. report.pdf",
+    )
+
+
+class DocumentUploadInitiateResponse(SQLModel):
+    document_id: UUID = Field(
+        description="Identifier to register the document under; the registration endpoint takes it as a path parameter"
+    )
+    upload_url: str = Field(description="URL to POST the file to")
+    upload_fields: dict[str, str] = Field(
+        description="Form fields to send with the file in the multipart POST, the file part last"
+    )
+    expires_in: int = Field(
+        description="Effective lifetime of the upload URL in seconds, after server-side capping"
+    )
 
 
 class DocTransformationJobPublic(SQLModel):

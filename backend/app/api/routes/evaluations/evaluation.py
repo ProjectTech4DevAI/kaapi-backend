@@ -1,6 +1,7 @@
 """Evaluation run API routes."""
 
 import logging
+from typing import Annotated
 from uuid import UUID
 
 from asgi_correlation_id import correlation_id
@@ -114,14 +115,11 @@ def list_evaluation_runs(
     auth_context: AuthContextDep,
     limit: int = 50,
     offset: int = 0,
+    dataset_id: Annotated[
+        int | None, Query(description="Filter runs by evaluation dataset ID")
+    ] = None,
 ) -> APIResponse[list[EvaluationRunPublic]]:
     """List evaluation runs."""
-    logger.info(
-        f"[list_evaluation_runs] Listing evaluation runs | "
-        f"org_id={auth_context.organization_.id} | "
-        f"project_id={auth_context.project_.id} | limit={limit} | offset={offset}"
-    )
-
     return APIResponse.success_response(
         data=list_evaluation_runs_crud(
             session=session,
@@ -129,6 +127,7 @@ def list_evaluation_runs(
             project_id=auth_context.project_.id,
             limit=limit,
             offset=offset,
+            dataset_id=dataset_id,
         )
     )
 

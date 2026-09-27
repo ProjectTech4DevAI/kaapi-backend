@@ -4,8 +4,8 @@
 from typing import Literal
 
 # Provider + model that run the batch prefilter stages (topic relevance, dup check).
-ASSESSMENT_PREFILTER_PROVIDER: Literal["openai", "google-aistudio"] = "openai"
-ASSESSMENT_PREFILTER_MODEL: str = "gpt-5-mini"
+ASSESSMENT_PREFILTER_PROVIDER: Literal["openai", "google", "anthropic"] = "openai"
+ASSESSMENT_PREFILTER_MODEL: str = "gpt-5.6-luna"
 # ASSESSMENT_PREFILTER_MODEL: str = "gemini-3.1-flash-lite"
 
 

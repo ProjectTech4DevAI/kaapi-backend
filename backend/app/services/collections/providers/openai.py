@@ -1,6 +1,6 @@
 import logging
 import tempfile
-from typing import List
+from typing import IO, List, cast
 
 from openai import OpenAI
 from sqlmodel import Session
@@ -41,14 +41,20 @@ class OpenAIProvider(BaseProvider):
 
             try:
                 with tempfile.NamedTemporaryFile() as tmp:
-                    body = storage.stream(doc.object_store_url)
+                    body = cast(IO[bytes], storage.stream(doc.object_store_url))
                     while chunk := body.read(1024 * 1024):
                         tmp.write(chunk)
                     if doc.file_size_kb is None:
                         doc.file_size_kb = round(tmp.tell() / 1024, 2)
                     tmp.seek(0)
+                    if "." in doc.fname:
+                        filename, extension = doc.fname.rsplit(".", 1)
+                        normalized_fname = f"{filename}.{extension.lower()}"
+                    else:
+                        normalized_fname = doc.fname
                     uploaded = self.client.files.create(
-                        file=(doc.fname, tmp), purpose="assistants"
+                        file=(normalized_fname, tmp),
+                        purpose="assistants",
                     )
             except Exception as err:
                 logger.error(
@@ -124,9 +130,9 @@ class OpenAIProvider(BaseProvider):
                     len(docs),
                 )
 
-            return Collection(
+            return Collection(  # pyright: ignore[reportCallIssue]
                 knowledge_base_id=vector_store_id,
-                knowledge_base_provider=get_service_name(OPENAI_PROVIDER),
+                knowledge_base_provider=get_service_name(ProviderType.openai),
             )
 
         except Exception as e:

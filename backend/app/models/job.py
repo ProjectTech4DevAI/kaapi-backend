@@ -23,6 +23,7 @@ class JobType(str, Enum):
     LLM_CHAIN = "LLM_CHAIN"
     LLM_GUARDRAILS = "LLM_GUARDRAILS"
     PROMPT_IMPROVEMENT = "PROMPT_IMPROVEMENT"
+    ASSESSMENT = "ASSESSMENT"
 
 
 class Job(SQLModel, table=True):
@@ -68,7 +69,7 @@ class Job(SQLModel, table=True):
     job_type: JobType = Field(
         description="Type of job being executed (e.g., response, ingestion).",
         sa_column_kwargs={
-            "comment": "Type of job being executed (e.g., RESPONSE, LLM_API, LLM_CHAIN, LLM_GUARDRAILS, PROMPT_IMPROVEMENT)"
+            "comment": "Type of job being executed (e.g., RESPONSE, LLM_API, LLM_CHAIN, LLM_GUARDRAILS, PROMPT_IMPROVEMENT, ASSESSMENT)"
         },
     )
     meta: dict[str, Any] | None = Field(

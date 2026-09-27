@@ -1,4 +1,5 @@
 import openai_responses
+import pytest
 from openai import OpenAI
 from sqlmodel import Session, select
 
@@ -72,3 +73,13 @@ class TestCollectionDelete:
         crud.delete(documents[0], v_crud)
 
         assert all(y.deleted_at for (_, y) in resources)
+
+    @openai_responses.mock()
+    def test_delete_unsupported_model_raises_type_error(self, db: Session) -> None:
+        project = get_project(db)
+        client = OpenAI(api_key="sk-test-key")
+        v_crud = OpenAIVectorStoreCrud(client)
+        crud = CollectionCrud(db, project_id=project.id)
+
+        with pytest.raises(TypeError):
+            crud.delete("not-a-model", v_crud)

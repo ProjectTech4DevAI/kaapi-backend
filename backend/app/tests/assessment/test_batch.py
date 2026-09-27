@@ -10,11 +10,10 @@ from openpyxl.utils.exceptions import InvalidFileException
 
 from app.crud.assessment.batch import (
     _build_text_prompt,
-    _load_dataset_rows,
-    _parse_excel_rows,
     build_anthropic_jsonl,
     build_google_jsonl,
     build_openai_jsonl,
+    load_submission_file_rows,
     submit_assessment_batch,
 )
 from app.models.assessment import AssessmentAttachment
@@ -26,9 +25,69 @@ from app.services.assessment.utils.attachments import (
     build_gemini_attachment_parts,
     resolve_attachment_values,
     resolve_item_type,
+    rewrite_gcs_attachment_urls,
     split_attachment_urls,
     to_direct_attachment_url,
 )
+from app.services.assessment.validators import parse_excel_rows
+
+_REWRITE_RESOLVER = "app.services.assessment.utils.attachments.resolve_attachments"
+
+
+class TestRewriteGcsAttachmentUrls:
+    def test_rewrites_gcs_leaves_https_untouched(self):
+        att = AssessmentAttachment(column="img", type="image", format="url")
+        rows = [{"img": "gs://b/1.png, https://x/2.png"}, {"img": "gs://b/3.png"}]
+        with patch(
+            _REWRITE_RESOLVER,
+            return_value={"gs://b/1.png": "https://s1", "gs://b/3.png": "https://s3"},
+        ) as mock_resolve:
+            out = rewrite_gcs_attachment_urls(
+                session=MagicMock(),
+                rows=rows,
+                attachments=[att],
+                llm_provider="openai",
+                project_id=1,
+                organization_id=2,
+            )
+        assert out[0]["img"] == "https://s1, https://x/2.png"
+        assert out[1]["img"] == "https://s3"
+        # single bulk resolve for both gs:// URIs across all rows
+        mock_resolve.assert_called_once()
+        _, kwargs = mock_resolve.call_args
+        assert set(kwargs["source"]) == {"gs://b/1.png", "gs://b/3.png"}
+        assert kwargs["llm_provider"] == "openai"
+
+    def test_no_gcs_returns_rows_unchanged_without_resolving(self):
+        att = AssessmentAttachment(column="img", type="image", format="url")
+        rows = [{"img": "https://x/1.png"}]
+        with patch(_REWRITE_RESOLVER) as mock_resolve:
+            out = rewrite_gcs_attachment_urls(
+                session=MagicMock(),
+                rows=rows,
+                attachments=[att],
+                llm_provider="anthropic",
+                project_id=1,
+                organization_id=2,
+            )
+        assert out is rows
+        mock_resolve.assert_not_called()
+
+    def test_empty_cell_skipped_and_unresolved_gcs_left_as_is(self):
+        att = AssessmentAttachment(column="img", type="image", format="url")
+        rows = [{"img": ""}, {"img": "gs://b/missing.png"}]
+        with patch(_REWRITE_RESOLVER, return_value={}):
+            out = rewrite_gcs_attachment_urls(
+                session=MagicMock(),
+                rows=rows,
+                attachments=[att],
+                llm_provider="openai",
+                project_id=1,
+                organization_id=2,
+            )
+        assert out[0]["img"] == ""
+        # unresolved gs:// URI stays put rather than becoming a broken/empty value
+        assert out[1]["img"] == "gs://b/missing.png"
 
 
 def _make_run() -> MagicMock:
@@ -44,17 +103,17 @@ def _make_assessment() -> MagicMock:
     return assessment
 
 
-def _make_dataset() -> MagicMock:
-    dataset = MagicMock()
-    dataset.id = 8
-    return dataset
+def _make_submission() -> MagicMock:
+    submission = MagicMock()
+    submission.id = 8
+    return submission
 
 
 class TestSubmitAssessmentBatchProviderRouting:
     def test_openai_native_routes_to_openai_batch(self) -> None:
         session = MagicMock()
         run = _make_run()
-        dataset = _make_dataset()
+        submission = _make_submission()
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(
                 provider="openai-native",
@@ -67,7 +126,7 @@ class TestSubmitAssessmentBatchProviderRouting:
 
         with (
             patch(
-                "app.crud.assessment.batch._load_dataset_rows",
+                "app.crud.assessment.batch.load_submission_file_rows",
                 return_value=[{"question": "q1"}],
             ),
             patch(
@@ -95,7 +154,7 @@ class TestSubmitAssessmentBatchProviderRouting:
                 session=session,
                 run=run,
                 assessment=_make_assessment(),
-                dataset=dataset,
+                submission=submission,
                 config_blob=config_blob,
                 assessment_input={
                     "text_columns": ["question"],
@@ -108,15 +167,17 @@ class TestSubmitAssessmentBatchProviderRouting:
 
         assert result.id == 1
         assert map_params.call_args.kwargs["session"] is session
+        # Instruction now comes from the resolved config blob; the request has no
+        # system_instruction override anymore.
         assert map_params.call_args.kwargs["kaapi_params"]["instructions"] == (
-            "request system"
+            "config system"
         )
         assert start_batch.call_args.kwargs["provider_name"] == "openai"
 
-    def test_config_instruction_is_not_used_without_request_instruction(self) -> None:
+    def test_config_instruction_is_used(self) -> None:
         session = MagicMock()
         run = _make_run()
-        dataset = _make_dataset()
+        submission = _make_submission()
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(
                 provider="openai",
@@ -129,7 +190,7 @@ class TestSubmitAssessmentBatchProviderRouting:
 
         with (
             patch(
-                "app.crud.assessment.batch._load_dataset_rows",
+                "app.crud.assessment.batch.load_submission_file_rows",
                 return_value=[{"question": "q1"}],
             ),
             patch(
@@ -157,7 +218,7 @@ class TestSubmitAssessmentBatchProviderRouting:
                 session=session,
                 run=run,
                 assessment=_make_assessment(),
-                dataset=dataset,
+                submission=submission,
                 config_blob=config_blob,
                 assessment_input={"text_columns": ["question"], "attachments": []},
                 organization_id=1,
@@ -165,15 +226,18 @@ class TestSubmitAssessmentBatchProviderRouting:
             )
 
         assert map_params.call_args.kwargs["session"] is session
-        assert "instructions" not in map_params.call_args.kwargs["kaapi_params"]
+        assert (
+            map_params.call_args.kwargs["kaapi_params"]["instructions"]
+            == "config system"
+        )
 
     def test_google_native_routes_to_google_batch(self) -> None:
         session = MagicMock()
         run = _make_run()
-        dataset = _make_dataset()
+        submission = _make_submission()
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(
-                provider="google-aistudio-native",
+                provider="google-native",
                 params={"instructions": "config system"},
             )
         )
@@ -185,7 +249,7 @@ class TestSubmitAssessmentBatchProviderRouting:
 
         with (
             patch(
-                "app.crud.assessment.batch._load_dataset_rows",
+                "app.crud.assessment.batch.load_submission_file_rows",
                 return_value=[{"question": "q1"}],
             ),
             patch(
@@ -211,7 +275,7 @@ class TestSubmitAssessmentBatchProviderRouting:
                 session=session,
                 run=run,
                 assessment=_make_assessment(),
-                dataset=dataset,
+                submission=submission,
                 config_blob=config_blob,
                 assessment_input={
                     "text_columns": ["question"],
@@ -223,13 +287,13 @@ class TestSubmitAssessmentBatchProviderRouting:
             )
 
         assert result.id == 2
-        assert map_params.call_args.args[0]["instructions"] == "request system"
-        assert start_batch.call_args.kwargs["provider_name"] == "google-aistudio"
+        assert map_params.call_args.args[0]["instructions"] == "config system"
+        assert start_batch.call_args.kwargs["provider_name"] == "google"
 
     def test_anthropic_native_routes_to_anthropic_batch(self) -> None:
         session = MagicMock()
         run = _make_run()
-        dataset = _make_dataset()
+        submission = _make_submission()
         config_blob = SimpleNamespace(
             completion=SimpleNamespace(
                 provider="anthropic-native",
@@ -242,7 +306,7 @@ class TestSubmitAssessmentBatchProviderRouting:
 
         with (
             patch(
-                "app.crud.assessment.batch._load_dataset_rows",
+                "app.crud.assessment.batch.load_submission_file_rows",
                 return_value=[{"question": "q1"}],
             ),
             patch(
@@ -270,7 +334,7 @@ class TestSubmitAssessmentBatchProviderRouting:
                 session=session,
                 run=run,
                 assessment=_make_assessment(),
-                dataset=dataset,
+                submission=submission,
                 config_blob=config_blob,
                 assessment_input={
                     "text_columns": ["question"],
@@ -282,7 +346,7 @@ class TestSubmitAssessmentBatchProviderRouting:
             )
 
         assert result.id == 4
-        assert map_params.call_args.args[0]["instructions"] == "request system"
+        assert map_params.call_args.args[0]["instructions"] == "config system"
         assert start_batch.call_args.kwargs["provider_name"] == "anthropic"
         assert start_batch.call_args.kwargs["config"]["model"] == "claude-sonnet-4-6"
         assert start_batch.call_args.kwargs["config"]["max_tokens"] == (
@@ -291,13 +355,12 @@ class TestSubmitAssessmentBatchProviderRouting:
 
 
 class TestBatchDatasetParsing:
-    def test_load_dataset_rows_routes_xlsx_to_excel_parser(self) -> None:
+    def test_load_submission_rows_routes_xlsx_to_excel_parser(self) -> None:
         session = MagicMock()
-        dataset = MagicMock()
-        dataset.id = 8
-        dataset.project_id = 1
-        dataset.object_store_url = "s3://bucket/key"
-        dataset.dataset_metadata = {"file_extension": ".xlsx"}
+        submission = MagicMock()
+        submission.id = 8
+        submission.project_id = 1
+        submission.object_store_url = "s3://bucket/key.xlsx"
 
         storage = MagicMock()
         stream_body = MagicMock()
@@ -308,22 +371,21 @@ class TestBatchDatasetParsing:
         with (
             patch("app.crud.assessment.batch.get_cloud_storage", return_value=storage),
             patch(
-                "app.crud.assessment.batch._parse_excel_rows",
+                "app.crud.assessment.batch.parse_rows",
                 return_value=expected,
-            ) as parse_excel,
+            ) as parse,
         ):
-            result = _load_dataset_rows(session=session, dataset=dataset)
+            result = load_submission_file_rows(session=session, submission=submission)
 
         assert result == expected
-        parse_excel.assert_called_once_with(b"xlsx-content")
+        parse.assert_called_once_with(b"xlsx-content", ".xlsx")
 
-    def test_load_dataset_rows_rejects_legacy_xls(self) -> None:
+    def test_load_submission_rows_rejects_legacy_xls(self) -> None:
         session = MagicMock()
-        dataset = MagicMock()
-        dataset.id = 8
-        dataset.project_id = 1
-        dataset.object_store_url = "s3://bucket/key"
-        dataset.dataset_metadata = {"file_extension": ".xls"}
+        submission = MagicMock()
+        submission.id = 8
+        submission.project_id = 1
+        submission.object_store_url = "s3://bucket/key.xls"
 
         storage = MagicMock()
         stream_body = MagicMock()
@@ -332,11 +394,11 @@ class TestBatchDatasetParsing:
 
         with patch("app.crud.assessment.batch.get_cloud_storage", return_value=storage):
             with pytest.raises(ValueError, match="Legacy Excel format"):
-                _load_dataset_rows(session=session, dataset=dataset)
+                load_submission_file_rows(session=session, submission=submission)
 
     def test_parse_excel_rows_invalid_payload_raises(self) -> None:
         with pytest.raises((ValueError, InvalidFileException)):
-            _parse_excel_rows(b"not-a-valid-xlsx")
+            parse_excel_rows(b"not-a-valid-xlsx")
 
     def test_parse_excel_rows_success(self) -> None:
         wb = Workbook()
@@ -349,16 +411,17 @@ class TestBatchDatasetParsing:
         wb.save(buf)
         wb.close()
 
-        rows = _parse_excel_rows(buf.getvalue())
+        rows = parse_excel_rows(buf.getvalue())
         assert rows == [{"question": "What is 2+2?", "answer": "4"}]
 
     def test_parse_excel_rows_returns_empty_when_sheet_missing(self) -> None:
         fake_wb = MagicMock()
         fake_wb.active = None
         with patch(
-            "app.crud.assessment.batch.openpyxl.load_workbook", return_value=fake_wb
+            "app.services.assessment.validators.openpyxl.load_workbook",
+            return_value=fake_wb,
         ):
-            assert _parse_excel_rows(b"irrelevant") == []
+            assert parse_excel_rows(b"irrelevant") == []
         fake_wb.close.assert_called_once()
 
     def test_parse_excel_rows_returns_empty_when_header_missing(self) -> None:
@@ -367,26 +430,29 @@ class TestBatchDatasetParsing:
         fake_wb = MagicMock()
         fake_wb.active = fake_ws
         with patch(
-            "app.crud.assessment.batch.openpyxl.load_workbook", return_value=fake_wb
+            "app.services.assessment.validators.openpyxl.load_workbook",
+            return_value=fake_wb,
         ):
-            assert _parse_excel_rows(b"irrelevant") == []
+            assert parse_excel_rows(b"irrelevant") == []
         fake_wb.close.assert_called_once()
 
     def test_parse_excel_rows_invalid_file_exception_re_raises(self) -> None:
         with patch(
-            "app.crud.assessment.batch.openpyxl.load_workbook",
+            "app.services.assessment.validators.openpyxl.load_workbook",
             side_effect=InvalidFileException("bad xlsx"),
         ):
             with pytest.raises(InvalidFileException):
-                _parse_excel_rows(b"bad")
+                parse_excel_rows(b"bad")
 
     def test_parse_excel_rows_unexpected_exception_raises_value_error(self) -> None:
         with patch(
-            "app.crud.assessment.batch.openpyxl.load_workbook",
+            "app.services.assessment.validators.openpyxl.load_workbook",
             side_effect=RuntimeError("boom"),
         ):
-            with pytest.raises(ValueError, match="Failed to parse XLSX dataset rows"):
-                _parse_excel_rows(b"bad")
+            with pytest.raises(
+                ValueError, match="Failed to parse XLSX submission rows"
+            ):
+                parse_excel_rows(b"bad")
 
 
 class TestBatchHelpers:

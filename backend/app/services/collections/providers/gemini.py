@@ -2,7 +2,7 @@ import logging
 import mimetypes
 import tempfile
 import time
-from typing import List
+from typing import IO, List, cast
 
 from google import genai
 from google.genai.types import File, FileState, UploadFileConfig
@@ -93,7 +93,7 @@ class GeminiAIStudioProvider(BaseProvider):
                         f"(e.g. .pdf, .txt, .json) and re-upload."
                     )
                 with tempfile.NamedTemporaryFile() as tmp:
-                    body = storage.stream(doc.object_store_url)
+                    body = cast(IO[bytes], storage.stream(doc.object_store_url))
                     while chunk := body.read(STREAM_CHUNK_BYTES):
                         tmp.write(chunk)
                     if doc.file_size_kb is None:
@@ -115,6 +115,11 @@ class GeminiAIStudioProvider(BaseProvider):
                 raise
 
             self._wait_until_active(uploaded, doc)
+
+            if uploaded.name is None:
+                raise RuntimeError(
+                    f"[GEMINI] Uploaded file for doc {doc.id} has no name"
+                )
 
             doc.file_id = {
                 **(doc.file_id or {}),
@@ -152,7 +157,8 @@ class GeminiAIStudioProvider(BaseProvider):
                         uploaded.name,
                         str(delete_err),
                     )
-                doc.file_id.pop(GOOGLE_AISTUDIO_PROVIDER, None)
+                if doc.file_id:
+                    doc.file_id.pop(GOOGLE_AISTUDIO_PROVIDER, None)
                 raise
 
     def _wait_until_active(self, uploaded: File, doc: Document) -> None:
@@ -175,6 +181,10 @@ class GeminiAIStudioProvider(BaseProvider):
                     f"doc_id={doc.id}, file_name={uploaded.name}"
                 )
                 raise InterruptedError(error_message)
+            if uploaded.name is None:
+                raise InterruptedError(
+                    f"[GEMINI] Uploaded file for doc {doc.id} has no name; cannot poll status."
+                )
             time.sleep(FILE_ACTIVE_POLL_INTERVAL_SECONDS)
             uploaded = self.client.files.get(name=uploaded.name)
 
@@ -213,9 +223,12 @@ class GeminiAIStudioProvider(BaseProvider):
         try:
             store_crud = GeminiFileSearchStoreCrud(self.client)
             for doc in docs:
-                store_crud.import_document(
-                    vector_store_id, doc.file_id[GOOGLE_AISTUDIO_PROVIDER]
-                )
+                file_name = (doc.file_id or {}).get(GOOGLE_AISTUDIO_PROVIDER)
+                if file_name is None:
+                    raise RuntimeError(
+                        f"[GEMINI] Document {doc.id} has no Gemini file id; upload it before indexing."
+                    )
+                store_crud.import_document(vector_store_id, file_name)
             if docs:
                 logger.info(
                     "[GeminiAIStudioProvider.create] Imported documents | store_name=%s, doc_count=%d",
@@ -223,9 +236,9 @@ class GeminiAIStudioProvider(BaseProvider):
                     len(docs),
                 )
 
-            return Collection(
+            return Collection(  # pyright: ignore[reportCallIssue]
                 knowledge_base_id=vector_store_id,
-                knowledge_base_provider=get_service_name(GOOGLE_AISTUDIO_PROVIDER),
+                knowledge_base_provider=get_service_name(ProviderType.google_aistudio),
             )
 
         except Exception as e:

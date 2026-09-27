@@ -3,13 +3,17 @@ from enum import StrEnum
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
+from pydantic.json_schema import SkipJsonSchema
+from sqlalchemy import event
 from sqlalchemy.dialects import postgresql
+from sqlalchemy.orm.base import NO_VALUE
 from sqlmodel import Field, Index, SQLModel, text
 
 from app.core.util import now
 from app.models.llm.request import ConfigBlob
 
+from .assessment_blob import AssessmentConfigBlob
 from .version import ConfigVersionPublic
 
 
@@ -118,16 +122,22 @@ class Config(ConfigBase, table=True):
     )
 
 
+@event.listens_for(Config.tag, "set", active_history=True)
+def _enforce_tag_immutable(
+    _target: "Config", value: ConfigTag, oldvalue: ConfigTag, _initiator: object
+) -> None:
+    """`tag` is fixed at creation — it selects the config_blob shape, so changing
+    it would leave the blob in the wrong shape. Allow the initial assignment and
+    no-op sets; reject any real change on a persisted row. ``active_history`` forces
+    the loaded value to be available as ``oldvalue`` so the comparison is reliable.
+    """
+    if oldvalue not in (NO_VALUE, None) and value != oldvalue:
+        raise ValueError("config tag is immutable and cannot be changed after creation")
+
+
 class ConfigCreate(ConfigBase):
     """Create new configuration"""
 
-    # Initial version data
-    config_blob: ConfigBlob = Field(description="Provider-specific parameters")
-    commit_message: str | None = Field(
-        default=None,
-        max_length=512,
-        description="Optional message describing the changes in this version",
-    )
     tag: ConfigTag = Field(
         default=ConfigTag.DEFAULT,
         description=(
@@ -135,22 +145,66 @@ class ConfigCreate(ConfigBase):
             "set 'ASSESSMENT' for assessment use."
         ),
     )
+    config_blob: ConfigBlob | SkipJsonSchema[AssessmentConfigBlob] = Field(
+        description="Provider-specific parameters; shape must match `tag`"
+    )
+    commit_message: str | None = Field(
+        default=None,
+        max_length=512,
+        description="Optional message describing the changes in this version",
+    )
 
-    @field_validator("config_blob")
-    def validate_blob_not_empty(cls, value):
-        if not value:
-            raise ValueError("config_blob cannot be empty")
-        return value
+    @field_validator("config_blob", mode="before")
+    @classmethod
+    def _validate_blob_for_tag(cls, blob: object, info: object) -> object:
+        """Validate config_blob against ONLY the model its tag dictates, so a
+        `default` config never surfaces assessment-branch errors and vice-versa.
+
+        Without this, `config_blob` is a `ConfigBlob | AssessmentConfigBlob`
+        union: a blob that is invalid for its tag fails one branch and pydantic
+        leaks the *other* branch's error (e.g. a bad `default` completion
+        reporting "assessment: Field required"). Runs before union coercion; raw
+        JSON bodies (dicts) only — model instances built in code fall through."""
+        if not isinstance(blob, dict):
+            return blob
+        raw_tag = info.data.get("tag", ConfigTag.DEFAULT)
+        tag = raw_tag.value if isinstance(raw_tag, ConfigTag) else raw_tag
+        is_assessment = tag == ConfigTag.ASSESSMENT.value
+
+        if is_assessment and "assessment" not in blob:
+            raise ValueError(
+                "An ASSESSMENT config requires an 'assessment' block in config_blob."
+            )
+        if not is_assessment and "completion" not in blob:
+            raise ValueError(
+                "A default config requires a 'completion' block in config_blob."
+            )
+
+        # Validate against the single tag-appropriate model and return the
+        # instance; its ValidationError (correct branch only) propagates as-is.
+        model = AssessmentConfigBlob if is_assessment else ConfigBlob
+        return model.model_validate(blob)
+
+    @model_validator(mode="after")
+    def _check_blob_matches_tag(self) -> "ConfigCreate":
+        expected = (
+            AssessmentConfigBlob if self.tag == ConfigTag.ASSESSMENT else ConfigBlob
+        )
+        if not isinstance(self.config_blob, expected):
+            raise ValueError(f"config_blob shape does not match tag '{self.tag.value}'")
+        return self
 
 
 class ConfigUpdate(SQLModel):
+    # Only `name` and `description` are updatable. `extra="forbid"` rejects any other
+    # field (e.g. `tag`, `config_blob`) with a 422 instead of silently ignoring it —
+    # `tag` is fixed at creation (it selects the config_blob shape) and `config_blob`
+    # is changed only through versioning.
+    model_config = {"extra": "forbid"}
+
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = Field(
         default=None, max_length=512, description="Optional description"
-    )
-    tag: ConfigTag | None = Field(
-        default=None,
-        description=("Optional tag for classifying this config. "),
     )
 
 

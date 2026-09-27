@@ -3,12 +3,11 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
-from pydantic import ValidationError
 from sqlalchemy.orm import defer
 from sqlmodel import Session, and_, select
 
 from app.core.util import now
-from app.crud.model_config import is_reasoning_model, validate_blob_model_or_raise
+from app.crud.model_config import is_reasoning_model, validate_config_blob_for_tag
 from app.models import (
     Config,
     ConfigVersion,
@@ -17,7 +16,6 @@ from app.models import (
     ConfigVersionUpdate,
 )
 from app.models.config.config import ConfigTag
-from app.models.llm.request import ConfigBlob
 
 from .config import ConfigCrud
 
@@ -34,22 +32,32 @@ class ConfigVersionCrud:
         session: Session,
         config_id: UUID,
         project_id: int,
-        tag: ConfigTag = ConfigTag.DEFAULT,
+        tag: ConfigTag | None = None,
     ):
+        """A version always shares its parent config's scope. When ``tag`` is
+        omitted it is inherited from the config, so callers can't pass a
+        mismatched tag (e.g. DEFAULT against an ASSESSMENT config). Pass an
+        explicit tag only to assert an expected scope."""
         self.session = session
         self.project_id = project_id
         self.config_id = config_id
+        if tag is None:
+            config = ConfigCrud(session=session, project_id=project_id).read_one(
+                config_id
+            )
+            if config is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"config with id '{config_id}' not found",
+                )
+            tag = config.tag
         self.tag = tag
 
     def create_or_raise(self, version_create: ConfigVersionUpdate) -> ConfigVersion:
-        """
-        Create a new version from a partial config update.
+        """Create the next version from the submitted config blob.
 
-        Fetches the latest version, merges the partial config with it,
-        validates the result, and creates the new version.
-
-        Fields 'type' is inherited from the existing config
-        and cannot be changed.
+        A DEFAULT blob is a partial patch merged onto the latest version, with
+        `completion.type` immutable. An ASSESSMENT blob replaces it outright.
         """
         self._config_exists_or_raise(self.config_id)
 
@@ -61,30 +69,19 @@ class ConfigVersionCrud:
                 detail="Cannot create partial version: no existing version found. Use full config for initial version.",
             )
 
-        # Merge partial config with existing config
-        merged_config = self._deep_merge(
-            base=latest_version.config_blob,
-            updates=version_create.config_blob,
-        )
-
-        self._strip_unsupported_params(merged_config)
-
-        # Validate that provider and type haven't been changed
-        self._validate_immutable_fields(latest_version.config_blob, merged_config)
-
-        # Validate the merged config as ConfigBlob
-        try:
-            validated_blob = ConfigBlob.model_validate(merged_config)
-        except ValidationError as e:
-            validation_errors = e.errors()
-            logger.warning(
-                f"[ConfigVersionCrud.create_or_raise] Validation failed | "
-                f"{{'config_id': '{self.config_id}', 'error_count': {len(validation_errors)}, "
-                f"'fields': {['.'.join(str(part) for part in err['loc']) for err in validation_errors]}}}"
+        if self.tag == ConfigTag.ASSESSMENT:
+            merged_config = dict(version_create.config_blob)
+        else:
+            merged_config = self._deep_merge(
+                base=latest_version.config_blob,
+                updates=version_create.config_blob,
             )
-            raise HTTPException(status_code=400, detail=validation_errors)
+            self._strip_unsupported_params(merged_config)
+            self._validate_immutable_fields(latest_version.config_blob, merged_config)
 
-        validate_blob_model_or_raise(self.session, validated_blob)
+        validated_blob = validate_config_blob_for_tag(
+            self.session, self.tag, merged_config
+        )
 
         try:
             next_version = self._get_next_version(self.config_id)

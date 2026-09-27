@@ -212,7 +212,7 @@ class EvaluationDataset(SQLModel, table=True):
 class EvaluationRun(SQLModel, table=True):
     """Database table for evaluation runs."""
 
-    __tablename__ = "evaluation_run"
+    __tablename__ = "evaluation_run"  # pyright: ignore[reportAssignmentType]
     __table_args__ = (
         Index("idx_eval_run_status_org", "status", "organization_id"),
         Index("idx_eval_run_status_project", "status", "project_id"),
@@ -405,6 +405,35 @@ class EvaluationRun(SQLModel, table=True):
         description="True if all per-item scores were synced to Langfuse, else False",
     )
 
+    callback_url: str | None = SQLField(
+        default=None,
+        sa_column=Column(
+            Text,
+            nullable=True,
+            comment=(
+                "Optional HTTPS webhook (v2 runs only) POSTed a slim run snapshot "
+                "(id/run_name/dataset_name/status/run_mode/timestamps) once the run "
+                "reaches a terminal state (completed/failed). NULL when no callback "
+                "was requested"
+            ),
+        ),
+        description="Optional HTTPS webhook fired on terminal (completed/failed) state",
+    )
+
+    duplication_factor: int | None = SQLField(
+        default=None,
+        ge=1,
+        nullable=True,
+        sa_column_kwargs={
+            "comment": (
+                "Per-run override of the dataset's stored duplication_factor for "
+                "runtime-duplicated (v2) datasets. Read by fan-out sizing, the "
+                "chunk re-load, and the ai_summary math so all three agree. NULL = "
+                "use the dataset's stored factor (v1/Langfuse forced to 1)"
+            )
+        },
+    )
+
     # Cost tracking field
     cost: dict[str, Any] | None = SQLField(
         default=None,
@@ -503,6 +532,8 @@ class EvaluationRunUpdate(SQLModel):
     cost: dict[str, Any] | None = None
     embedding_batch_job_id: int | None = None
     is_judge_run: bool | None = None
+    callback_url: str | None = None
+    duplication_factor: int | None = None
 
 
 class EvaluationRunPublic(SQLModel):

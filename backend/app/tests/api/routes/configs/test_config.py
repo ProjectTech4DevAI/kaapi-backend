@@ -333,6 +333,32 @@ def test_update_config_name(
     assert data["data"]["id"] == str(config.id)
 
 
+def test_update_config_rejects_tag_and_other_fields(
+    db: Session,
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """PATCH accepts only name/description. Any other field (e.g. `tag`) is
+    rejected with 422, and the config's tag is left unchanged."""
+    config = create_test_config(
+        db=db,
+        project_id=user_api_key.project_id,
+        name="default-config",
+        tag=ConfigTag.DEFAULT,
+    )
+
+    response = client.patch(
+        f"{settings.API_V1_STR}/configs/{config.id}",
+        headers={"X-API-KEY": user_api_key.key},
+        json={"name": "renamed", "tag": "ASSESSMENT"},
+    )
+
+    assert response.status_code == 422
+    db.refresh(config)
+    assert config.tag == ConfigTag.DEFAULT
+    assert config.name == "default-config"
+
+
 def test_update_config_description(
     db: Session,
     client: TestClient,
@@ -539,3 +565,26 @@ def test_list_configs_with_query(
     assert "search-beta" in returned_names
     assert all("search" in name for name in returned_names)
     assert "other-config" not in returned_names
+
+
+def test_create_assessment_config_missing_assessment_block_gives_clear_error(
+    client: TestClient,
+    user_api_key: TestAuthContext,
+) -> None:
+    """A malformed ASSESSMENT config (no 'assessment' block) returns a single
+    clear error on config_blob, not raw union noise."""
+    response = client.post(
+        f"{settings.API_V1_STR}/configs",
+        headers={"X-API-KEY": user_api_key.key},
+        json={
+            "name": "bad-assessment",
+            "tag": "ASSESSMENT",
+            "config_blob": {"pre_filters": {}},
+        },
+    )
+
+    assert response.status_code == 422
+    errors = response.json()["errors"]
+    assert len(errors) == 1
+    assert errors[0]["field"] == "config_blob"
+    assert "assessment" in errors[0]["message"].lower()

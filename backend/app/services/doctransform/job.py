@@ -40,7 +40,7 @@ def start_job(
     transformer_name: str,
     target_format: str,
     callback_url: str | None,
-) -> str:
+) -> UUID:
     trace_id = correlation_id.get() or "N/A"
     job_crud = DocTransformationJobCrud(db, project_id=project_id)
     job_crud.update(job_id, DocTransformJobUpdate(trace_id=trace_id))

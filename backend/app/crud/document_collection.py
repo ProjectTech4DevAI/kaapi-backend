@@ -1,9 +1,10 @@
 import logging
+from collections.abc import Sequence
 from typing import Optional
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.models import Document, Collection, DocumentCollection
 
@@ -15,7 +16,7 @@ class DocumentCollectionCrud:
         self.session = session
 
     def create(self, collection: Collection, documents: list[Document]) -> None:
-        document_collection = []
+        document_collection: list[DocumentCollection] = []
         for d in documents:
             dc = DocumentCollection(
                 document_id=d.id,
@@ -44,12 +45,12 @@ class DocumentCollectionCrud:
         collection: Collection,
         skip: Optional[int] = None,
         limit: Optional[int] = None,
-    ):
+    ) -> Sequence[Document]:
         statement = (
             select(Document)
             .join(
                 DocumentCollection,
-                DocumentCollection.document_id == Document.id,
+                col(DocumentCollection.document_id) == Document.id,
             )
             .where(DocumentCollection.collection_id == collection.id)
         )

@@ -6,7 +6,8 @@ Deep dive: `docs/architecture/kaapi-knowledge-base-ARCHITECTURE.md` (§3 upload,
 All paths relative to `backend/app/`.
 
 ## Routes
-- `api/routes/documents.py` — upload/list
+- `api/routes/documents.py` — upload/list (v1 multipart upload, the only path that transforms)
+- `api/routes/documents_v2.py` — v2 pre-signed upload: `POST /documents/uploads` → 200 (issues a pre-signed POST to a pending key; nothing persisted) then `PUT /documents/{document_id}` → 201 (registers the pending object; no body); no transformation
 - `api/routes/collections.py`, `api/routes/collection_job.py` — collection CRUD + job status
 - `api/routes/doc_transformation_job.py` — transform job status
 
@@ -22,7 +23,7 @@ All paths relative to `backend/app/`.
 
 ## Services / CRUD
 - `services/collections/` — `create_collection.py`, `delete_collection.py`, `providers/`, `helpers.py`
-- `services/documents/` — upload path
+- `services/documents/` — `helpers.py` (v1 upload path), `registration.py` (v2 upload policy), `validator.py`
 - `services/doctransform/` — `job.py`, `registry.py`, `transformer.py`, `zerox_transformer.py`
 - `crud/collection/`, `crud/document/`, `crud/document_collection.py`, `crud/rag/`, `crud/file.py`
 
@@ -33,5 +34,24 @@ All paths relative to `backend/app/`.
 - OpenAI vector stores / file uploads, object storage (`core/cloud/storage.py`), Zerox/OCR for transforms.
 
 ## Gotchas
+- `signed_url` behaviour is chosen per request by the `download` query param (default false = inline, as before). `put()` stores the upload's `Content-Type`, so a bare presigned URL for a PDF opens in a tab (CSV/XLSX datasets happen to download, which is why only KB docs looked broken). `get_signed_url(..., filename=...)` adds `ResponseContentDisposition: attachment`; `_signed_url()` in `services/documents/helpers.py` passes `fname` only when `download` is set, and the flag threads through `build_document_schema(s)` / `build_job_schema(s)` from `api/routes/documents.py`, `doc_transformation_job.py` and `collections.py`. An attachment URL will not render in an `<iframe>`, so preview callers must leave `download` off. The upload response and the doc-transform callback have no request to carry the flag and always sign inline. Leave `filename` unset for URLs meant to play inline (TTS audio in `api/routes/llm.py`).
 - Uploads de-duplicate by provider file ID (see deep dive §7).
+- v2 never sees the bytes, so `validate_document_content` sniffing (v1 only) is skipped. Uploads land at `pending/{storage_path}/{document_id}` (no extension); registration copies to the final `{storage_path}/{document_id}` (same shape as v1) and deletes the pending copy once the row commits. The size cap is enforced by the pre-signed POST's `content-length-range` at upload time, and the filename is signed into object metadata (`x-amz-meta-filename`, URL-encoded) — registration reads it back via `head`, so the client never sends the filename twice and cannot swap it.
+- Registration copies **before** it measures: the pending object stays writable through its ticket, so it heads the frozen final key (never presigned) for the size it records. This closes the check-then-copy race on the recorded size.
+- The pending prefix leads the key (`pending/{storage_path}/…`, not `{storage_path}/pending/…`) because **S3 lifecycle filters are literal prefixes with no wildcard support**. With the per-project `storage_path` in front, no single rule could match every project. `CloudStorage.url_for(path, is_pending=True)` owns this layout and `create_upload_ticket` always routes through it — never presign to a final key. Note `PENDING_PREFIX` has nothing to do with the staging *environment*; it means "uploaded but not registered".
+- **`pending/` has a 1-day TTL. Do not write anything else under it.** An S3 lifecycle rule (`expire-pending-uploads`, `Prefix: pending/`, `Expiration: 1 day`) is live on `ai-platform-documents-staging` and `-production`, and reaps abandoned v2 uploads — nothing in application code does. Consequences to know before touching this prefix:
+  - Any object written under `pending/`, by any code path, is **deleted within ~24-48h** (lifecycle sweeps run about once a day, so expiry is not exact). Never park anything there you expect to keep.
+  - If you do add a new writer under `pending/`, say so in this gotcha and in the PR — a reviewer cannot see the bucket config from the diff.
+  - Anything that must outlive a day belongs at a different prefix, with its own lifecycle rule.
+  - The rule is **not** applied to `ai-platform-documents-development`, so local/dev orphans accumulate until someone clears them by hand.
+  - The rule lives only in the bucket config, not in this repo or in Terraform. Re-creating a bucket does not re-create it.
+- Extension case: `get_file_format` lowercases the suffix, so `report.PDF` uploads fine and is stored with its original case in `fname` (the `download` attachment name depends on it). OpenAI file search may not match an uppercase suffix, so `services/collections/providers/openai.py` lowercases only the extension of the name it sends to `files.create`.
 - Collections are immutable-ish: deletion semantics in deep dive §10.
+- OpenAI file-batch id: the SDK's `file_batches.poll()` / `upload_and_poll()` final return deserializes a vector-store body, so its `.id` is the `vs_` id, not the `vsfb_` batch id. `crud/rag/open_ai.py` captures the batch id from `create()` before polling and uses it for `list_files`. Any failed file is a hard failure (whole vector store rolled back); partial indexing needs an add-documents endpoint first.
+- The SDK's `file_batches.poll()` never times out. `_poll_file_batch` polls `retrieve` in a loop with no internal deadline — the Celery soft time limit bounds it, and its `SoftTimeLimitExceeded` aborts the task. An earlier version took a deadline from the caller via a `task_budget` `ContextVar` (and a fixed `BATCH_POLL_TIMEOUT_SECONDS`); both were deleted. Don't reintroduce caller coupling here.
+- Retries are a **single tenacity layer** wrapping `_create_and_index_batch` (create + poll + validate) in `crud/rag/open_ai.py`: `stop_after_attempt(BATCH_INDEX_MAX_ATTEMPTS)` (3 retries) with exponential backoff (~2s/4s/8s), retrying on `OpenAIError` or `RuntimeError` (indexing error, failed files, or non-`completed` status). SDK-level retries are **off** (`max_retries=0` in `providers/registry.py`) so nothing stacks. `SoftTimeLimitExceeded` is deliberately *not* retried (neither `OpenAIError` nor `RuntimeError`), so a spent window aborts immediately. History: a prior tenacity attempt that *stacked on top of* SDK retries measured 4.5x slower (3×3=9 requests/call) — the fix was to make tenacity the sole layer, not to drop it. `upload_files` runs once per task (outside the retry); only the create+attach+index is retried, so retries re-attach already-uploaded file IDs rather than re-uploading.
+- `OPENAI_TIMEOUT_SECONDS` (30s) is a **stall detector, not an upload deadline**. httpx has no total-request timeout — connect/read/write/pool are each per-socket-operation — so a big document that streams steadily uploads fine however long it takes; the timeout only fires after 30 consecutive seconds of zero bytes. With SDK retries off, one hung call is capped near 30s, and tenacity's backoff keeps the whole batch inside the soft-limit window. Verified: a 10MB body taking 12s under a 2s write timeout succeeds, and only a stalled receiver raises `WriteTimeout`. Don't raise it out of fear that large files get cut off — they don't.
+- A batch failure (indexing error, failed files, cancelled/failed status, timeout) is retried **in-task** by the tenacity layer above — 3 retries, exponential backoff, all inside one Celery soft-time-limit window. There is **no** Celery-level re-queue: if the batch (or its retries) can't finish within the window, `SoftTimeLimitExceeded` fires and the job is marked FAILED (`_handle_job_failure`), not re-queued. Trade-off: a collection whose batch genuinely needs more than one window fails rather than resuming across windows — size batches to fit. Setup does not retry either (a second `create_vector_store()` orphans the first).
+- `documents_uploaded` is deduped on append — a task re-run (e.g. redelivered after worker loss, since `acks_late` is on) re-adds its own IDs, and `DocumentCrud.read_each` raises when duplicates collapse in its `IN` clause.
+- Do not "fix" batch timing with a self-requeueing continuation task — a task that returns normally is not redelivered, and a lost continuation strands the job in `PROCESSING`, which nothing monitors or recovers. Deep dive §11.5.
+- Uploads happen per batch in `execute_batch_job`, not in setup; setup only plans batches and creates the vector store.

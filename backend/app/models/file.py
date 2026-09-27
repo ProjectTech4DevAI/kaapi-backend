@@ -20,7 +20,7 @@ class FileType(str, Enum):
 class File(SQLModel, table=True):
     """Database table for storing uploaded file metadata."""
 
-    __tablename__ = "file"
+    __tablename__ = "file"  # pyright: ignore[reportAssignmentType]
 
     id: int = Field(
         default=None,

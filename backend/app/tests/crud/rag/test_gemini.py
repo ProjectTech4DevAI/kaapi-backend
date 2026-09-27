@@ -49,6 +49,13 @@ class TestCreate:
         _, kwargs = client.file_search_stores.create.call_args
         assert isinstance(kwargs["config"], types.CreateFileSearchStoreConfig)
 
+    def test_missing_name_raises(self):
+        client = MagicMock()
+        client.file_search_stores.create.return_value = SimpleNamespace(name=None)
+
+        with pytest.raises(RuntimeError, match=r"\[GEMINI\].*without a name"):
+            GeminiFileSearchStoreCrud(client).create()
+
 
 class TestImportDocument:
     def test_polls_until_operation_done(self):
