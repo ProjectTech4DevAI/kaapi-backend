@@ -17,6 +17,7 @@ from app.crud.evaluations.score import (
     COSINE_SCORE_COMMENT,
     COSINE_SCORE_NAME,
     DEFAULT_CATEGORY,
+    GUARDRAIL_TRACE_KEYS,
     EvaluationScore,
     NumericSummaryScore,
     SummaryScore,
@@ -196,13 +197,12 @@ def _merge_single_trace(existing: TraceData, fresh: TraceData) -> TraceData:
             fresh.get("category") or existing.get("category") or DEFAULT_CATEGORY
         )
 
-    # Fresh wins outright when it carries the key: None means "did not fire", so an
-    # `or` chain would pin a stale "blocked" on a row that passes in a later run.
-    # Langfuse-built traces have no such key, so a resync keeps the cached value.
-    if "guardrail" in fresh:
-        merged["guardrail"] = fresh["guardrail"]
-    elif "guardrail" in existing:
-        merged["guardrail"] = existing["guardrail"]
+    # Present key wins even if None (no `or`), else a stale "blocked" sticks.
+    for key in GUARDRAIL_TRACE_KEYS:
+        if key in fresh:
+            merged[key] = fresh[key]
+        elif key in existing:
+            merged[key] = existing[key]
 
     return merged
 

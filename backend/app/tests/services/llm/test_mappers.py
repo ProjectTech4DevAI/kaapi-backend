@@ -96,8 +96,7 @@ class TestMapKaapiToOpenAIParams:
         assert warnings == []
 
     def test_knowledge_base_ids_do_not_add_include(self, db: Session):
-        # Batch API bodies are assembled from this mapper and reject `include`;
-        # it belongs to transform_kaapi_config_to_native only.
+        # Batch API bodies reject `include`.
         kaapi_params = TextLLMParams(model="gpt-4o", knowledge_base_ids=["vs_abc123"])
 
         result, warnings = map_kaapi_to_openai_params(
@@ -1485,8 +1484,7 @@ class TestTransformKaapiConfigToNative:
         assert result.params["include"] == ["file_search_call.results"]
 
     def test_transform_openai_text_omits_include_by_default(self, db: Session):
-        # Default off: the hits enlarge every response, so production /llm/call and
-        # /llm/chain traffic must be unaffected by evaluation's need for them.
+        # Default off: production /llm/call traffic must not get the extra payload.
         kaapi_config = build_kaapi_completion_config(
             provider="openai",
             type="text",

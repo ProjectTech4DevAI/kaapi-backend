@@ -1,8 +1,4 @@
-"""`retry_llm_call`, the result-based retry policy generation uses (`retry.py`).
-
-`retry_openai_call` (embeddings, judge) is tenacity's stock exception-based
-behaviour and is not re-asserted here.
-"""
+"""`retry_llm_call`, the result-based retry policy for generation."""
 
 import logging
 from collections.abc import Callable, Iterator
@@ -14,19 +10,14 @@ from app.crud.evaluations.retry import (
     retry_llm_call,
 )
 from app.models.llm.response import Usage
-from app.services.llm.chain.types import BlockResult, GuardrailOutcomeLabel
+from app.services.llm.chain.types import BlockResult, GuardrailOutcomeEnum
 
 logger = logging.getLogger(__name__)
 
 
 @pytest.fixture
 def sleeps(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[float]]:
-    """Record backoff instead of serving it.
-
-    Patching `tenacity.nap.sleep` does NOT work: `BaseRetrying.__init__` binds that
-    function as a default argument at import time. The underlying `time.sleep` is
-    the only reachable seam.
-    """
+    """Record backoff; tenacity binds nap.sleep at import, so patch time.sleep."""
     recorded: list[float] = []
     monkeypatch.setattr("tenacity.nap.time.sleep", recorded.append)
     yield recorded
@@ -49,7 +40,7 @@ def _success() -> BlockResult:
     return BlockResult(usage=Usage(input_tokens=1, output_tokens=1, total_tokens=2))
 
 
-def _guardrail(outcome: GuardrailOutcomeLabel) -> BlockResult:
+def _guardrail(outcome: GuardrailOutcomeEnum) -> BlockResult:
     return BlockResult(error="uli_slur_match", guardrail_outcome=outcome)
 
 
@@ -114,7 +105,7 @@ class TestRetryLlmCall:
 
     @pytest.mark.parametrize("outcome", ["blocked", "rephrased"])
     def test_guardrail_verdict_is_never_retried(
-        self, outcome: GuardrailOutcomeLabel, sleeps: list[float]
+        self, outcome: GuardrailOutcomeEnum, sleeps: list[float]
     ) -> None:
         calls: list[int] = []
 

@@ -1,6 +1,4 @@
-"""Direct tests for `execute_llm_call`, which `execute_job` (test_jobs.py) cannot
-reach: `record_call` is keyword-only on the function and `guardrail_outcome` /
-`llm_call_id` live on `BlockResult`, not on the job callback payload."""
+"""Direct `execute_llm_call` tests for what `execute_job` tests can't reach."""
 
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -38,8 +36,7 @@ PROXY_COMPLETION = {
     "provider": None,
     "params": {"client_llm_url": PROXY_URL},
 }
-# Kaapi-shaped (not `openai-native`), so it goes through
-# `transform_kaapi_config_to_native`; the KB makes the mapper emit a file_search tool.
+# Kaapi-shaped so it goes through the mapper; the KB adds a file_search tool.
 KAAPI_KB_COMPLETION = {
     "type": "text",
     "provider": "openai",
@@ -83,8 +80,7 @@ def llm_call_count(db: Session) -> int:
 
 @contextmanager
 def guardrails_http(*verdicts: dict[str, Any] | Exception) -> Iterator[MagicMock]:
-    """Patch the guardrails HTTP boundary: every GET resolves one validator
-    config, and POSTs return `verdicts` in call order."""
+    """Mock guardrails HTTP: GET returns one validator, POSTs return `verdicts`."""
     config_response = MagicMock()
     config_response.raise_for_status.return_value = None
     config_response.json.return_value = {
@@ -229,9 +225,7 @@ class TestRecordCallFalse:
         assert result.usage.total_tokens == 18
         assert result.llm_call_id is None
         assert llm_call_count(db) == before
-        # Without the `if llm_call_id:` guard this runs with a None id, and the
-        # surrounding try/except swallows the failure — so the mock is the only
-        # place the guard is observable.
+        # Only observable via the mock: the surrounding try/except swallows failures.
         update_llm_call_response.assert_not_called()
         started.assert_not_called()
         finished.assert_not_called()
@@ -261,8 +255,7 @@ class TestRecordCallFalse:
 
 
 class TestRecordCallDefault:
-    """`record_call` defaults to True — the audit row and the metrics must still
-    fire, otherwise the eval flag has leaked into production traffic."""
+    """`record_call` defaults True: audit row and metrics still fire."""
 
     @pytest.fixture
     def llm_call_crud(self):
@@ -402,10 +395,7 @@ class TestGuardrailOutcome:
 
 
 class TestRetryableFlag:
-    """`BlockResult.retryable` is what `retry_llm_call` keys off, and `error` alone
-    cannot tell a rate limit from a revoked key. These pin the flag where it is set,
-    not where it is read.
-    """
+    """Pin `BlockResult.retryable` where it is set."""
 
     def test_provider_failure_is_retryable(self, db: Session, provider):
         provider.execute.return_value = (None, "API rate limit exceeded")
@@ -452,9 +442,7 @@ class TestRetryableFlag:
     def test_output_guardrails_auth_failure_is_not_retryable(
         self, db: Session, provider, provider_response
     ):
-        """The expensive direction: the completion is generated *before* output
-        guardrails run, so each retry would re-charge the provider for a failure
-        that broken credentials guarantee will repeat."""
+        """Output-side auth failure must not retry: each retry re-bills."""
         provider.execute.return_value = (provider_response, None)
         with guardrails_http(http_status_error(401)):
             result = call(
@@ -488,10 +476,7 @@ class TestRetryableFlag:
 
 
 class TestFileSearchResultsAreOptIn:
-    """`include=["file_search_call.results"]` makes OpenAI return the retrieved chunk
-    text, which the `knowledge_base` metric scores. It is pure extra payload for a
-    caller that didn't ask for the raw provider response, hence the opt-in.
-    """
+    """`include=file_search_call.results` is opt-in with the raw response."""
 
     @staticmethod
     def _params_sent_to_provider(provider) -> dict[str, Any]:

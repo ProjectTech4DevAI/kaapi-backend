@@ -178,8 +178,7 @@ class TestGuardrailBlockedScoring:
         summary = next(
             s for s in result.summary_scores if s["name"] == COSINE_SCORE_NAME
         )
-        # "other" is the bucket for a reason missing from UNSCOREABLE_REASONS, which
-        # is what the UI would show if the constant were never registered.
+        # "other" = reason missing from UNSCOREABLE_REASONS.
         assert summary["unscoreable"] == {"guardrail_blocked": 2}
 
     def test_rephrased_row_is_scored_like_any_other(self) -> None:

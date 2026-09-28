@@ -536,9 +536,7 @@ class TestSaveRephraseGuardrailCall:
 
 
 class TestGuardrailsOutcomeBlocked:
-    """`blocked` must separate a content verdict from a fail-closed auth error,
-    both of which set `error`. Driven through the real HTTP boundary so the
-    `auth_error` key run_guardrails_validation emits is part of the contract."""
+    """`blocked` separates a content verdict from a fail-closed auth error."""
 
     VALIDATORS = [Validator(validator_config_id=uuid.uuid4())]
 

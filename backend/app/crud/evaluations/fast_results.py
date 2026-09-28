@@ -10,17 +10,18 @@ from typing import Any, TypedDict
 
 from app.core.config import settings
 from app.crud.evaluations.response_parsing import field_value
+from app.services.llm.chain.types import GuardrailOutcomeEnum
 
-# `blocked` is stored as f"{GUARDRAIL_BLOCKED}: {error}" so the provider's reason
-# survives. Plain str, not the service layer's GuardrailOutcomeLabel, to keep this
-# module free of `app.services` imports.
-GUARDRAIL_BLOCKED: str = "blocked"
-GUARDRAIL_REPHRASED: str = "rephrased"
+# Guardrails passed content through. Blocked rows store "blocked: {error}".
 GUARDRAIL_APPLIED: str = "applied"
 
-# Keys `execute_llm_call` puts on `BlockResult.metadata` when guardrails ran and
-# passed the content through; their presence is what `GUARDRAIL_APPLIED` reports.
-GUARDRAIL_METADATA_KEYS: tuple[str, ...] = ("input_guardrail", "output_guardrail")
+# `BlockResult.metadata` keys present when guardrails passed content through.
+INPUT_GUARDRAIL_METADATA_KEY: str = "input_guardrail"
+OUTPUT_GUARDRAIL_METADATA_KEY: str = "output_guardrail"
+GUARDRAIL_METADATA_KEYS: tuple[str, ...] = (
+    INPUT_GUARDRAIL_METADATA_KEY,
+    OUTPUT_GUARDRAIL_METADATA_KEY,
+)
 
 
 class ResponseResult(TypedDict, total=False):
@@ -36,6 +37,8 @@ class ResponseResult(TypedDict, total=False):
     failed: bool
     retrieved_chunks: list[dict[str, Any]]
     guardrail: str | None
+    input_to_llm: str | None
+    output_from_llm: str | None
 
 
 class EmbeddingResult(TypedDict, total=False):
@@ -65,6 +68,8 @@ def build_response_result(
     usage: dict[str, int] | None = None,
     retrieved_chunks: list[dict[str, Any]] | None = None,
     guardrail: str | None = None,
+    input_to_llm: str | None = None,
+    output_from_llm: str | None = None,
 ) -> ResponseResult:
     """One Stage-1 per-item result, in the batch path's shape."""
     return {
@@ -78,13 +83,15 @@ def build_response_result(
         "failed": failed,
         "retrieved_chunks": retrieved_chunks,
         "guardrail": guardrail,
+        "input_to_llm": input_to_llm,
+        "output_from_llm": output_from_llm,
     }
 
 
 def is_guardrail_blocked(row: Mapping[str, Any]) -> bool:
     """True when guardrails hard-blocked this row, leaving it with no output to score."""
     # `.get` not `[...]`: response units written before guardrails landed have no key.
-    return (row.get("guardrail") or "").startswith(f"{GUARDRAIL_BLOCKED}:")
+    return (row.get("guardrail") or "").startswith(f"{GuardrailOutcomeEnum.BLOCKED}:")
 
 
 def build_embedding_failure(item_id: str, error: str) -> EmbeddingResult:

@@ -265,8 +265,9 @@ result = execute_llm_call(
 - **Build a fresh `QueryParams` per row.** `execute_llm_call` mutates `query.input.content.value`
   in place, twice — once for `prompt_template` interpolation, once for the guardrails'
   `safe_text`. A reused object gets the template applied repeatedly.
-- Resolve the config by stored reference (`id` + `version`), not as an ad-hoc blob, so eval goes
-  through the exact `resolve_config_blob` path prod does.
+- Pass the blob already resolved from the run's pinned `config_id`/`config_version` as an ad-hoc
+  `LLMCallConfig(blob=...)`, so each row skips a config-version fetch. Guardrails and
+  `prompt_template` ride on the blob, so they still apply.
 
 ### Result mapping
 
@@ -334,12 +335,11 @@ request).
 
 Other things worth knowing:
 
-- `GUARDRAIL_BLOCKED/REPHRASED/APPLIED` moved from `crud/evaluations/fast.py` to `fast_results.py`
-  so `fast_cosine.py` can share the new `is_guardrail_blocked()` predicate without an import cycle
-  (`fast.py` already imports from `fast_cosine`). They lost their `GuardrailOutcomeLabel`
-  annotation in the move — keeping it would have dragged an `app.services.llm` import into
-  `fast_results.py`.
-- The predicate matches the prefix `f"{GUARDRAIL_BLOCKED}:"` **with the colon**, and reads
+- Blocked/rephrased labels come from `GuardrailOutcomeEnum` (`services/llm/chain/types.py`), the
+  same `StrEnum` `execute_llm_call` sets, so the two sides cannot drift. Only `GUARDRAIL_APPLIED`
+  is a crud-local label, in `fast_results.py`, beside the shared `is_guardrail_blocked()`
+  predicate `fast_cosine.py` uses.
+- The predicate matches the prefix `f"{GuardrailOutcomeEnum.BLOCKED}:"` **with the colon**, and reads
   `.get("guardrail")` — S3 response units written before Phase 2 have no such key at all.
 - `merge.py::_merge_single_trace` had to name `guardrail` explicitly: it rebuilds the merged dict
   from a fixed key list, so an unnamed key is dropped on **every** read, including a plain cache

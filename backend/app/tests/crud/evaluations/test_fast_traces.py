@@ -261,3 +261,26 @@ class TestBuildTraceRecordsGuardrail:
         assert by_ref["a"]["guardrail"] == "blocked: input flagged as abusive"
         # Subscript, not .get: an absent key would read as None and hide the gap.
         assert by_ref["b"]["guardrail"] is None
+        assert by_ref["b"]["input_to_llm"] is None
+        assert by_ref["b"]["output_from_llm"] is None
+
+    def test_guardrail_texts_pass_through_to_the_trace(self) -> None:
+        traces = build_trace_records(
+            response_results=[
+                _response(
+                    "a",
+                    guardrail="applied",
+                    input_to_llm="q [REDACTED]",
+                    output_from_llm="raw out",
+                )
+            ],
+            item_refs={"a": "a"},
+            is_judge_run=False,
+            judge_results={},
+            metrics=[],
+            cosine_by_item_id={"a": 0.5},
+            unscoreable={},
+        )
+
+        assert traces[0]["input_to_llm"] == "q [REDACTED]"
+        assert traces[0]["output_from_llm"] == "raw out"

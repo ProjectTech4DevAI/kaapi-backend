@@ -146,9 +146,7 @@ class GuardrailsOutcome:
 
     @property
     def blocked(self) -> bool:
-        """True when the service returned a verdict rejecting the text, as
-        opposed to a fail-closed auth/transport error that must surface as a
-        plain job failure."""
+        """True for a rejecting verdict, not a fail-closed auth/transport error."""
         return self.error is not None and not self.raw.get("auth_error")
 
 

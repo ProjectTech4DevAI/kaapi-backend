@@ -41,12 +41,7 @@ def extract_response_text(response: Any) -> str:
 
 
 def extract_file_search_chunks(raw: dict[str, Any] | None) -> list[dict[str, Any]]:
-    """Flatten a Responses payload's file_search hits into JSON-safe chunk dicts.
-
-    Reads the plain `model_dump()` dict that `include_provider_raw_response` hands
-    back, unlike `services/response/response.py::get_file_search_results`, which
-    needs the live SDK object.
-    """
+    """Flatten file_search hits from a `model_dump()` Responses payload."""
     chunks: list[dict[str, Any]] = []
     for item in field_value(raw, "output") or []:
         if field_value(item, "type") != FILE_SEARCH_CALL_TYPE:

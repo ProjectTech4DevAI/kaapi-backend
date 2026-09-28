@@ -1,9 +1,4 @@
-"""Parsers shared by the fast + judge stages (`response_parsing.py`).
-
-`extract_file_search_chunks` output is persisted to S3, so the chunk shape is an
-on-disk contract, and it runs inside the per-row worker, where a raise would fail a
-row that otherwise scored fine — hence the malformed-payload cases.
-"""
+"""`response_parsing.py`: chunk shape is persisted to S3; bad input must not raise."""
 
 from typing import Any
 

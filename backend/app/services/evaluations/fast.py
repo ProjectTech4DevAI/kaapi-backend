@@ -223,9 +223,7 @@ def validate_fast_evaluation_inputs(
             detail=ERR_CONFIG_TYPE_UNSUPPORTED,
         )
 
-    # Generation goes through `execute_llm_call`, which interpolates prompt_template
-    # unconditionally; a template without the placeholder would send the template
-    # alone and silently drop every dataset question.
+    # execute_llm_call always interpolates prompt_template; no placeholder drops input.
     prompt_template = config_blob.prompt_template
     if (
         prompt_template is not None
@@ -389,11 +387,7 @@ def _get_fast_run(*, session: Session, eval_run_id: int) -> EvaluationRun:
 def _resolve_config_and_clients(
     *, session: Session, eval_run: EvaluationRun, dataset: EvaluationDataset
 ) -> tuple[ConfigBlob, Langfuse | None]:
-    """Resolve the run's config blob and build its (optional) Langfuse client.
-
-    Only a Langfuse-backed (v1) dataset needs a Langfuse client — its items live in
-    Langfuse. A v2 dataset loads from S3, so we skip the client (and its credential
-    requirement) rather than fail a Langfuse-free run. Mirrors the fan-out sizing."""
+    """Resolve the run's config blob, plus a Langfuse client for v1 datasets only."""
     config_blob, error = resolve_evaluation_config(
         session=session,
         config_id=eval_run.config_id,

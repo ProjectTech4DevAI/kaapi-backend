@@ -752,8 +752,7 @@ def transform_kaapi_config_to_native(
         mapped_params, warnings = map_kaapi_to_openai_params(
             session=session, kaapi_params=kaapi_params
         )
-        # Set here and not in the mapper: its other callers build Batch API bodies,
-        # where `include` is invalid.
+        # Not in the mapper: Batch API bodies reject `include`.
         if include_file_search_results and any(
             t.get("type") == "file_search" for t in mapped_params.get("tools", [])
         ):

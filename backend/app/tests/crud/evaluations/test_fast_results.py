@@ -43,6 +43,8 @@ class TestBuildResponseResult:
             "failed",
             "retrieved_chunks",
             "guardrail",
+            "input_to_llm",
+            "output_from_llm",
         }
 
     def test_optional_fields_default_to_none(self) -> None:
@@ -58,6 +60,8 @@ class TestBuildResponseResult:
         assert result["usage"] is None
         assert result["retrieved_chunks"] is None
         assert result["guardrail"] is None
+        assert result["input_to_llm"] is None
+        assert result["output_from_llm"] is None
 
 
 class TestBuildEmbeddingFailure:

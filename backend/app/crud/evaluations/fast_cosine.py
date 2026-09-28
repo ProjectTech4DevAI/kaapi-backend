@@ -26,13 +26,8 @@ _PER_ITEM_SCORE_PRECISION = 6
 
 
 def classify_empty_side(response: dict[str, Any]) -> str | None:
-    """Why a row can't be scored from its own text, or None if both sides are present.
-
-    Both scoring paths route through here — v1 cosine and the v2 judge path — so the
-    guardrail reason reaches either run's unscoreable breakdown.
-    """
-    # Ahead of the empty-output check: a blocked row is empty *because* guardrails
-    # stopped it, and "empty_output" would hide that in the breakdown.
+    """Why a row can't be scored, or None. Shared by cosine and judge paths."""
+    # Before empty-output check: a blocked row is empty because of guardrails.
     if is_guardrail_blocked(response):
         return UNSCOREABLE_GUARDRAIL_BLOCKED
     if not response.get("generated_output"):

@@ -1,9 +1,4 @@
-"""Config preconditions for a fast run (`validate_fast_evaluation_inputs`).
-
-A `prompt_template` without `{{input}}` would send the template alone and silently
-drop every dataset question, so the run is rejected up front. The passing cases are
-the regression net: a false positive here is an outage for existing eval users.
-"""
+"""Fast run config preconditions: prompt_template must contain `{{input}}`."""
 
 import pytest
 from fastapi import HTTPException
@@ -27,9 +22,7 @@ from app.tests.utils.test_data import (
 
 
 def _config_with_template(db: Session, project_id: int, template: str | None) -> Config:
-    """A text-OpenAI Kaapi config. The model name is absent from ModelConfig on
-    purpose: blob validation short-circuits before loading that row, whose
-    ARRAY-of-enum column trips a SQLAlchemy result-processor bug in some envs."""
+    """Text-OpenAI Kaapi config; no model row, to dodge a SQLAlchemy ARRAY-enum bug."""
     blob = ConfigBlob(
         completion=build_kaapi_completion_config(
             provider="openai",

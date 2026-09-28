@@ -78,9 +78,9 @@ from app.crud.evaluations.fast_cosine import (
 from app.crud.evaluations.fast_results import (
     EMBEDDING_USAGE_KEYS,
     GUARDRAIL_APPLIED,
-    GUARDRAIL_BLOCKED,
     GUARDRAIL_METADATA_KEYS,
-    GUARDRAIL_REPHRASED,
+    INPUT_GUARDRAIL_METADATA_KEY,
+    OUTPUT_GUARDRAIL_METADATA_KEY,
     RESPONSE_USAGE_KEYS,
     EmbeddingResult,
     ResponseResult,
@@ -129,7 +129,7 @@ from app.models.llm.request import (
     TextInput,
 )
 from app.models.llm.response import TextOutput
-from app.services.llm.chain.types import BlockResult
+from app.services.llm.chain.types import BlockResult, GuardrailOutcomeEnum
 from app.services.llm.jobs import execute_llm_call
 
 logger = logging.getLogger(__name__)
@@ -174,9 +174,7 @@ def _execute_llm_call_for_question(
     """Generate one answer through the same `/llm/call` path production runs."""
     return execute_llm_call(
         config=config,
-        # execute_llm_call mutates the query in place (prompt_template interpolation,
-        # then the guardrails' safe_text), so a retried attempt must never reuse the
-        # previous one's object.
+        # Fresh query per attempt: execute_llm_call mutates it in place.
         query=QueryParams(input=TextInput(content=TextContent(value=question))),
         job_id=uuid4(),
         project_id=project_id,
@@ -191,8 +189,7 @@ def _execute_llm_call_for_question(
 
 
 def _response_text(result: BlockResult) -> str:
-    """The generated text, empty when guardrails blocked the call or the output
-    wasn't text — a blocked BlockResult carries no response at all."""
+    """Generated text; empty when blocked or output wasn't text."""
     output = result.response.response.output if result.response else None
     return output.content.value if isinstance(output, TextOutput) else ""
 
@@ -204,11 +201,7 @@ def _llm_call_for_item(
     organization_id: int,
     item: dict[str, Any],
 ) -> ResponseResult:
-    """Generate one dataset item's answer, in the batch path's per-item shape.
-
-    Never raises: `_run_in_pool` resolves every future, so an exception here would
-    abort the whole chunk instead of failing the one row.
-    """
+    """Generate one item's answer. Never raises: that would abort the whole chunk."""
     item_id = item["id"]
     question = item["input"].get("question", "") if item.get("input") else ""
     ground_truth = (
@@ -243,15 +236,16 @@ def _llm_call_for_item(
         )
         return failed_result(f"ERROR: {exc}")
 
-    # Guardrail outcome before error: a rephrased row carries no error and a real
-    # response, so checked later it would read as a plain success.
+    # Before error check: a rephrased row has no error and would read as success.
     guardrail: str | None = None
-    if result.guardrail_outcome == GUARDRAIL_BLOCKED:
+    input_to_llm: str | None = None
+    output_from_llm: str | None = None
+    if result.guardrail_outcome == GuardrailOutcomeEnum.BLOCKED:
         generated_output = ""
-        guardrail = f"{GUARDRAIL_BLOCKED}: {result.error}"
-    elif result.guardrail_outcome == GUARDRAIL_REPHRASED:
+        guardrail = f"{GuardrailOutcomeEnum.BLOCKED}: {result.error}"
+    elif result.guardrail_outcome == GuardrailOutcomeEnum.REPHRASED:
         generated_output = _response_text(result)
-        guardrail = GUARDRAIL_REPHRASED
+        guardrail = GuardrailOutcomeEnum.REPHRASED
     elif result.error is not None:
         logger.warning(
             f"[_llm_call_for_item] Item failed | item_id={item_id} | "
@@ -263,6 +257,13 @@ def _llm_call_for_item(
         metadata = result.metadata or {}
         if any(key in metadata for key in GUARDRAIL_METADATA_KEYS):
             guardrail = GUARDRAIL_APPLIED
+        # Rephrased rows never reached the LLM; blocked rows carry no metadata.
+        input_to_llm = (metadata.get(INPUT_GUARDRAIL_METADATA_KEY) or {}).get(
+            "input_to_llm"
+        )
+        output_from_llm = (metadata.get(OUTPUT_GUARDRAIL_METADATA_KEY) or {}).get(
+            "output_from_llm"
+        )
 
     # Tokens are billed even on an output block, so usage is read off every outcome.
     return build_response_result(
@@ -277,6 +278,8 @@ def _llm_call_for_item(
         usage=extract_usage(result.usage, RESPONSE_USAGE_KEYS),
         failed=False,
         guardrail=guardrail,
+        input_to_llm=input_to_llm,
+        output_from_llm=output_from_llm,
         retrieved_chunks=extract_file_search_chunks(
             result.response.provider_raw_response if result.response else None
         ),
@@ -414,9 +417,8 @@ def run_response_chunk(
     if existing and existing.raw_output_url:
         return
 
-    # By stored reference, not an ad-hoc blob, so eval walks the same
-    # resolve_config_blob path production does — guardrails and template included.
-    config = LLMCallConfig(id=eval_run.config_id, version=eval_run.config_version)
+    # Resolved blob passed ad-hoc skips a per-row config fetch; shared read-only.
+    config = LLMCallConfig(blob=config_blob)
     # Read off the session-bound row here: the workers must not touch it in threads.
     project_id = eval_run.project_id
     organization_id = eval_run.organization_id
@@ -554,9 +556,7 @@ def _stage2_embeddings(
     if cached is not None:
         return eval_run, cached
 
-    # A guardrail-blocked row is failed=False with an empty output: embedding it
-    # manufactures a failure and lets a heavily guardrailed run trip this stage's
-    # threshold. It is unscoreable, not failed.
+    # Blocked rows are unscoreable, not failed; embedding them trips the threshold.
     embed_candidates = [
         r
         for r in response_results

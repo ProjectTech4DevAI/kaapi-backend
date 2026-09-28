@@ -557,13 +557,14 @@ class TestRunResponseChunk:
         job = get_chunk_job(session=db, eval_run_id=eval_run.id, chunk_index=0)
         assert job.config["model"] == "gpt-5-native"
 
-    def test_worker_gets_the_stored_config_reference_and_tenant_ids(
+    def test_worker_gets_the_resolved_config_blob_and_tenant_ids(
         self,
         db: Session,
         user_api_key: TestAuthContext,
         _s3_store,
     ):
         eval_run = _make_fast_run(db=db, user_api_key=user_api_key)
+        config_blob = _kaapi_config_blob()
         captured: dict[str, Any] = {}
 
         def _capture(*, config, project_id, organization_id, item):
@@ -578,15 +579,13 @@ class TestRunResponseChunk:
             run_response_chunk(
                 session=db,
                 eval_run=eval_run,
-                config_blob=_kaapi_config_blob(),
+                config_blob=config_blob,
                 dataset_items_slice=[_dataset_item("item-1", "Q1")],
                 chunk_index=0,
             )
 
-        assert captured["config"].is_stored_config is True
-        assert captured["config"].blob is None
-        assert captured["config"].id == eval_run.config_id
-        assert captured["config"].version == eval_run.config_version
+        assert captured["config"].is_stored_config is False
+        assert captured["config"].blob is config_blob
         assert captured["project_id"] == eval_run.project_id
         assert captured["organization_id"] == eval_run.organization_id
 
@@ -790,8 +789,7 @@ class TestStage2GuardrailBlocked:
             response_results=response_results,
         )
 
-        # 3 of 4 blocked is past EVAL_FAST_FAILURE_THRESHOLD (0.5), so counting them
-        # would raise here instead of returning.
+        # 3/4 blocked would exceed the 0.5 failure threshold if counted as failed.
         assert [r["item_id"] for r in results] == ["item-1"]
         assert fake_openai.embeddings.create.call_count == 1
         assert fake_openai.embeddings.create.call_args.kwargs["input"] == [

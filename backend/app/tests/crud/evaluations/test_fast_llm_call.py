@@ -1,9 +1,4 @@
-"""Fast-eval generation against `execute_llm_call` (`crud/evaluations/fast.py`).
-
-The LLM boundary is mocked at `_execute_llm_call_for_question` (the mapping tests)
-or one level lower at `execute_llm_call` (the tests that need the real retry
-decorator to run).
-"""
+"""Fast-eval generation against `execute_llm_call`."""
 
 from collections.abc import Iterator
 from typing import Any
@@ -33,11 +28,7 @@ USAGE_DICT = {"input_tokens": 5, "output_tokens": 7, "total_tokens": 12}
 
 @pytest.fixture
 def no_backoff(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[float]]:
-    """Record tenacity's backoff instead of serving it.
-
-    `tenacity.nap.sleep` is bound as a default argument at import time, so the
-    underlying `time.sleep` is the only reachable seam.
-    """
+    """Record backoff; tenacity binds nap.sleep at import, so patch time.sleep."""
     recorded: list[float] = []
     monkeypatch.setattr("tenacity.nap.time.sleep", recorded.append)
     yield recorded
@@ -154,6 +145,62 @@ class TestBlockResultMapping:
         assert result["generated_output"] == "answer text"
         assert result["failed"] is False
         assert result["guardrail"] is None
+        assert result["input_to_llm"] is None
+        assert result["output_from_llm"] is None
+
+    def test_applied_row_carries_the_text_the_llm_saw_and_produced(self) -> None:
+        result, _ = _run_item(
+            BlockResult(
+                response=text_llm_call_response("call [REDACTED]"),
+                usage=USAGE,
+                metadata={
+                    "input_guardrail": {
+                        "input_from_user": "my number is 98765",
+                        "input_to_llm": "my number is [REDACTED]",
+                        "validators": [],
+                    },
+                    "output_guardrail": {
+                        "output_from_llm": "call 98765",
+                        "output_to_user": "call [REDACTED]",
+                        "validators": [],
+                    },
+                },
+            )
+        )
+
+        assert result["guardrail"] == "applied"
+        assert result["input_to_llm"] == "my number is [REDACTED]"
+        assert result["output_from_llm"] == "call 98765"
+        # The scored answer stays the post-guardrail text.
+        assert result["generated_output"] == "call [REDACTED]"
+
+    def test_only_the_side_that_applied_is_filled(self) -> None:
+        result, _ = _run_item(
+            BlockResult(
+                response=text_llm_call_response("answer text"),
+                usage=USAGE,
+                metadata={"input_guardrail": {"input_to_llm": "redacted q"}},
+            )
+        )
+
+        assert result["input_to_llm"] == "redacted q"
+        assert result["output_from_llm"] is None
+
+    def test_rephrased_row_does_not_report_the_canned_reply_as_llm_input(
+        self,
+    ) -> None:
+        """On rephrase, input_to_llm is the canned reply, not what the model got."""
+        result, _ = _run_item(
+            BlockResult(
+                guardrail_outcome="rephrased",
+                response=text_llm_call_response("please rephrase"),
+                usage=USAGE,
+                metadata={"input_guardrail": {"input_to_llm": "please rephrase"}},
+            )
+        )
+
+        assert result["input_to_llm"] is None
+        assert result["output_from_llm"] is None
 
 
 class TestRowIsolation:
@@ -177,9 +224,7 @@ class TestGuardrailsAuthFailsClosed:
     def test_auth_rejection_fails_the_row_on_the_first_attempt(
         self, no_backoff: list[float]
     ) -> None:
-        # Fail-closed transport error, not a content verdict: the row must come back
-        # failed rather than quietly unscoreable, and must not retry — each attempt
-        # re-charges the provider, since output guardrails run after the completion.
+        # Fail-closed transport error: row fails, no retry (each retry re-bills).
         with patch(
             "app.crud.evaluations.fast.execute_llm_call",
             return_value=BlockResult(
@@ -203,8 +248,7 @@ class TestGuardrailsAuthFailsClosed:
 class TestExecuteLlmCallForQuestion:
     @staticmethod
     def _capture(outcomes: list[BlockResult]) -> list[dict[str, Any]]:
-        """Run the worker, recording each attempt's kwargs and the input value it
-        saw, then mutating the query in place as execute_llm_call does."""
+        """Record each attempt's kwargs/input, then mutate the query in place."""
         calls: list[dict[str, Any]] = []
 
         def _fake(**kwargs: Any) -> BlockResult:
@@ -237,11 +281,7 @@ class TestExecuteLlmCallForQuestion:
     def test_each_retried_attempt_gets_a_fresh_query_and_job_id(
         self, no_backoff: list[float]
     ) -> None:
-        """execute_llm_call rewrites `query.input.content.value` in place twice —
-        prompt_template interpolation, then the guardrails' safe_text. Reusing the
-        object across attempts would apply the template to already-templated text
-        and resend already-sanitised input, so identity, not equality, is asserted.
-        """
+        """execute_llm_call mutates the query in place; each attempt needs a new one."""
         first, second = self._capture(
             [
                 BlockResult(error="provider 503", retryable=True),

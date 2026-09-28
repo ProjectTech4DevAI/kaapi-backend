@@ -160,9 +160,10 @@ def build_trace_records(
             "ground_truth_answer": response.get("ground_truth", ""),
             "question_id": response.get("question_id"),
             "category": response.get("category") or DEFAULT_CATEGORY,
-            # Always emitted, so a present-but-None value distinguishes "guardrails
-            # did not fire" from a trace built elsewhere that never carried the key.
+            # Always emitted: None = didn't fire, vs. absent key on non-fast traces.
             "guardrail": response.get("guardrail"),
+            "input_to_llm": response.get("input_to_llm"),
+            "output_from_llm": response.get("output_from_llm"),
             "scores": trace_scores,
         }
         traces.append(trace)

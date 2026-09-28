@@ -66,7 +66,7 @@ from app.models.llm.response import (
     TextOutput,
     Usage,
 )
-from app.services.llm.chain.types import BlockResult, GuardrailOutcomeLabel
+from app.services.llm.chain.types import BlockResult, GuardrailOutcomeEnum
 from app.services.llm.guardrails import apply_guardrails, summarize_validator_results
 from app.services.llm.mappers import (
     resolve_default_audio_provider,
@@ -377,7 +377,7 @@ def apply_input_guardrails(
     str | None,
     str | None,
     dict[str, Any] | None,
-    GuardrailOutcomeLabel | None,
+    GuardrailOutcomeEnum | None,
 ]:
     """Apply input guardrails from a config_blob. Shared with llm-call and llm-chain.
 
@@ -419,14 +419,14 @@ def apply_input_guardrails(
             outcome.error,
             None,
             metadata,
-            "blocked" if outcome.blocked else None,
+            GuardrailOutcomeEnum.BLOCKED if outcome.blocked else None,
         )
 
     if outcome.rephrase_needed:
         logger.info(
             f"[apply_input_guardrails] rephrase_needed=True, returning safe_text directly | job_id={job_id}"
         )
-        return query, None, outcome.safe_text, metadata, "rephrased"
+        return query, None, outcome.safe_text, metadata, GuardrailOutcomeEnum.REPHRASED
 
     # No-op paths (no validators, bypassed) leave the query untouched.
     if outcome.applied and outcome.safe_text is not None:
@@ -440,7 +440,7 @@ def apply_input_guardrails(
                 "Input guardrails rejected the request and left no usable content.",
                 None,
                 metadata,
-                "blocked",
+                GuardrailOutcomeEnum.BLOCKED,
             )
         query.input.content.value = outcome.safe_text
     return query, None, None, metadata, None
@@ -455,7 +455,7 @@ def apply_output_guardrails(
     organization_id: int,
     input_text: str | None = None,
     include_guardrail_metadata: bool = False,
-) -> tuple[BlockResult, str | None, GuardrailOutcomeLabel | None]:
+) -> tuple[BlockResult, str | None, GuardrailOutcomeEnum | None]:
     """Apply output guardrails from a config_blob. Shared by /llm/call and /llm/chain.
 
     Returns (modified_result, None, None) on success, or
@@ -492,7 +492,11 @@ def apply_output_guardrails(
         result.metadata = existing_metadata
 
     if outcome.error is not None:
-        return result, outcome.error, "blocked" if outcome.blocked else None
+        return (
+            result,
+            outcome.error,
+            GuardrailOutcomeEnum.BLOCKED if outcome.blocked else None,
+        )
 
     if outcome.applied and outcome.safe_text is not None:
         if not outcome.safe_text.strip():
@@ -503,7 +507,7 @@ def apply_output_guardrails(
             return (
                 result,
                 "Output guardrails rejected the response and left no usable content.",
-                "blocked",
+                GuardrailOutcomeEnum.BLOCKED,
             )
         result.response.response.output.content.value = outcome.safe_text
     return result, None, None
@@ -799,8 +803,7 @@ def execute_llm_call(
                         exc_info=True,
                     )
                     return BlockResult(
-                        error=f"Failed to create LLM call record: {str(e)}",
-                        retryable=True,
+                        error=f"Failed to create LLM call record: {str(e)}"
                     )
 
                 if record_call:
@@ -998,8 +1001,7 @@ def execute_llm_call(
                 completion_config, warnings = transform_kaapi_config_to_native(
                     session=session,
                     kaapi_config=completion_config,
-                    # The hits are only reachable through the raw response, so
-                    # asking for them is wasted payload unless the caller wants it.
+                    # Hits only come via the raw response; skip unless requested.
                     include_file_search_results=include_provider_raw_response,
                 )
                 existing = request_metadata or {}
@@ -1073,8 +1075,7 @@ def execute_llm_call(
                         exc_info=True,
                     )
                     return BlockResult(
-                        error=f"Failed to create LLM call record: {str(e)}",
-                        retryable=True,
+                        error=f"Failed to create LLM call record: {str(e)}"
                     )
 
             # Upload STT input audio to S3 and overwrite llm_call.input with the URI.
@@ -1407,11 +1408,8 @@ def execute_llm_call(
                 project_id=project_id,
             )
         error_message = error or "Unknown error occurred"
-        # Known ceiling: every provider failure is flagged retryable, so a
-        # deterministic 400/401/404 burns all three attempts — cheap, since it is
-        # rejected before any tokens are billed. Upgrade path: widen the providers'
-        # `(response, error)` tuple to carry the exception category they already
-        # branch on.
+        # ponytail: every provider failure retries, even deterministic 4xx (unbilled).
+        # Upgrade: have providers return the error category.
         return BlockResult(error=error_message, llm_call_id=llm_call_id, retryable=True)
 
     except (Timeout, SoftTimeLimitExceeded):

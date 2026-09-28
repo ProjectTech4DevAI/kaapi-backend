@@ -1,7 +1,7 @@
 """Score types, verdict banding and the run-level overall rollup."""
 
 from enum import Enum
-from typing import NotRequired, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 DEFAULT_CATEGORY: str = "Other"
 
@@ -82,10 +82,18 @@ class TraceData(TypedDict):
     question_id: int | None
     ground_truth_answer: str
     category: NotRequired[str]
-    # Guardrail outcome for the row ("blocked: ...", "rephrased", "applied"), None
-    # when guardrails did not fire. Absent on traces built from Langfuse.
+    # "blocked: ..." | "rephrased" | "applied"; None if guardrails didn't fire.
     guardrail: NotRequired[str | None]
+    # LLM input after input guardrails / output before output guardrails.
+    input_to_llm: NotRequired[str | None]
+    output_from_llm: NotRequired[str | None]
     scores: list[TraceScore]
+
+
+# Merged key-by-key since None is meaningful.
+GUARDRAIL_TRACE_KEYS: tuple[
+    Literal["guardrail", "input_to_llm", "output_from_llm"], ...
+] = ("guardrail", "input_to_llm", "output_from_llm")
 
 
 class CategoryMetrics(TypedDict):
