@@ -110,6 +110,6 @@ jobs:
           webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
           name: kaapi-staging
           release: "#${{ github.run_number }}"
-          sha: ${{ github.sha }}
+          sha: ${{ github.event.workflow_run.head_sha || github.sha }}
           run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ok: ${{ needs.deploy.result == 'success' }}
