@@ -71,6 +71,9 @@ jobs:
           fi
           echo "Migration completed successfully"
 
-      - name: Deploy to ECS
-        run: |
-          aws ecs update-service --cluster ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster --service ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service --force-new-deployment
+      - name: Deploy to ECS and verify rollout
+        timeout-minutes: 15
+        uses: ./.github/actions/ecs-deploy
+        with:
+          cluster: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster
+          service: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service
