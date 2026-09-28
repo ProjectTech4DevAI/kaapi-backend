@@ -24,8 +24,7 @@ class BlockResult:
     """Whether re-running the identical call could plausibly succeed. `error` is one
     string for every failure kind, so a retrying caller cannot classify it; this flag
     carries the classification instead. Defaults to False so a failure path added
-    later fails fast rather than silently inheriting three attempts and its backoff.
-    Only `app.crud.evaluations.retry.retry_llm_call` reads it today."""
+    later fails fast rather than silently inheriting three attempts and its backoff."""
 
     @property
     def success(self) -> bool:

@@ -55,7 +55,6 @@ ERR_DATASET_TOO_LARGE_FOR_FAST = "dataset_too_large_for_fast"
 ERR_DUPLICATION_FACTOR_NOT_SUPPORTED = "duplication_factor_override_not_supported"
 ERR_CONFIG_TEMPLATE_MISSING_INPUT = "config_template_missing_input"
 
-# The placeholder `execute_llm_call` substitutes the user input into.
 PROMPT_TEMPLATE_INPUT_PLACEHOLDER = "{{input}}"
 
 

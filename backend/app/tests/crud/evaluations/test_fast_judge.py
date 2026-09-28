@@ -69,8 +69,6 @@ from app.tests.utils.utils import random_lower_string
 
 COSINE_SCORE_NAME = "Cosine Similarity"
 
-# Tenant ids for the DB-free per-item worker tests: the LLM call is mocked, so
-# they are only carried through to the (asserted elsewhere) execute_llm_call kwargs.
 EVAL_PROJECT_ID = 101
 EVAL_ORG_ID = 202
 
@@ -1086,8 +1084,6 @@ def _responses_item(item_id: str = "item-1") -> dict[str, Any]:
 
 
 class TestResponsesChunkCapture:
-    """`_llm_call_for_item` flattens file_search hits into JSON-safe dicts."""
-
     @staticmethod
     def _run_item(result: BlockResult) -> dict[str, Any]:
         with patch(

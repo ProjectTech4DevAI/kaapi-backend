@@ -998,9 +998,8 @@ def execute_llm_call(
                 completion_config, warnings = transform_kaapi_config_to_native(
                     session=session,
                     kaapi_config=completion_config,
-                    # The file_search hits are only reachable through the raw
-                    # response, so asking for them is wasted payload unless the
-                    # caller wants it. Evaluation is the caller that does.
+                    # The hits are only reachable through the raw response, so
+                    # asking for them is wasted payload unless the caller wants it.
                     include_file_search_results=include_provider_raw_response,
                 )
                 existing = request_metadata or {}
@@ -1409,11 +1408,10 @@ def execute_llm_call(
             )
         error_message = error or "Unknown error occurred"
         # Known ceiling: every provider failure is flagged retryable, so a
-        # deterministic 400/401/404 still burns all three attempts. Cheap — the
-        # request is rejected before any tokens are billed. Providers already branch
-        # per exception type (`providers/open_ai.py`); widening their
-        # `(response, error)` tuple to carry the category is the upgrade path if that
-        # waste starts to matter.
+        # deterministic 400/401/404 burns all three attempts — cheap, since it is
+        # rejected before any tokens are billed. Upgrade path: widen the providers'
+        # `(response, error)` tuple to carry the exception category they already
+        # branch on.
         return BlockResult(error=error_message, llm_call_id=llm_call_id, retryable=True)
 
     except (Timeout, SoftTimeLimitExceeded):

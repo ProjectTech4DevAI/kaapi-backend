@@ -476,7 +476,6 @@ def _fake_embedding_response():
 
 
 def _kaapi_config_blob(model: str = "gpt-4o") -> ConfigBlob:
-    """A Kaapi config blob: `completion.params` is a typed `TextLLMParams`."""
     return ConfigBlob(
         completion=build_kaapi_completion_config(
             provider="openai",
@@ -487,7 +486,6 @@ def _kaapi_config_blob(model: str = "gpt-4o") -> ConfigBlob:
 
 
 def _native_config_blob(model: str = "gpt-5-native") -> ConfigBlob:
-    """A native config blob: `completion.params` stays a plain dict."""
     return ConfigBlob(
         completion=NativeCompletionConfig(
             provider="openai-native", type="text", params={"model": model}
@@ -585,8 +583,6 @@ class TestRunResponseChunk:
                 chunk_index=0,
             )
 
-        # The stored reference, not an ad-hoc blob: eval must walk the same
-        # resolve_config_blob path production does, guardrails and template included.
         assert captured["config"].is_stored_config is True
         assert captured["config"].blob is None
         assert captured["config"].id == eval_run.config_id

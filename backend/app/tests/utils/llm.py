@@ -152,7 +152,6 @@ def text_llm_call_response(
     usage: Usage | None = None,
     provider_raw_response: dict[str, Any] | None = None,
 ) -> LLMCallResponse:
-    """A text `LLMCallResponse` as `execute_llm_call` returns it on `BlockResult`."""
     return LLMCallResponse(
         response=LLMResponse(
             provider_response_id=provider_response_id,

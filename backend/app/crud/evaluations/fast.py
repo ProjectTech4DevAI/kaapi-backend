@@ -176,9 +176,7 @@ def _execute_llm_call_for_question(
         config=config,
         # execute_llm_call mutates the query in place (prompt_template interpolation,
         # then the guardrails' safe_text), so a retried attempt must never reuse the
-        # previous one's object. The job_id is synthetic and, with record_call=False,
-        # never persisted — per row it still makes a guardrails-service log line
-        # traceable back to a single eval row.
+        # previous one's object.
         query=QueryParams(input=TextInput(content=TextContent(value=question))),
         job_id=uuid4(),
         project_id=project_id,
@@ -188,7 +186,6 @@ def _execute_llm_call_for_question(
         # Raw response carries the file_search hits the knowledge_base metric scores.
         include_provider_raw_response=True,
         include_guardrail_metadata=True,
-        # Eval traffic: no LlmCall row, no AI spans, no LLM metrics.
         record_call=False,
     )
 
@@ -420,8 +417,7 @@ def run_response_chunk(
     # By stored reference, not an ad-hoc blob, so eval walks the same
     # resolve_config_blob path production does — guardrails and template included.
     config = LLMCallConfig(id=eval_run.config_id, version=eval_run.config_version)
-    # Read off the session-bound row here: the workers run in threads and must not
-    # touch it.
+    # Read off the session-bound row here: the workers must not touch it in threads.
     project_id = eval_run.project_id
     organization_id = eval_run.organization_id
 
@@ -558,9 +554,9 @@ def _stage2_embeddings(
     if cached is not None:
         return eval_run, cached
 
-    # Only embed rows that produced text: a guardrail-blocked row is failed=False with
-    # an empty output, so embedding it manufactures a failure and lets a heavily
-    # guardrailed run trip this stage's threshold. It is unscoreable, not failed.
+    # A guardrail-blocked row is failed=False with an empty output: embedding it
+    # manufactures a failure and lets a heavily guardrailed run trip this stage's
+    # threshold. It is unscoreable, not failed.
     embed_candidates = [
         r
         for r in response_results

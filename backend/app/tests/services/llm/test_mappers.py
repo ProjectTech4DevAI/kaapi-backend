@@ -1485,10 +1485,8 @@ class TestTransformKaapiConfigToNative:
         assert result.params["include"] == ["file_search_call.results"]
 
     def test_transform_openai_text_omits_include_by_default(self, db: Session):
-        # Default off: the hits enlarge every response and are only reachable by a
-        # caller that also asked for the raw provider response. Production
-        # /llm/call and /llm/chain traffic must be unaffected by evaluation's need
-        # for them.
+        # Default off: the hits enlarge every response, so production /llm/call and
+        # /llm/chain traffic must be unaffected by evaluation's need for them.
         kaapi_config = build_kaapi_completion_config(
             provider="openai",
             type="text",

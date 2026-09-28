@@ -11,9 +11,9 @@ from typing import Any, TypedDict
 from app.core.config import settings
 from app.crud.evaluations.response_parsing import field_value
 
-# Guardrail outcome on a Stage-1 row; `blocked` is stored as f"{GUARDRAIL_BLOCKED}: {error}"
-# so the provider's reason survives. Plain str, not the service layer's
-# GuardrailOutcomeLabel, to keep this module free of `app.services` imports.
+# `blocked` is stored as f"{GUARDRAIL_BLOCKED}: {error}" so the provider's reason
+# survives. Plain str, not the service layer's GuardrailOutcomeLabel, to keep this
+# module free of `app.services` imports.
 GUARDRAIL_BLOCKED: str = "blocked"
 GUARDRAIL_REPHRASED: str = "rephrased"
 GUARDRAIL_APPLIED: str = "applied"

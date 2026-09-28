@@ -39,8 +39,7 @@ PROXY_COMPLETION = {
     "params": {"client_llm_url": PROXY_URL},
 }
 # Kaapi-shaped (not `openai-native`), so it goes through
-# `transform_kaapi_config_to_native`, and carries a KB so the mapper emits a
-# file_search tool.
+# `transform_kaapi_config_to_native`; the KB makes the mapper emit a file_search tool.
 KAAPI_KB_COMPLETION = {
     "type": "text",
     "provider": "openai",
@@ -267,8 +266,6 @@ class TestRecordCallDefault:
 
     @pytest.fixture
     def llm_call_crud(self):
-        # Mirrors test_jobs.py::TestExecuteJob — the persistence layer is stubbed
-        # so the assertion is about the flag rather than about the insert.
         with (
             patch("app.services.llm.jobs.create_llm_call") as create_llm_call,
             patch("app.services.llm.jobs.update_llm_call_response"),
@@ -407,9 +404,7 @@ class TestGuardrailOutcome:
 class TestRetryableFlag:
     """`BlockResult.retryable` is what `retry_llm_call` keys off, and `error` alone
     cannot tell a rate limit from a revoked key. These pin the flag where it is set,
-    not where it is read — a missing `retryable=True` would silently switch off eval
-    retries, and a stray one would burn three attempts and their backoff per row on a
-    failure that can never clear.
+    not where it is read.
     """
 
     def test_provider_failure_is_retryable(self, db: Session, provider):
@@ -494,10 +489,8 @@ class TestRetryableFlag:
 
 class TestFileSearchResultsAreOptIn:
     """`include=["file_search_call.results"]` makes OpenAI return the retrieved chunk
-    text. Evaluation needs it (the `knowledge_base` metric scores those chunks), but
-    the chunks are only reachable through the raw provider response — so for a caller
-    that didn't ask for one it is pure extra payload on every request. The opt-in is
-    `include_provider_raw_response`, which is already a per-request client flag.
+    text, which the `knowledge_base` metric scores. It is pure extra payload for a
+    caller that didn't ask for the raw provider response, hence the opt-in.
     """
 
     @staticmethod

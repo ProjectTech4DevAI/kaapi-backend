@@ -1,14 +1,8 @@
 """Fast-eval generation against `execute_llm_call` (`crud/evaluations/fast.py`).
 
-Stage 1 no longer calls the OpenAI SDK: every row goes through the same
-`/llm/call` path production traffic does, so guardrails and the config's
-prompt_template apply to eval runs too. These tests pin the `BlockResult` →
-per-item-result mapping (the shape persisted to S3) and the kwargs the worker
-hands `execute_llm_call`.
-
-The LLM boundary is mocked at `_execute_llm_call_for_question` (the mapping
-tests) or one level lower at `execute_llm_call` (the tests that need the real
-retry decorator to run). No DB: the worker only reads the dataset item dict.
+The LLM boundary is mocked at `_execute_llm_call_for_question` (the mapping tests)
+or one level lower at `execute_llm_call` (the tests that need the real retry
+decorator to run).
 """
 
 from collections.abc import Iterator
@@ -27,7 +21,6 @@ from app.models.llm.request import LLMCallConfig
 from app.services.llm.chain.types import BlockResult
 from app.tests.utils.llm import text_llm_call_response
 
-# The auth failures guardrails fails closed on; the message the service surfaces.
 GUARDRAILS_AUTH_ERROR = "Guardrails service rejected the request (HTTP 401)"
 
 QUESTION = "What is X?"
@@ -184,15 +177,9 @@ class TestGuardrailsAuthFailsClosed:
     def test_auth_rejection_fails_the_row_on_the_first_attempt(
         self, no_backoff: list[float]
     ) -> None:
-        # A guardrails 401/403/422 is a fail-closed transport error, not a content
-        # verdict: `guardrail_outcome` stays None, so the row must come back
-        # `failed=True` rather than as a quietly unscoreable row — broken guardrail
-        # credentials have to show up in the run's failure ratio.
-        # (docs/wiki/modules/guardrails.md §9, invariant 8)
-        #
-        # It must fail *without* retrying: the credentials are as broken on the third
-        # attempt as on the first, and on the output side each attempt would re-charge
-        # the provider, since the completion is generated before output guardrails run.
+        # Fail-closed transport error, not a content verdict: the row must come back
+        # failed rather than quietly unscoreable, and must not retry — each attempt
+        # re-charges the provider, since output guardrails run after the completion.
         with patch(
             "app.crud.evaluations.fast.execute_llm_call",
             return_value=BlockResult(
@@ -216,8 +203,8 @@ class TestGuardrailsAuthFailsClosed:
 class TestExecuteLlmCallForQuestion:
     @staticmethod
     def _capture(outcomes: list[BlockResult]) -> list[dict[str, Any]]:
-        """Run the worker, recording each attempt's kwargs plus the input value the
-        attempt actually saw, then mutating the query as execute_llm_call does."""
+        """Run the worker, recording each attempt's kwargs and the input value it
+        saw, then mutating the query in place as execute_llm_call does."""
         calls: list[dict[str, Any]] = []
 
         def _fake(**kwargs: Any) -> BlockResult:

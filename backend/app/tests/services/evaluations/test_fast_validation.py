@@ -1,10 +1,8 @@
 """Config preconditions for a fast run (`validate_fast_evaluation_inputs`).
 
-Generation now goes through `execute_llm_call`, which interpolates the config's
-`prompt_template` unconditionally. A template without `{{input}}` would send the
-template alone and silently drop every dataset question, so the run is rejected up
-front. The passing cases are the regression net: this gate sees configs that ran
-fine before the change, and a false positive is an outage for existing eval users.
+A `prompt_template` without `{{input}}` would send the template alone and silently
+drop every dataset question, so the run is rejected up front. The passing cases are
+the regression net: a false positive here is an outage for existing eval users.
 """
 
 import pytest
