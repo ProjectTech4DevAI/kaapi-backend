@@ -726,6 +726,7 @@ def resolve_default_audio_provider(
 def transform_kaapi_config_to_native(
     session: Session,
     kaapi_config: KaapiCompletionConfig,
+    include_file_search_results: bool = False,
 ) -> tuple[NativeCompletionConfig, list[str]]:
     """Transform Kaapi completion config to native provider config with mapped parameters.
 
@@ -734,6 +735,11 @@ def transform_kaapi_config_to_native(
     Args:
         session: Database session used to look up model-specific config (e.g. reasoning support)
         kaapi_config: KaapiCompletionConfig with abstracted parameters
+        include_file_search_results: Ask OpenAI to return the text of the file_search
+            hits, not just the fact that a search ran. Off by default: it enlarges
+            every response, and the chunks are only reachable by a caller that also
+            asked for the raw provider response. Evaluation turns it on so the
+            `knowledge_base` metric has chunks to score.
 
     Returns:
         Tuple of:
@@ -746,10 +752,11 @@ def transform_kaapi_config_to_native(
         mapped_params, warnings = map_kaapi_to_openai_params(
             session=session, kaapi_params=kaapi_params
         )
-        # Ask OpenAI to return the file_search hits. Set here and not in the
-        # mapper: its other callers build Batch API bodies, where `include` is
-        # invalid.
-        if any(t.get("type") == "file_search" for t in mapped_params.get("tools", [])):
+        # Set here and not in the mapper: its other callers build Batch API bodies,
+        # where `include` is invalid.
+        if include_file_search_results and any(
+            t.get("type") == "file_search" for t in mapped_params.get("tools", [])
+        ):
             mapped_params["include"] = ["file_search_call.results"]
         return (
             NativeCompletionConfig(

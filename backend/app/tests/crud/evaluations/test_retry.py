@@ -3,12 +3,15 @@
 `retry_openai_call` (embeddings, judge) is tenacity's stock exception-based
 behaviour and is not re-asserted here.
 
-Two behaviours of the result-based policy are load-bearing and are
-asserted directly: a guardrail verdict is never retried (it is a content decision,
-not a provider failure), and an exhausted retry *returns* the last result instead
-of raising — a raise would propagate through `_run_in_pool`'s `future.result()`,
-abort the whole chunk, and have the cron healer re-enqueue it, re-charging the
-provider for every row.
+Three behaviours of the result-based policy are load-bearing and are asserted
+directly: only a failure `execute_llm_call` marked `retryable` is re-run (a
+deterministic one — bad config, revoked key, guardrails auth fail-closed — would
+otherwise burn three attempts and their backoff per row to reach the same answer),
+a guardrail verdict is never retried (it is a content decision, not a provider
+failure), and an exhausted retry *returns* the last result instead of raising — a
+raise would propagate through `_run_in_pool`'s `future.result()`, abort the whole
+chunk, and have the cron healer re-enqueue it, re-charging the provider for every
+row.
 """
 
 import logging
@@ -44,6 +47,12 @@ def _decorate(fn: Callable[[], BlockResult]) -> Callable[[], BlockResult]:
 
 
 def _failure(error: str = "provider 503") -> BlockResult:
+    """A provider failure, as `execute_llm_call` flags it."""
+    return BlockResult(error=error, retryable=True)
+
+
+def _deterministic_failure(error: str = "config_not_found") -> BlockResult:
+    """A failure a second identical call cannot clear; `retryable` stays False."""
     return BlockResult(error=error)
 
 
@@ -100,6 +109,19 @@ class TestRetryLlmCall:
         assert result.error == "provider 503 #2"
         assert len(attempts) == RETRY_MAX_ATTEMPTS == 3
         assert len(sleeps) == RETRY_MAX_ATTEMPTS - 1
+
+    def test_deterministic_failure_is_not_retried(self, sleeps: list[float]) -> None:
+        calls: list[int] = []
+        expected = _deterministic_failure()
+
+        @_decorate
+        def call() -> BlockResult:
+            calls.append(1)
+            return expected
+
+        assert call() is expected
+        assert len(calls) == 1
+        assert sleeps == []
 
     @pytest.mark.parametrize("outcome", ["blocked", "rephrased"])
     def test_guardrail_verdict_is_never_retried(

@@ -38,6 +38,14 @@ PROXY_COMPLETION = {
     "provider": None,
     "params": {"client_llm_url": PROXY_URL},
 }
+# Kaapi-shaped (not `openai-native`), so it goes through
+# `transform_kaapi_config_to_native`, and carries a KB so the mapper emits a
+# file_search tool.
+KAAPI_KB_COMPLETION = {
+    "type": "text",
+    "provider": "openai",
+    "params": {"model": "gpt-4o", "knowledge_base_ids": ["vs_abc123"]},
+}
 PROXY_PAYLOAD = {
     "id": "resp_abc",
     "model": "gpt-5",
@@ -394,3 +402,132 @@ class TestGuardrailOutcome:
         )
         assert result.guardrail_outcome is None
         provider.execute.assert_not_called()
+
+
+class TestRetryableFlag:
+    """`BlockResult.retryable` is what `retry_llm_call` keys off, and `error` alone
+    cannot tell a rate limit from a revoked key. These pin the flag where it is set,
+    not where it is read — a missing `retryable=True` would silently switch off eval
+    retries, and a stray one would burn three attempts and their backoff per row on a
+    failure that can never clear.
+    """
+
+    def test_provider_failure_is_retryable(self, db: Session, provider):
+        provider.execute.return_value = (None, "API rate limit exceeded")
+
+        result = call(db, build_blob(TEXT_COMPLETION), record_call=False)
+
+        assert result.retryable is True
+
+    def test_proxy_transport_failure_is_retryable(
+        self, db: Session, provider, proxy_http
+    ):
+        proxy_http.post.side_effect = httpx.ConnectError("connection refused")
+
+        result = call(db, build_blob(PROXY_COMPLETION), record_call=False)
+
+        assert result.error.startswith("Proxy call failed:")
+        assert result.retryable is True
+
+    def test_guardrail_block_is_not_retryable(self, db: Session, provider):
+        with guardrails_http({"success": False, "error": "Unsafe content detected"}):
+            result = call(
+                db,
+                build_blob(TEXT_COMPLETION, input_guardrails=True),
+                record_call=False,
+            )
+
+        assert result.guardrail_outcome == "blocked"
+        assert result.retryable is False
+
+    @pytest.mark.parametrize("status_code", [401, 403, 422])
+    def test_input_guardrails_auth_failure_is_not_retryable(
+        self, db: Session, provider, status_code: int
+    ):
+        with guardrails_http(http_status_error(status_code)):
+            result = call(
+                db,
+                build_blob(TEXT_COMPLETION, input_guardrails=True),
+                record_call=False,
+            )
+
+        assert result.retryable is False
+        provider.execute.assert_not_called()
+
+    def test_output_guardrails_auth_failure_is_not_retryable(
+        self, db: Session, provider, provider_response
+    ):
+        """The expensive direction: the completion is generated *before* output
+        guardrails run, so each retry would re-charge the provider for a failure
+        that broken credentials guarantee will repeat."""
+        provider.execute.return_value = (provider_response, None)
+        with guardrails_http(http_status_error(401)):
+            result = call(
+                db,
+                build_blob(TEXT_COMPLETION, output_guardrails=True),
+                record_call=False,
+            )
+
+        assert result.error == "Guardrails service rejected the request (HTTP 401)"
+        assert result.guardrail_outcome is None
+        assert result.retryable is False
+        assert result.usage.total_tokens == 30
+
+    def test_unresolvable_stored_config_is_not_retryable(self, db: Session, provider):
+        project = get_project(db)
+
+        result = execute_llm_call(
+            config=LLMCallConfig(id=uuid4(), version=1),
+            query=QueryParams(input="what are my land rights"),
+            job_id=uuid4(),
+            project_id=project.id,
+            organization_id=project.organization_id,
+            request_metadata=None,
+            langfuse_credentials=None,
+            record_call=False,
+        )
+
+        assert result.error is not None
+        assert result.retryable is False
+        provider.execute.assert_not_called()
+
+
+class TestFileSearchResultsAreOptIn:
+    """`include=["file_search_call.results"]` makes OpenAI return the retrieved chunk
+    text. Evaluation needs it (the `knowledge_base` metric scores those chunks), but
+    the chunks are only reachable through the raw provider response — so for a caller
+    that didn't ask for one it is pure extra payload on every request. The opt-in is
+    `include_provider_raw_response`, which is already a per-request client flag.
+    """
+
+    @staticmethod
+    def _params_sent_to_provider(provider) -> dict[str, Any]:
+        completion_config = provider.execute.call_args.args[0]
+        return completion_config.params
+
+    def test_raw_response_requested_asks_for_the_hits(
+        self, db: Session, provider, provider_response
+    ):
+        provider.execute.return_value = (provider_response, None)
+
+        call(
+            db,
+            build_blob(KAAPI_KB_COMPLETION),
+            record_call=False,
+            include_provider_raw_response=True,
+        )
+
+        params = self._params_sent_to_provider(provider)
+        assert params["tools"][0]["type"] == "file_search"
+        assert params["include"] == ["file_search_call.results"]
+
+    def test_default_call_does_not_ask_for_the_hits(
+        self, db: Session, provider, provider_response
+    ):
+        provider.execute.return_value = (provider_response, None)
+
+        call(db, build_blob(KAAPI_KB_COMPLETION), record_call=False)
+
+        params = self._params_sent_to_provider(provider)
+        assert params["tools"][0]["type"] == "file_search"
+        assert "include" not in params

@@ -20,6 +20,13 @@ class BlockResult:
     """Set when guardrails decided the outcome, so a caller can tell a content
     verdict apart from a provider failure carried in `error`."""
 
+    retryable: bool = False
+    """Whether re-running the identical call could plausibly succeed. `error` is one
+    string for every failure kind, so a retrying caller cannot classify it; this flag
+    carries the classification instead. Defaults to False so a failure path added
+    later fails fast rather than silently inheriting three attempts and its backoff.
+    Only `app.crud.evaluations.retry.retry_llm_call` reads it today."""
+
     @property
     def success(self) -> bool:
         return self.error is None and self.response is not None

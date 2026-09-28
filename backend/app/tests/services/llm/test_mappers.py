@@ -1478,11 +1478,29 @@ class TestTransformKaapiConfigToNative:
         )
 
         result, warnings = transform_kaapi_config_to_native(
-            session=db, kaapi_config=kaapi_config
+            session=db, kaapi_config=kaapi_config, include_file_search_results=True
         )
 
         assert result.params["tools"][0]["type"] == "file_search"
         assert result.params["include"] == ["file_search_call.results"]
+
+    def test_transform_openai_text_omits_include_by_default(self, db: Session):
+        # Default off: the hits enlarge every response and are only reachable by a
+        # caller that also asked for the raw provider response. Production
+        # /llm/call and /llm/chain traffic must be unaffected by evaluation's need
+        # for them.
+        kaapi_config = build_kaapi_completion_config(
+            provider="openai",
+            type="text",
+            params={"model": "gpt-4o", "knowledge_base_ids": ["vs_abc123"]},
+        )
+
+        result, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
+
+        assert result.params["tools"][0]["type"] == "file_search"
+        assert "include" not in result.params
 
     def test_transform_openai_text_without_knowledge_base_omits_include(
         self, db: Session
@@ -1494,7 +1512,7 @@ class TestTransformKaapiConfigToNative:
         )
 
         result, warnings = transform_kaapi_config_to_native(
-            session=db, kaapi_config=kaapi_config
+            session=db, kaapi_config=kaapi_config, include_file_search_results=True
         )
 
         assert "tools" not in result.params

@@ -22,7 +22,6 @@ from app.crud.evaluations.fast import (
     _execute_llm_call_for_question,
     _llm_call_for_item,
 )
-from app.crud.evaluations.retry import RETRY_MAX_ATTEMPTS
 from app.models.llm import QueryParams, Usage
 from app.models.llm.request import LLMCallConfig
 from app.services.llm.chain.types import BlockResult
@@ -182,7 +181,7 @@ class TestRowIsolation:
 
 
 class TestGuardrailsAuthFailsClosed:
-    def test_auth_rejection_fails_the_row_after_exhausting_retries(
+    def test_auth_rejection_fails_the_row_on_the_first_attempt(
         self, no_backoff: list[float]
     ) -> None:
         # A guardrails 401/403/422 is a fail-closed transport error, not a content
@@ -190,6 +189,10 @@ class TestGuardrailsAuthFailsClosed:
         # `failed=True` rather than as a quietly unscoreable row — broken guardrail
         # credentials have to show up in the run's failure ratio.
         # (docs/wiki/modules/guardrails.md §9, invariant 8)
+        #
+        # It must fail *without* retrying: the credentials are as broken on the third
+        # attempt as on the first, and on the output side each attempt would re-charge
+        # the provider, since the completion is generated before output guardrails run.
         with patch(
             "app.crud.evaluations.fast.execute_llm_call",
             return_value=BlockResult(
@@ -206,7 +209,8 @@ class TestGuardrailsAuthFailsClosed:
         assert result["failed"] is True
         assert result["generated_output"] == f"ERROR: {GUARDRAILS_AUTH_ERROR}"
         assert result["guardrail"] is None
-        assert mock_execute.call_count == RETRY_MAX_ATTEMPTS
+        assert mock_execute.call_count == 1
+        assert no_backoff == []
 
 
 class TestExecuteLlmCallForQuestion:
@@ -253,7 +257,7 @@ class TestExecuteLlmCallForQuestion:
         """
         first, second = self._capture(
             [
-                BlockResult(error="provider 503"),
+                BlockResult(error="provider 503", retryable=True),
                 BlockResult(response=text_llm_call_response()),
             ]
         )

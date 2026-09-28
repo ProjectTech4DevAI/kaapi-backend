@@ -799,7 +799,8 @@ def execute_llm_call(
                         exc_info=True,
                     )
                     return BlockResult(
-                        error=f"Failed to create LLM call record: {str(e)}"
+                        error=f"Failed to create LLM call record: {str(e)}",
+                        retryable=True,
                     )
 
                 if record_call:
@@ -863,6 +864,7 @@ def execute_llm_call(
                         return BlockResult(
                             error=f"Proxy call failed: {str(e)}",
                             llm_call_id=llm_call_id,
+                            retryable=True,
                         )
 
                 try:
@@ -994,7 +996,12 @@ def execute_llm_call(
                 ),
             ):
                 completion_config, warnings = transform_kaapi_config_to_native(
-                    session=session, kaapi_config=completion_config
+                    session=session,
+                    kaapi_config=completion_config,
+                    # The file_search hits are only reachable through the raw
+                    # response, so asking for them is wasted payload unless the
+                    # caller wants it. Evaluation is the caller that does.
+                    include_file_search_results=include_provider_raw_response,
                 )
                 existing = request_metadata or {}
                 existing_warnings = list(existing.get("warnings") or [])
@@ -1067,7 +1074,8 @@ def execute_llm_call(
                         exc_info=True,
                     )
                     return BlockResult(
-                        error=f"Failed to create LLM call record: {str(e)}"
+                        error=f"Failed to create LLM call record: {str(e)}",
+                        retryable=True,
                     )
 
             # Upload STT input audio to S3 and overwrite llm_call.input with the URI.
@@ -1400,7 +1408,13 @@ def execute_llm_call(
                 project_id=project_id,
             )
         error_message = error or "Unknown error occurred"
-        return BlockResult(error=error_message, llm_call_id=llm_call_id)
+        # Known ceiling: every provider failure is flagged retryable, so a
+        # deterministic 400/401/404 still burns all three attempts. Cheap — the
+        # request is rejected before any tokens are billed. Providers already branch
+        # per exception type (`providers/open_ai.py`); widening their
+        # `(response, error)` tuple to carry the category is the upgrade path if that
+        # waste starts to matter.
+        return BlockResult(error=error_message, llm_call_id=llm_call_id, retryable=True)
 
     except (Timeout, SoftTimeLimitExceeded):
         raise

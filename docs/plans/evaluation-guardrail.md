@@ -300,8 +300,15 @@ Add one field, `guardrail: str | None`, to the `ResponseResult` TypedDict and to
 rate-limited project that is a real regression.
 
 Retry `_llm_call_for_item` up to 3 times with exponential backoff whenever
-`result.error is not None and result.guardrail_outcome is None`. A permanent error (bad param)
-retries three times and fails fast each time; a guardrail block is never retried.
+`result.error is not None and result.retryable`. `error` is one string for every failure kind,
+so the classification has to travel on its own field: `execute_llm_call` sets
+`BlockResult.retryable` only where the provider, the proxy or the `LlmCall` write actually
+failed. A guardrail block is never retried (content decision), and neither is a deterministic
+failure — unresolvable config, rejected model, revoked key, guardrails auth fail-closed — since
+three attempts and their backoff only reach the same answer more slowly. Known ceiling: a
+provider 4xx is still flagged retryable, because the provider flattens its exception into a
+string before `jobs.py` sees it; the waste is bounded (no tokens are billed on a rejected
+request).
 
 ---
 
@@ -411,7 +418,7 @@ adapters is a follow-up; note it in the wiki rather than widening this change.
 |---|---|
 | `backend/app/services/llm/chain/types.py` | `BlockResult.guardrail_outcome` |
 | `backend/app/services/llm/jobs.py` | `record_call` flag (row + spans + metrics); gate the 3 creators; add the missing proxy `if llm_call_id:`; set `guardrail_outcome` at the 3 guardrail returns; carry `usage` on output blocks |
-| `backend/app/services/llm/mappers.py` | `include=["file_search_call.results"]` in `transform_kaapi_config_to_native`'s OpenAI branch when a `file_search` tool is present |
+| `backend/app/services/llm/mappers.py` | `include=["file_search_call.results"]` in `transform_kaapi_config_to_native`'s OpenAI branch when a `file_search` tool is present **and** the new `include_file_search_results` flag is set; `execute_llm_call` drives it off `include_provider_raw_response` so production traffic is unchanged |
 | `backend/app/crud/evaluations/response_parsing.py` | `extract_file_search_chunks(raw: dict)` |
 | `backend/app/crud/evaluations/fast_results.py` | `guardrail` on `ResponseResult` + `build_response_result` |
 | `backend/app/crud/evaluations/fast.py` | `_llm_call_for_item` replaces `_responses_call_for_item`; `run_response_chunk` takes `ConfigBlob`; `_stage2_embeddings` excludes blocked rows from `embed_candidates` and the threshold |
@@ -543,9 +550,10 @@ and the command's pull step was skipped — no upstream). 29 tracked files + 7 u
   `detail=f"{ERR_CONFIG_TEMPLATE_MISSING_INPUT}: <prose>"` while every sibling in the same
   function raises the bare code → now `detail=ERR_CONFIG_TEMPLATE_MISSING_INPUT`, with the prose
   moved into a `logger.warning`, so a client matching `detail == "<code>"` matches.
-- `retry_llm_call`'s docstring now names the cost ceiling by direction: an *input*-side
-  guardrails auth failure returns before `provider.execute`, so its retries cost only guardrail
-  hops, while an *output*-side one re-charges the provider on every attempt.
+- A guardrails auth fail-closed is no longer retried at all. It still fails the row, but the
+  credentials are as broken on the third attempt as on the first, and on the *output* side each
+  attempt would re-charge the provider, since the completion is generated before output
+  guardrails run. This is what `BlockResult.retryable` exists for.
 
 *Suggestion — deferred*
 

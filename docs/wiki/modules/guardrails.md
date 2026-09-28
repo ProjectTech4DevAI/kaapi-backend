@@ -119,7 +119,7 @@ These do **not** fail open: upstream status codes and bodies (including its 422s
 5. Management proxies return upstream status/body verbatim with `no-store`.
 6. Metadata emission stays gated on `outcome.applied`.
 7. Raw text persistence is intentional on the `/guardrails` job, not an oversight.
-8. `guardrail_outcome` marks content verdicts only. Never label a fail-closed auth/transport error `"blocked"` — a caller that treats blocks as benign (evaluation does) would silently swallow a broken deploy.
+8. `guardrail_outcome` marks content verdicts only. Never label a fail-closed auth/transport error `"blocked"` — a caller that treats blocks as benign (evaluation does) would silently swallow a broken deploy. It must not be retried either: the credentials are as broken on the third attempt as on the first, and an *output*-side failure re-charges the provider each time, because the completion is generated before output guardrails run. Hence `retryable` stays `False` on both guardrail error paths.
 
 ## 10. Touch-map: common changes
 
