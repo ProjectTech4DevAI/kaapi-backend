@@ -14,7 +14,6 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from langfuse import Langfuse
-from openai import OpenAI
 from sqlmodel import Session
 
 from app.celery.utils import start_fast_evaluation_chunk
@@ -41,7 +40,7 @@ from app.models.evaluation import (
     EvaluationRunUpdate,
     RunModeEnum,
 )
-from app.models.llm.request import TextLLMParams
+from app.models.llm.request import ConfigBlob
 from app.services.evaluations.evaluation import create_evaluation_run
 from app.services.evaluations.validators import parse_csv_items
 from app.services.llm.providers import LLMProvider
@@ -54,6 +53,10 @@ logger = logging.getLogger(__name__)
 ERR_CONFIG_TYPE_UNSUPPORTED = "config_type_unsupported"
 ERR_DATASET_TOO_LARGE_FOR_FAST = "dataset_too_large_for_fast"
 ERR_DUPLICATION_FACTOR_NOT_SUPPORTED = "duplication_factor_override_not_supported"
+ERR_CONFIG_TEMPLATE_MISSING_INPUT = "config_template_missing_input"
+
+# The placeholder `execute_llm_call` substitutes the user input into.
+PROMPT_TEMPLATE_INPUT_PLACEHOLDER = "{{input}}"
 
 
 def is_dataset_fast_eligible(*, original_items_count: int) -> bool:
@@ -159,7 +162,8 @@ def validate_fast_evaluation_inputs(
     1. Dataset exists; v1 runs also require a Langfuse id, v2 judged runs don't
        (they load items from S3).
     2. Config resolves to a text-type OpenAI config.
-    3. Dataset's original_items_count <= EVAL_FAST_MAX_UNIQUE_ROWS.
+    3. Config's prompt_template, when set, carries the {{input}} placeholder.
+    4. Dataset's original_items_count <= EVAL_FAST_MAX_UNIQUE_ROWS.
 
     `duplication_factor`, when provided, overrides the dataset's stored factor for
     this run only and is supported for S3-only datasets exclusively; it is rejected
@@ -218,6 +222,24 @@ def validate_fast_evaluation_inputs(
         raise HTTPException(
             status_code=422,
             detail=ERR_CONFIG_TYPE_UNSUPPORTED,
+        )
+
+    # Generation goes through `execute_llm_call`, which interpolates prompt_template
+    # unconditionally; a template without the placeholder would send the template
+    # alone and silently drop every dataset question.
+    prompt_template = config_blob.prompt_template
+    if (
+        prompt_template is not None
+        and PROMPT_TEMPLATE_INPUT_PLACEHOLDER not in prompt_template.template
+    ):
+        logger.warning(
+            f"[validate_fast_evaluation_inputs] Config prompt_template has no "
+            f"{PROMPT_TEMPLATE_INPUT_PLACEHOLDER} placeholder, so every dataset "
+            f"question would be dropped | config_id={config_id}"
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=ERR_CONFIG_TEMPLATE_MISSING_INPUT,
         )
 
     original_items_count = (dataset.dataset_metadata or {}).get(
@@ -367,8 +389,8 @@ def _get_fast_run(*, session: Session, eval_run_id: int) -> EvaluationRun:
 
 def _resolve_config_and_clients(
     *, session: Session, eval_run: EvaluationRun, dataset: EvaluationDataset
-) -> tuple[TextLLMParams, OpenAI, Langfuse | None]:
-    """Resolve the run's text config and build its OpenAI + (optional) Langfuse clients.
+) -> tuple[ConfigBlob, Langfuse | None]:
+    """Resolve the run's config blob and build its (optional) Langfuse client.
 
     Only a Langfuse-backed (v1) dataset needs a Langfuse client — its items live in
     Langfuse. A v2 dataset loads from S3, so we skip the client (and its credential
@@ -382,12 +404,6 @@ def _resolve_config_and_clients(
     if error or config_blob is None:
         raise ValueError(f"Failed to resolve config: {error}")
 
-    text_params = TextLLMParams.model_validate(config_blob.completion.params)
-    openai_client = get_openai_client(
-        session=session,
-        org_id=eval_run.organization_id,
-        project_id=eval_run.project_id,
-    )
     langfuse_client = (
         get_langfuse_client(
             session=session,
@@ -397,7 +413,7 @@ def _resolve_config_and_clients(
         if dataset.langfuse_dataset_id
         else None
     )
-    return text_params, openai_client, langfuse_client
+    return config_blob, langfuse_client
 
 
 def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None:
@@ -433,7 +449,7 @@ def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None
                 raise ValueError(
                     f"Dataset {eval_run.dataset_id} not found for run {eval_run_id}"
                 )
-            text_params, openai_client, langfuse_client = _resolve_config_and_clients(
+            config_blob, langfuse_client = _resolve_config_and_clients(
                 session=session, eval_run=eval_run, dataset=dataset
             )
             dataset_items = load_run_dataset_items(
@@ -449,9 +465,8 @@ def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None
 
             run_response_chunk(
                 session=session,
-                openai_client=openai_client,
                 eval_run=eval_run,
-                config=text_params,
+                config_blob=config_blob,
                 dataset_items_slice=items_slice,
                 chunk_index=chunk_index,
             )

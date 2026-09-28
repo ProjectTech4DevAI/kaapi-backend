@@ -32,6 +32,7 @@ Returns comprehensive evaluation information including processing status, config
       "question": "What is 2+2?",
       "llm_answer": "4",
       "ground_truth_answer": "4",
+      "guardrail": null,
       "scores": [
         {
           "name": "cosine_similarity",
@@ -82,3 +83,4 @@ Returns comprehensive evaluation information including processing status, config
 * CATEGORICAL scores include distribution counts in summary
 * Only complete scores are included (all traces have been rated)
 * Numeric values are rounded to 2 decimal places
+* `guardrail` (row format only) reports what the config's guardrails did to that row: `"blocked: <reason>"` (no answer was generated, the row is unscoreable with reason `guardrail_blocked` and is not counted as a failure), `"rephrased"` (guardrails answered directly and the answer is scored normally), `"applied"` (guardrails ran and passed the content through), or `null`/absent (guardrails did not run, or were bypassed because the service was unreachable). Fast runs only; batch runs never carry it.

@@ -196,6 +196,14 @@ def _merge_single_trace(existing: TraceData, fresh: TraceData) -> TraceData:
             fresh.get("category") or existing.get("category") or DEFAULT_CATEGORY
         )
 
+    # Fresh wins outright when it carries the key: None means "did not fire", so an
+    # `or` chain would pin a stale "blocked" on a row that passes in a later run.
+    # Langfuse-built traces have no such key, so a resync keeps the cached value.
+    if "guardrail" in fresh:
+        merged["guardrail"] = fresh["guardrail"]
+    elif "guardrail" in existing:
+        merged["guardrail"] = existing["guardrail"]
+
     return merged
 
 

@@ -746,6 +746,11 @@ def transform_kaapi_config_to_native(
         mapped_params, warnings = map_kaapi_to_openai_params(
             session=session, kaapi_params=kaapi_params
         )
+        # Ask OpenAI to return the file_search hits. Set here and not in the
+        # mapper: its other callers build Batch API bodies, where `include` is
+        # invalid.
+        if any(t.get("type") == "file_search" for t in mapped_params.get("tools", [])):
+            mapped_params["include"] = ["file_search_call.results"]
         return (
             NativeCompletionConfig(
                 provider="openai-native", params=mapped_params, type=kaapi_config.type

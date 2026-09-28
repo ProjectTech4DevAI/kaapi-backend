@@ -48,6 +48,7 @@ UNSCOREABLE_EMPTY_OUTPUT: str = "empty_output"
 UNSCOREABLE_EMPTY_GROUND_TRUTH: str = "empty_ground_truth"
 UNSCOREABLE_EMBEDDING_FAILED: str = "embedding_failed"
 UNSCOREABLE_MISSING_TRACE_ID: str = "missing_trace_id"
+UNSCOREABLE_GUARDRAIL_BLOCKED: str = "guardrail_blocked"
 JUDGE_FAILED_REASON: str = "judge_failed"
 
 UNSCOREABLE_REASONS: tuple[str, ...] = (
@@ -55,6 +56,7 @@ UNSCOREABLE_REASONS: tuple[str, ...] = (
     UNSCOREABLE_EMPTY_GROUND_TRUTH,
     UNSCOREABLE_EMBEDDING_FAILED,
     UNSCOREABLE_MISSING_TRACE_ID,
+    UNSCOREABLE_GUARDRAIL_BLOCKED,
     JUDGE_FAILED_REASON,
 )
 
@@ -80,6 +82,9 @@ class TraceData(TypedDict):
     question_id: int | None
     ground_truth_answer: str
     category: NotRequired[str]
+    # Guardrail outcome for the row ("blocked: ...", "rephrased", "applied"), None
+    # when guardrails did not fire. Absent on traces built from Langfuse.
+    guardrail: NotRequired[str | None]
     scores: list[TraceScore]
 
 

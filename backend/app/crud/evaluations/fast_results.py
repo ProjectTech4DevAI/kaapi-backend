@@ -5,10 +5,22 @@ dicts produced here are the units uploaded to S3, so they must stay
 JSON-serializable and match the batch path's shape.
 """
 
+from collections.abc import Mapping
 from typing import Any, TypedDict
 
 from app.core.config import settings
 from app.crud.evaluations.response_parsing import field_value
+
+# Guardrail outcome on a Stage-1 row; `blocked` is stored as f"{GUARDRAIL_BLOCKED}: {error}"
+# so the provider's reason survives. Plain str, not the service layer's
+# GuardrailOutcomeLabel, to keep this module free of `app.services` imports.
+GUARDRAIL_BLOCKED: str = "blocked"
+GUARDRAIL_REPHRASED: str = "rephrased"
+GUARDRAIL_APPLIED: str = "applied"
+
+# Keys `execute_llm_call` puts on `BlockResult.metadata` when guardrails ran and
+# passed the content through; their presence is what `GUARDRAIL_APPLIED` reports.
+GUARDRAIL_METADATA_KEYS: tuple[str, ...] = ("input_guardrail", "output_guardrail")
 
 
 class ResponseResult(TypedDict, total=False):
@@ -23,6 +35,7 @@ class ResponseResult(TypedDict, total=False):
     question_id: int | None
     failed: bool
     retrieved_chunks: list[dict[str, Any]]
+    guardrail: str | None
 
 
 class EmbeddingResult(TypedDict, total=False):
@@ -51,6 +64,7 @@ def build_response_result(
     response_id: str | None = None,
     usage: dict[str, int] | None = None,
     retrieved_chunks: list[dict[str, Any]] | None = None,
+    guardrail: str | None = None,
 ) -> ResponseResult:
     """One Stage-1 per-item result, in the batch path's shape."""
     return {
@@ -63,7 +77,14 @@ def build_response_result(
         "question_id": question_id,
         "failed": failed,
         "retrieved_chunks": retrieved_chunks,
+        "guardrail": guardrail,
     }
+
+
+def is_guardrail_blocked(row: Mapping[str, Any]) -> bool:
+    """True when guardrails hard-blocked this row, leaving it with no output to score."""
+    # `.get` not `[...]`: response units written before guardrails landed have no key.
+    return (row.get("guardrail") or "").startswith(f"{GUARDRAIL_BLOCKED}:")
 
 
 def build_embedding_failure(item_id: str, error: str) -> EmbeddingResult:

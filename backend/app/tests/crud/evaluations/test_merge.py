@@ -362,3 +362,28 @@ class TestMergeBackfillIntegration:
             s for s in merged["summary_scores"] if s["name"] == "Cosine Similarity"
         )
         assert cosine["total_pairs"] == 2  # both recovered, not 1
+
+
+class TestMergeGuardrailOutcome:
+    def test_fresh_none_clears_a_stale_block(self):
+        existing = [{**_trace("1"), "guardrail": "blocked: input flagged as abusive"}]
+        fresh = [{**_trace("1"), "guardrail": None}]
+
+        merged, stats = merge_trace_data(existing, fresh)
+
+        assert merged[0]["guardrail"] is None
+        assert stats["updated"] == 1
+
+    def test_langfuse_resync_without_the_key_keeps_the_cached_outcome(self):
+        """Traces rebuilt from Langfuse never carry `guardrail`, so a resync of a
+        blocked row must not silently drop its reason."""
+        existing = [{**_trace("1"), "guardrail": "blocked: input flagged as abusive"}]
+        fresh = [_trace("1", value=2.0)]
+
+        merged, _ = merge_trace_data(existing, fresh)
+
+        assert merged[0]["guardrail"] == "blocked: input flagged as abusive"
+
+    def test_a_trace_that_never_had_the_key_does_not_gain_one(self):
+        merged, _ = merge_trace_data([_trace("1")], [_trace("1", value=2.0)])
+        assert "guardrail" not in merged[0]

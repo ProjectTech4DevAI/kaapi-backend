@@ -148,3 +148,52 @@ class TestScoreCosineRun:
             total_items=1,
         )
         assert result.per_item_scores == {"trace-a": 1.0}
+
+
+class TestGuardrailBlockedScoring:
+    def test_blocked_row_is_guardrail_blocked_not_empty_output(self) -> None:
+        response = _response("i", output="")
+        response["guardrail"] = "blocked: input flagged as abusive"
+        assert classify_empty_side(response) == "guardrail_blocked"
+
+    def test_blocked_rows_land_in_their_own_summary_bucket(self) -> None:
+        responses = [_response("a")]
+        for item_id in ("b", "c"):
+            blocked = _response(item_id, output="")
+            blocked["guardrail"] = "blocked: input flagged as abusive"
+            responses.append(blocked)
+
+        result = score_cosine_run(
+            response_results=responses,
+            embedding_results=[_embedding("a", [1.0, 0.0], [1.0, 0.0])],
+            item_refs=build_item_refs(responses, {}),
+            trace_id_mapping={},
+            total_items=3,
+        )
+
+        assert result.unscoreable == {
+            "b": "guardrail_blocked",
+            "c": "guardrail_blocked",
+        }
+        summary = next(
+            s for s in result.summary_scores if s["name"] == COSINE_SCORE_NAME
+        )
+        # "other" is the bucket for a reason missing from UNSCOREABLE_REASONS, which
+        # is what the UI would show if the constant were never registered.
+        assert summary["unscoreable"] == {"guardrail_blocked": 2}
+
+    def test_rephrased_row_is_scored_like_any_other(self) -> None:
+        response = _response("a", output="the canned safe answer")
+        response["guardrail"] = "rephrased"
+        assert classify_empty_side(response) is None
+
+        result = score_cosine_run(
+            response_results=[response],
+            embedding_results=[_embedding("a", [1.0, 0.0], [1.0, 0.0])],
+            item_refs=build_item_refs([response], {}),
+            trace_id_mapping={},
+            total_items=1,
+        )
+
+        assert result.unscoreable == {}
+        assert result.item_id_to_score == {"a": 1.0}

@@ -56,6 +56,7 @@ APIKey → Organization, Project, User  # programmatic access
 - **Langfuse** — every LLM call and evaluation run writes traces/scores. A change to run scoring or trace shape ripples here.
 - **kaapi-frontend console** — reads run results, annotation queues, config CRUD. A response-shape change ripples here.
 - **Provider Batch APIs** (OpenAI, Gemini, Anthropic in `core/batch/`) — eval/assessment payload shape changes ripple here.
+- **kaapi-guardrails service** — `/llm/call`, `/llm/chain` **and fast evaluation runs** call it inline (`services/llm/guardrails.py`). A validator or ban-list change therefore moves eval scores, not just live traffic; see [modules/guardrails.md](modules/guardrails.md).
 - **Object storage** (`core/cloud/storage.py` S3; `services/buckets/` GCS signed URLs) — files, dataset artifacts, gs:// attachments.
 
 ## Blast-radius procedure

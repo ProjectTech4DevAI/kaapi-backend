@@ -23,16 +23,16 @@ from contextlib import ExitStack
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
-import openai
 import pytest
 from sqlmodel import Session
 
 from app.core.config import settings
 from app.crud.evaluations.fast import (
-    _responses_call_for_item,
+    _llm_call_for_item,
+    _score_judge_path,
     run_fast_evaluation,
-    run_response_chunk,
 )
 from app.crud.evaluations.fast_chunks import (
     CHUNK_CONFIG_INDEX,
@@ -53,13 +53,14 @@ from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
 from app.models.llm.request import (
     ConfigBlob,
+    LLMCallConfig,
     PromptTemplate,
-    TextLLMParams,
     build_kaapi_completion_config,
 )
-from app.models.response import FileResultChunk
+from app.services.llm.chain.types import BlockResult
 from app.services.llm.providers.claude import STOP_REASON_COMPLETE
 from app.tests.utils.auth import TestAuthContext
+from app.tests.utils.llm import text_llm_call_response
 from app.tests.utils.test_data import (
     create_test_config,
     create_test_evaluation_dataset,
@@ -67,6 +68,11 @@ from app.tests.utils.test_data import (
 from app.tests.utils.utils import random_lower_string
 
 COSINE_SCORE_NAME = "Cosine Similarity"
+
+# Tenant ids for the DB-free per-item worker tests: the LLM call is mocked, so
+# they are only carried through to the (asserted elsewhere) execute_llm_call kwargs.
+EVAL_PROJECT_ID = 101
+EVAL_ORG_ID = 202
 
 
 def _make_dataset(*, db: Session, user_api_key: TestAuthContext) -> EvaluationDataset:
@@ -1079,33 +1085,38 @@ def _responses_item(item_id: str = "item-1") -> dict[str, Any]:
     }
 
 
-def _openai_response():
-    return SimpleNamespace(
-        output_text="generated answer",
-        output=[],
-        id="resp_1",
-        usage=SimpleNamespace(input_tokens=5, output_tokens=5, total_tokens=10),
-    )
-
-
 class TestResponsesChunkCapture:
-    """`_responses_call_for_item` flattens file_search hits into JSON-safe dicts."""
+    """`_llm_call_for_item` flattens file_search hits into JSON-safe dicts."""
 
-    def test_success_with_chunks_returns_serializable_plain_dicts(self):
-        client = MagicMock()
-        client.responses.create.return_value = _openai_response()
+    @staticmethod
+    def _run_item(result: BlockResult) -> dict[str, Any]:
         with patch(
-            "app.crud.evaluations.fast.get_file_search_results",
-            return_value=[
-                FileResultChunk(score=0.91, text="chunk A", filename="doc.pdf"),
-                FileResultChunk(score=0.42, text="chunk B"),
-            ],
+            "app.crud.evaluations.fast._execute_llm_call_for_question",
+            return_value=result,
         ):
-            result = _responses_call_for_item(
-                openai_client=client,
-                base_params={"model": "gpt-4o"},
+            return _llm_call_for_item(
+                config=LLMCallConfig(id=uuid4(), version=1),
+                project_id=EVAL_PROJECT_ID,
+                organization_id=EVAL_ORG_ID,
                 item=_responses_item(),
             )
+
+    def test_success_with_chunks_returns_serializable_plain_dicts(self):
+        raw = {
+            "output": [
+                {
+                    "type": "file_search_call",
+                    "results": [
+                        {"score": 0.91, "text": "chunk A", "filename": "doc.pdf"},
+                        {"score": 0.42, "text": "chunk B"},
+                    ],
+                }
+            ]
+        }
+
+        result = self._run_item(
+            BlockResult(response=text_llm_call_response(provider_raw_response=raw))
+        )
 
         assert result["failed"] is False
         # filename flows into the persisted unit so knowledge_base can name its matches.
@@ -1116,33 +1127,18 @@ class TestResponsesChunkCapture:
         json.dumps(result)  # the S3 unit must stay JSON-serializable
 
     def test_success_without_hits_returns_empty_chunks(self):
-        client = MagicMock()
-        client.responses.create.return_value = _openai_response()
-        with patch(
-            "app.crud.evaluations.fast.get_file_search_results", return_value=[]
-        ):
-            result = _responses_call_for_item(
-                openai_client=client,
-                base_params={"model": "gpt-4o"},
-                item=_responses_item(),
-            )
+        result = self._run_item(
+            BlockResult(response=text_llm_call_response(provider_raw_response={}))
+        )
 
         assert result["failed"] is False
         assert result["retrieved_chunks"] == []
 
     def test_error_path_has_no_chunks(self):
-        client = MagicMock()
-        client.responses.create.side_effect = openai.OpenAIError("provider down")
-        with patch("app.crud.evaluations.fast.get_file_search_results") as fake_search:
-            result = _responses_call_for_item(
-                openai_client=client,
-                base_params={"model": "gpt-4o"},
-                item=_responses_item(),
-            )
+        result = self._run_item(BlockResult(error="provider down"))
 
         assert result["failed"] is True
         assert result["retrieved_chunks"] is None
-        fake_search.assert_not_called()
 
 
 class TestKnowledgeBaseScoring:
@@ -1457,60 +1453,34 @@ class TestFormatTopKbMatches:
         assert format_top_kb_matches([]) == ""
 
 
-class TestFileSearchIncludeParam:
-    """`run_response_chunk` requests file_search hits only when a file_search tool is present,
-    and never overrides tool_choice (stays at the model default / auto)."""
+class TestJudgePathGuardrailBlocked:
+    def test_blocked_row_keeps_guardrail_blocked_while_a_judged_row_fails(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
+        blocked = {
+            **_resp_result("item-1", "Q1"),
+            "generated_output": "",
+            "guardrail": "blocked: input flagged as abusive",
+        }
+        item_refs = {"item-1": "trace-1", "item-2": "trace-2"}
 
-    def _run_and_capture_base_params(
-        self, *, db: Session, eval_run: EvaluationRun, tools: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        captured: dict[str, Any] = {}
-
-        def _fake_call(*, openai_client, base_params, item):
-            captured.update(base_params)
-            return {"item_id": item["id"], "failed": False, "usage": {}}
-
-        with (
-            patch(
-                "app.crud.evaluations.fast.map_kaapi_to_openai_params",
-                return_value=({"model": "gpt-4o", "tools": tools}, []),
-            ),
-            patch(
-                "app.crud.evaluations.fast._responses_call_for_item",
-                side_effect=_fake_call,
-            ),
-            patch(
-                "app.crud.evaluations.fast._upload_unit_to_s3",
-                return_value="s3://bucket/chunk.json",
-            ),
+        with patch(
+            "app.crud.evaluations.judge._create_judge_response",
+            side_effect=RuntimeError("judge exploded"),
         ):
-            run_response_chunk(
+            outcome = _score_judge_path(
                 session=db,
                 openai_client=MagicMock(),
+                response_results=[blocked, _resp_result("item-2", "Q2")],
+                item_refs=item_refs,
                 eval_run=eval_run,
-                config=TextLLMParams(model="gpt-4o"),
-                dataset_items_slice=[{"id": "item-1"}],
-                chunk_index=0,
+                log_prefix="test",
             )
-        return captured
 
-    def test_file_search_present_sets_include_and_leaves_tool_choice_default(
-        self, db: Session, user_api_key: TestAuthContext
-    ):
-        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
-        base_params = self._run_and_capture_base_params(
-            db=db, eval_run=eval_run, tools=[{"type": "file_search"}]
-        )
-        assert base_params["include"] == ["file_search_call.results"]
-        assert "tool_choice" not in base_params
-
-    def test_no_file_search_leaves_include_and_tool_choice_unset(
-        self, db: Session, user_api_key: TestAuthContext
-    ):
-        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
-        base_params = self._run_and_capture_base_params(
-            db=db, eval_run=eval_run, tools=[]
-        )
-        assert "include" not in base_params
-        assert "tool_choice" not in base_params
-        assert "include" not in base_params
+        assert outcome.unscoreable == {
+            "trace-1": "guardrail_blocked",
+            "trace-2": "judge_failed",
+        }

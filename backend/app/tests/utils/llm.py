@@ -1,17 +1,25 @@
+from typing import Any
+
 from sqlmodel import Session
 
 from app.crud import JobCrud
 from app.crud.llm import create_llm_call, update_llm_call_response
-from app.models import JobType, Job
-from app.models.llm.response import LLMCallResponse
+from app.models import Job, JobType
+from app.models.llm import LLMCallRequest
 from app.models.llm.request import (
     ConfigBlob,
     LLMCallConfig,
     QueryParams,
     build_kaapi_completion_config,
 )
+from app.models.llm.response import (
+    LLMCallResponse,
+    LLMResponse,
+    TextContent,
+    TextOutput,
+    Usage,
+)
 from app.tests.utils.utils import get_project
-from app.models.llm import LLMCallRequest
 
 
 def create_llm_job(db: Session) -> Job:
@@ -134,3 +142,24 @@ def create_llm_call_with_audio_uri_response(
     )
 
     return llm_call
+
+
+def text_llm_call_response(
+    text: str = "generated answer",
+    *,
+    provider_response_id: str = "resp_1",
+    model: str = "gpt-4o",
+    usage: Usage | None = None,
+    provider_raw_response: dict[str, Any] | None = None,
+) -> LLMCallResponse:
+    """A text `LLMCallResponse` as `execute_llm_call` returns it on `BlockResult`."""
+    return LLMCallResponse(
+        response=LLMResponse(
+            provider_response_id=provider_response_id,
+            provider="openai",
+            model=model,
+            output=TextOutput(content=TextContent(value=text)),
+        ),
+        usage=usage or Usage(input_tokens=5, output_tokens=7, total_tokens=12),
+        provider_raw_response=provider_raw_response,
+    )

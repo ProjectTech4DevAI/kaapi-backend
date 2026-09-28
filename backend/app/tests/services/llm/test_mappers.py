@@ -95,6 +95,18 @@ class TestMapKaapiToOpenAIParams:
         assert result["tools"][0]["max_num_results"] == 50
         assert warnings == []
 
+    def test_knowledge_base_ids_do_not_add_include(self, db: Session):
+        # Batch API bodies are assembled from this mapper and reject `include`;
+        # it belongs to transform_kaapi_config_to_native only.
+        kaapi_params = TextLLMParams(model="gpt-4o", knowledge_base_ids=["vs_abc123"])
+
+        result, warnings = map_kaapi_to_openai_params(
+            session=db, kaapi_params=kaapi_params.model_dump(exclude_none=True)
+        )
+
+        assert result["tools"][0]["type"] == "file_search"
+        assert "include" not in result
+
     def test_temperature_suppressed_for_reasoning_models(self, db: Session):
         """Test that temperature is suppressed with warning for reasoning models when reasoning is set."""
         kaapi_params = TextLLMParams(
@@ -1455,3 +1467,35 @@ class TestTransformKaapiConfigToNative:
         assert result.params["language"] == "hi"  # Mapped from hi-IN
         assert result.params["response_format"] == "wav"  # Default
         assert warnings == []
+
+    def test_transform_openai_text_with_knowledge_base_requests_file_search_results(
+        self, db: Session
+    ):
+        kaapi_config = build_kaapi_completion_config(
+            provider="openai",
+            type="text",
+            params={"model": "gpt-4o", "knowledge_base_ids": ["vs_abc123"]},
+        )
+
+        result, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
+
+        assert result.params["tools"][0]["type"] == "file_search"
+        assert result.params["include"] == ["file_search_call.results"]
+
+    def test_transform_openai_text_without_knowledge_base_omits_include(
+        self, db: Session
+    ):
+        kaapi_config = build_kaapi_completion_config(
+            provider="openai",
+            type="text",
+            params={"model": "gpt-4o"},
+        )
+
+        result, warnings = transform_kaapi_config_to_native(
+            session=db, kaapi_config=kaapi_config
+        )
+
+        assert "tools" not in result.params
+        assert "include" not in result.params
