@@ -32,8 +32,6 @@ runs:
         FAMILY: ${{ inputs.task-definition }}
         POLL_INTERVAL: ${{ inputs.poll-interval }}
       run: |
-        # The circuit breaker is what turns a crash-looping rollout into a
-        # FAILED state (with rollback) instead of one that hangs until timeout.
         args=(--cluster "$CLUSTER" --service "$SERVICE" --force-new-deployment
               --deployment-configuration '{"deploymentCircuitBreaker":{"enable":true,"rollback":true},"maximumPercent":200,"minimumHealthyPercent":100}')
         [ -n "$FAMILY" ] && args+=(--task-definition "$FAMILY")
