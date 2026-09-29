@@ -3,7 +3,7 @@ name = "app"
 version = "0.1.0"
 description = ""
 requires-python = ">=3.12,<4.0"
-license = "AGPL-3.0"
+license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
 dependencies = [
     "fastapi[standard]>=0.116.0",
