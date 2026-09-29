@@ -73,7 +73,7 @@ decision-level view.
 
 ## 2. Component map
 
-```
+```text
 backend/app/
 ├── api/routes/assessment/
 │   └── api.py                     ★ POST /assessments (method inferred; RESPONSE → 501)
@@ -244,7 +244,7 @@ pre-filter verdicts, and counts.
 | **All rows gated out** | The assessment stage submits no batch and the run finalizes with an all-gated result (still delivered). |
 | **Non-transient tick error** | A bad/deleted config version or a provider/credential/network error during submit routes through `_fail` → status `FAILED` + a failure webhook. |
 | **Transient poll error** | A provider/network hiccup while polling just retries next tick — a running batch is never failed for a transient error. |
-| **Idempotent redelivery** | State is keyed off `stage_status`, so a duplicate Celery delivery re-polls or re-submits the same stage safely. |
+| **Redelivery keyed off `stage_status`** | A duplicate Celery delivery re-polls or re-submits based on `stage_status` in the bag. This is not fully race-safe: `stage_status` is read without a row lock, and the provider is called before `PROCESSING` + the provider batch ID are persisted, so concurrent delivery or an ambiguous provider response can submit a duplicate batch. `_finalize` / `_fail` also have no delivery marker, so a duplicate poll after completion can send a duplicate callback. |
 | **Per-row validation** | Rows are validated against `input_schema` at submit; a missing/extra column or a non-URL attachment fails `422`, naming the row. Template placeholders are validated earlier, at config-save: every `{column}` in any `submission` must resolve against `input_schema`, or the save is rejected. |
 
 ---

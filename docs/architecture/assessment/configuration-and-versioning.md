@@ -20,7 +20,7 @@ https://drive.google.com/drive/folders/1BCaauUuXr9DaZTWI-_-x101SDT4ktwp5?usp=sha
 Every configuration carries a **tag** that fixes its shape. An assessment
 configuration must use:
 
-```
+```text
 tag = ASSESSMENT
 ```
 
@@ -172,8 +172,9 @@ output and its pre-filter verdict), so you can see why it was skipped.
 ## Full example
 
 A grader on OpenAI — a `topic_relevance` gate on `gpt-4o-mini`, the assessment on
-`gpt-4o`:
-[`config_openai.json`](https://github.com/ProjectTech4DevAI/kaapi-backend/blob/feat/doc-assessment-architecture/z_assessment_test/tap_test/config_openai.json)
+`gpt-4o`: `config_openai.json` in the [sample configuration JSON
+files](https://drive.google.com/drive/folders/1BCaauUuXr9DaZTWI-_-x101SDT4ktwp5?usp=share_link)
+linked above.
 
 ---
 
@@ -187,6 +188,7 @@ Configurations are versioned. You never overwrite one — you add a version.
 | Add a new version | `POST /configs/{config_id}/versions` |
 | List all versions | `GET /configs/{config_id}/versions` |
 | Get a specific version | `GET /configs/{config_id}/versions/{version_number}` |
+| Delete a version | `DELETE /configs/{config_id}/versions/{version_number}` (soft delete) |
 
 How it works:
 
@@ -197,7 +199,11 @@ How it works:
   shape.
 - **An assessment pins the exact version it ran with** (`config_id` +
   `config_version`). Editing the configuration later never changes a result that
-  has already completed — reproducible by design.
+  has already completed.
+- **Deleting a version is not currently blocked by references** — a soft-deleted
+  version is excluded from lookups, so an assessment that pinned it can fail to
+  resolve its config on a later retry. There is no reference check today; avoid
+  deleting a version that a submitted assessment may still need to re-resolve.
 - **Track** versions with the list/get endpoints and choose which
   `config_version` to submit.
 

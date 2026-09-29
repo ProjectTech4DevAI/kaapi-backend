@@ -98,16 +98,19 @@ Returned immediately; contains no results. Wrapped in the standard envelope
 
 ## Webhook — the result (POST to `callback_url`)
 
-Delivered once, on completion.
+Delivered once, on completion. Wrapped in the same standard envelope as the ack —
+`{ success, data, error, metadata }` — with the `AssessmentCallback` payload
+nested under `data`. `status` lives only inside that nested `data`, never at the
+envelope's top level (unlike the ack, where `status` sits directly under `data`).
 
-| Field | Type | Notes |
+| Field (`data`) | Type | Notes |
 |---|---|---|
 | `assessment_id` | UUID | matches the ack |
 | `status` | enum | terminal (see below) |
 | `data` | object | the `AssessmentBatchResult` (BATCH) |
 | `request_metadata` | object \| null | echoed from the request |
 
-`data` (`AssessmentBatchResult`):
+`data.data` (`AssessmentBatchResult`):
 
 | Field | Type | Notes |
 |---|---|---|
@@ -127,30 +130,54 @@ Delivered once, on completion.
 
 ```json
 {
-  "assessment_id": "8a2a7bc1-…",
-  "status": "COMPLETED",
+  "success": true,
   "data": {
-    "total_items": 2,
-    "counts": { "assessed": 1, "filtered": 1, "errors": 0 },
-    "items": [
-      {
-        "output": {
-          "assessment": { "score": 20, "feedback": "…" },
-          "pre_filter": { "topic_relevance": { "verdict": true, "reasoning": "…" } }
+    "assessment_id": "8a2a7bc1-…",
+    "status": "COMPLETED",
+    "data": {
+      "total_items": 2,
+      "counts": { "assessed": 1, "filtered": 1, "errors": 0 },
+      "items": [
+        {
+          "output": {
+            "assessment": { "score": 20, "feedback": "…" },
+            "pre_filter": { "topic_relevance": { "verdict": true, "reasoning": "…" } }
+          },
+          "error": null
         },
-        "error": null
-      },
-      {
-        "output": {
-          "assessment": null,
-          "pre_filter": { "topic_relevance": { "verdict": false, "reasoning": "off-topic" } }
-        },
-        "error": null
-      }
-    ]
+        {
+          "output": {
+            "assessment": null,
+            "pre_filter": { "topic_relevance": { "verdict": false, "reasoning": "off-topic" } }
+          },
+          "error": null
+        }
+      ]
+    },
+    "request_metadata": { "batch": "class7-term1" }
   },
-  "request_metadata": { "batch": "class7-term1" }
+  "error": null,
+  "metadata": null
 }
+```
+
+### Verifying the webhook signature
+
+When a webhook signing secret is configured for the project (organization +
+project credential of provider `webhook_secret`), each delivery carries two
+headers:
+
+| Header | Value |
+|---|---|
+| `X-Webhook-Signature` | hex HMAC-SHA256 digest |
+| `X-Webhook-Timestamp` | Unix timestamp in milliseconds, at send time |
+
+To verify: rebuild the signing string as `"<timestamp_ms>.".encode() + raw_body`,
+where `raw_body` is the exact compact-JSON bytes received (no re-serialization),
+compute HMAC-SHA256 over it with the shared secret, and compare the hex digest
+to `X-Webhook-Signature` using a constant-time comparison. Reject deliveries
+whose `X-Webhook-Timestamp` is too far from the current time (replay
+protection). No secret configured ⇒ no signature headers are sent.
 ```
 
 ---
@@ -165,7 +192,8 @@ Delivered once, on completion.
 | `COMPLETED_WITH_ERRORS` | finished, some rows errored |
 | `FAILED` | the run failed |
 
-`status` lives on the envelope only — it is never duplicated inside `data`.
+`status` lives inside the outer envelope's `data` — for both the ack and the
+webhook — and is never duplicated inside the nested `AssessmentBatchResult`.
 
 ## Error codes (at submit)
 
