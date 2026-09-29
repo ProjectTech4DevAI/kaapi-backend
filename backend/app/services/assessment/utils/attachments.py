@@ -2,9 +2,10 @@
 
 import logging
 import re
-from typing import Any, cast
+from typing import cast
 from urllib.parse import urlparse
 
+from pydantic import JsonValue
 from sqlmodel import Session
 
 from app.core.config import settings
@@ -212,7 +213,7 @@ def resolve_attachment_values(
     value: str,
     att: AssessmentAttachment,
     type_override: str | None = None,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, JsonValue]]:
     """Resolve one dataset cell into OpenAI-supported content params (by URL)."""
     value = value.strip()
     if not value:
@@ -228,7 +229,7 @@ def resolve_attachment_values(
     # Openai doesn't support video attachments
     if item_type == VIDEO_COLUMN_TYPE:
         return []
-    resolved: list[dict[str, Any]] = []
+    resolved: list[dict[str, JsonValue]] = []
     for item_value in split_attachment_urls(value):
         url = to_direct_attachment_url(item_value, item_type)
         if item_type == IMAGE_COLUMN_TYPE:
@@ -242,7 +243,7 @@ def build_anthropic_attachment_parts(
     value: str,
     att: AssessmentAttachment,
     type_override: str | None = None,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, JsonValue]]:
     """Convert one dataset cell into one or more Anthropic content blocks (by URL)."""
     value = value.strip()
     if not value:
@@ -258,7 +259,7 @@ def build_anthropic_attachment_parts(
     # Anthropic doesn't support video attachments
     if item_type == VIDEO_COLUMN_TYPE:
         return []
-    blocks: list[dict[str, Any]] = []
+    blocks: list[dict[str, JsonValue]] = []
     for item_value in split_attachment_urls(value):
         url = to_direct_attachment_url(item_value, item_type)
         if item_type == IMAGE_COLUMN_TYPE:
@@ -269,10 +270,10 @@ def build_anthropic_attachment_parts(
 
 
 def build_gemini_video_part(
-    url: str, video_part_config: dict[str, Any] | None = None
-) -> dict[str, Any]:
+    url: str, video_part_config: dict[str, JsonValue] | None = None
+) -> dict[str, JsonValue]:
     """One Gemini ``fileData`` video part; a YouTube url must carry no mimeType."""
-    file_data: dict[str, Any] = {"fileUri": url}
+    file_data: dict[str, JsonValue] = {"fileUri": url}
     if (urlparse(url).hostname or "").lower() not in YOUTUBE_HOSTS:
         file_data["mimeType"] = _resolve_video_mime_from_url(url) or _DEFAULT_VIDEO_MIME
     return {"fileData": file_data, **(video_part_config or {})}
@@ -282,8 +283,8 @@ def build_gemini_attachment_parts(
     value: str,
     att: AssessmentAttachment,
     type_override: str | None = None,
-    video_part_config: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
+    video_part_config: dict[str, JsonValue] | None = None,
+) -> list[dict[str, JsonValue]]:
     """Convert one dataset cell into one or more Gemini content parts (by URL).
 
     Mirrors the per-item type routing used for the L2 batch so the same
@@ -301,7 +302,7 @@ def build_gemini_attachment_parts(
             att.column,
         )
         return []
-    parts: list[dict[str, Any]] = []
+    parts: list[dict[str, JsonValue]] = []
     for item_value in split_attachment_urls(value):
         url = to_direct_attachment_url(item_value, item_type)
         if item_type == IMAGE_COLUMN_TYPE:

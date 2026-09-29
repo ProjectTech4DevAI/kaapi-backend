@@ -24,6 +24,9 @@ VIDEO_COLUMN_TYPE = "video"
 # Input-column types carrying a media reference rather than prompt text.
 ATTACHMENT_COLUMN_TYPES = (IMAGE_COLUMN_TYPE, PDF_COLUMN_TYPE, VIDEO_COLUMN_TYPE)
 
+AttachmentColumnType = Literal["image", "pdf", "video"]
+ColumnType = Literal["text"] | AttachmentColumnType
+
 # {column} placeholders in a submission template; the capture group is the column name.
 PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 
@@ -42,7 +45,7 @@ class InputColumn(SQLModel):
 
     model_config = {"extra": "forbid"}
 
-    type: Literal["text", "image", "pdf", "video"]
+    type: ColumnType
     format: Literal["url", "base64"] | None = None
     strict: bool = False
 
