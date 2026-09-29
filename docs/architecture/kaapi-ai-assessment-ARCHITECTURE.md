@@ -215,6 +215,47 @@ The task [`run_assessment_api_batch`](../../backend/app/celery/tasks/job_executi
 re-enqueues itself at `POLL_COUNTDOWN_SECONDS` whenever `requeue` is true, and
 stops once the run is terminal.
 
+### Attachment resolution (`gs://` vs signed URL)
+
+An attachment column's value is either an `http(s)://` URL or a `gs://bucket/key`
+GCS reference — `input.data` submit-time validation
+([submission.py](../../backend/app/services/assessment/api/submission.py))
+requires one of those three prefixes for `image`/`pdf` columns, `422` otherwise.
+
+`gs://` values are resolved once per stage, at batch-build time, by
+[`rewrite_gcs_attachment_urls`](../../backend/app/services/assessment/utils/attachments.py)
+→ [`resolve_attachments`](../../backend/app/services/buckets/attachments.py), which
+picks a strategy **per LLM provider**:
+
+```mermaid
+flowchart LR
+    Row["row attachment value"] --> Check{"gs:// URI?"}
+    Check -->|no, already http/https| Pass["pass through unchanged"]
+    Check -->|yes| Prov{"provider ∈\n{google-gcp, google-gcp-native}?"}
+    Prov -->|yes: NATIVE| Native["pass gs:// straight through\n→ fileData.fileUri"]
+    Prov -->|no: SIGNED_URL| Sign["GCS V4 signed HTTPS URL"]
+```
+
+- **NATIVE** — when the run's provider is `google-gcp` or `google-gcp-native`
+  (Vertex), the raw `gs://` string goes straight into the Gemini/Vertex batch
+  request's `fileData.fileUri` field; the provider reads the object from GCS
+  itself, no signing.
+- **SIGNED_URL** — for every other provider (OpenAI, Anthropic, Gemini via AI
+  Studio), each distinct `gs://` URI in the stage is converted to a time-limited
+  GCS **V4 signed HTTPS URL** and the provider fetches it over HTTPS. All `gs://`
+  URIs in a stage are deduplicated and signed in **one bulk call**
+  (`GCSBucketProvider.get_bulk_signed_urls`), not per-row.
+- **Passed by reference, not uploaded** — the provider always fetches the
+  URL/URI itself; there is no base64 encoding or file-upload path in this flow.
+- **Signed URL lifetime is fixed at 24h** (`MAX_SIGNED_URL_EXPIRY_SECONDS`) —
+  this is both the requested expiry and the hard cap; there is no config path to
+  a longer expiry today, even though GCS V4 signed URLs support up to 7 days.
+- The GCS service account backing the run's `google-gcp` credential needs
+  `storage.objects.get` on the bucket for either path (native reads or signing).
+
+See the [GCS attachment resolution
+diagram](assessment/assets/gcs-attachment-resolution.webp).
+
 ---
 
 ## 6. Results & delivery
