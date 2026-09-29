@@ -67,7 +67,10 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     generate_unique_id_function=custom_generate_unique_id,
-    description="**Responsible AI for the development sector**",
+    description=(
+        "Licensed under AGPL-3.0-or-later."
+        "Source code: https://github.com/ProjectTech4DevAI/kaapi-backend/"
+    ),
 )
 
 
