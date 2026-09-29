@@ -72,5 +72,6 @@ def deliver(
         "sent" if sent else "failed",
         assessment.id,
         assessment.status,
+        files,
     )
     return sent
