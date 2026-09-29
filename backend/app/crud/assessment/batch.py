@@ -25,6 +25,7 @@ from app.models.assessment import (
     AssessmentSubmission,
 )
 from app.models.batch_job import BatchJob, BatchJobType
+from app.models.config.assessment_blob import VIDEO_COLUMN_TYPE
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
 from app.models.llm.request import ConfigBlob
 from app.services.assessment.utils.attachments import (
@@ -32,6 +33,7 @@ from app.services.assessment.utils.attachments import (
     build_anthropic_attachment_parts,
     build_gemini_attachment_parts,
     resolve_attachment_values,
+    resolve_item_type,
     rewrite_gcs_attachment_urls,
 )
 from app.services.assessment.validators import (
@@ -190,13 +192,19 @@ def build_google_jsonl(
 
         # Attachments (Gemini uses file_data for inline content)
         video_part_config = google_params.get("video_part_config")
+        has_video = False
         for att in attachments:
             cell_value = row.get(att.column, "")
+            type_override = attachment_type_for_row(att, row)
+            if cell_value.strip() and (
+                resolve_item_type(att.type, type_override) == VIDEO_COLUMN_TYPE
+            ):
+                has_video = True
             parts.extend(
                 build_gemini_attachment_parts(
                     cell_value,
                     att,
-                    type_override=attachment_type_for_row(att, row),
+                    type_override=type_override,
                     video_part_config=video_part_config,
                 )
             )
@@ -229,6 +237,9 @@ def build_google_jsonl(
         if output_schema:
             generation_config["responseMimeType"] = "application/json"
             generation_config["responseSchema"] = output_schema
+        media_resolution = google_params.get("media_resolution")
+        if media_resolution and has_video:
+            generation_config["mediaResolution"] = media_resolution
         if generation_config:
             request["generationConfig"] = generation_config
 
