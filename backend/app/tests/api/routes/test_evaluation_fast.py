@@ -22,21 +22,23 @@ from app.core.config import settings
 from app.core.util import now
 from app.crud.evaluations.cron import dispatch_fast_evaluation_barriers
 from app.crud.evaluations.fast import (
+    _create_response,
+    _merge_response_chunks,
+    _stage2_embeddings,
+    _stage3_score_and_trace,
+    run_fast_evaluation,
+    run_response_chunk,
+)
+from app.crud.evaluations.fast_chunks import (
     CHUNK_CONFIG_INDEX,
     CHUNK_CONFIG_RUN_ID,
     JOB_TYPE_EMBEDDING_FAST,
     JOB_TYPE_EVALUATION_FAST,
     JOB_TYPE_EVALUATION_FAST_CHUNK,
-    _create_response,
-    _get_chunk_job,
-    _is_failure_threshold_breached,
-    _merge_response_chunks,
-    _stage2_embeddings,
-    _stage3_score_and_trace,
+    get_chunk_job,
     list_response_chunk_jobs,
-    run_fast_evaluation,
-    run_response_chunk,
 )
+from app.crud.evaluations.fast_results import is_failure_threshold_breached
 from app.models import Config, EvaluationDataset, EvaluationRun
 from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
@@ -73,18 +75,18 @@ def _seeded_random() -> Iterator[None]:
 
 
 class TestFailureThreshold:
-    """`_is_failure_threshold_breached` controls run-level fail-fast."""
+    """`is_failure_threshold_breached` controls run-level fail-fast."""
 
     def test_returns_false_when_total_is_zero(self) -> None:
-        assert _is_failure_threshold_breached(failed_rows=0, total_rows=0) is False
+        assert is_failure_threshold_breached(failed_rows=0, total_rows=0) is False
 
     def test_returns_true_above_threshold(self) -> None:
         # default EVAL_FAST_FAILURE_THRESHOLD = 0.5
-        assert _is_failure_threshold_breached(failed_rows=6, total_rows=10) is True
+        assert is_failure_threshold_breached(failed_rows=6, total_rows=10) is True
 
     def test_returns_false_at_threshold(self) -> None:
         # 0.5 / 1.0 is NOT greater-than the threshold, so do not breach
-        assert _is_failure_threshold_breached(failed_rows=5, total_rows=10) is False
+        assert is_failure_threshold_breached(failed_rows=5, total_rows=10) is False
 
 
 class TestCallWithRetry:
@@ -540,12 +542,11 @@ class TestRunResponseChunk:
                 config=TextLLMParams(model="gpt-4o", instructions="x"),
                 dataset_items_slice=items,
                 chunk_index=0,
-                log_prefix="[t]",
             )
 
         assert fake_openai.responses.create.call_count == 2
 
-        job = _get_chunk_job(session=db, eval_run_id=eval_run.id, chunk_index=0)
+        job = get_chunk_job(session=db, eval_run_id=eval_run.id, chunk_index=0)
         assert job is not None
         assert job.job_type == JOB_TYPE_EVALUATION_FAST_CHUNK
         assert job.config[CHUNK_CONFIG_RUN_ID] == eval_run.id
@@ -572,7 +573,6 @@ class TestRunResponseChunk:
             "config": TextLLMParams(model="gpt-4o", instructions="x"),
             "dataset_items_slice": items,
             "chunk_index": 0,
-            "log_prefix": "[t]",
         }
         with patch(
             "app.crud.evaluations.fast.map_kaapi_to_openai_params",
@@ -731,7 +731,6 @@ class TestStageSkipping:
                         "failed": False,
                     }
                 ],
-                log_prefix="[t]",
             )
 
         assert results == cached
@@ -1110,20 +1109,14 @@ class TestFanOutPartition:
         monkeypatch,
     ):
         monkeypatch.setattr(settings, "EVAL_FAST_CHUNK_SIZE", 2)
-        dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
+        dataset = _make_fast_eligible_dataset(
+            db=db, user_api_key=user_api_key, original_items_count=5
+        )
         config = _make_text_openai_config(db, user_api_key.project_id)
-        items = [_dataset_item(f"item-{i}") for i in range(5)]
 
-        with (
-            patch("app.services.evaluations.fast.get_langfuse_client"),
-            patch(
-                "app.services.evaluations.fast.fetch_dataset_items",
-                return_value=items,
-            ),
-            patch(
-                "app.services.evaluations.fast.start_fast_evaluation_chunk"
-            ) as mock_start,
-        ):
+        with patch(
+            "app.services.evaluations.fast.start_fast_evaluation_chunk"
+        ) as mock_start:
             run = validate_and_start_fast_evaluation(
                 session=db,
                 dataset_id=dataset.id,
@@ -1135,6 +1128,7 @@ class TestFanOutPartition:
             )
 
         # ceil(5 / 2) = 3 chunks, indices 0..2, no gaps or dupes.
+        # total_items now computed from dataset metadata, not by loading items.
         assert mock_start.call_count == 3
         dispatched = {c.kwargs["chunk_index"] for c in mock_start.call_args_list}
         assert dispatched == {0, 1, 2}
@@ -1198,24 +1192,23 @@ class TestFanOutPartition:
 
 
 class TestValidateAndStartFailure:
-    def test_dataset_fetch_error_marks_run_failed_and_raises_500(
+    def test_chunk_dispatch_error_marks_run_failed_and_raises_500(
         self,
         db: Session,
         user_api_key: TestAuthContext,
     ):
+        """Chunk dispatch failure (e.g., broker down) marks run failed and raises 500.
+
+        total_items is now computed from dataset metadata in the trigger, so item-fetch
+        errors no longer occur here; the only failure scenario is a dispatch error.
+        """
         dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
         config = _make_text_openai_config(db, user_api_key.project_id)
-        run_name = f"fetch-fail-{random_lower_string()}"
+        run_name = f"dispatch-fail-{random_lower_string()}"
 
-        with (
-            patch("app.services.evaluations.fast.get_langfuse_client"),
-            patch(
-                "app.services.evaluations.fast.fetch_dataset_items",
-                side_effect=RuntimeError("langfuse down"),
-            ),
-            patch(
-                "app.services.evaluations.fast.start_fast_evaluation_chunk"
-            ) as mock_start,
+        with patch(
+            "app.services.evaluations.fast.start_fast_evaluation_chunk",
+            side_effect=RuntimeError("broker down"),
         ):
             with pytest.raises(HTTPException) as exc:
                 validate_and_start_fast_evaluation(
@@ -1229,7 +1222,6 @@ class TestValidateAndStartFailure:
                 )
 
         assert exc.value.status_code == 500
-        mock_start.assert_not_called()
         failed = db.exec(
             select(EvaluationRun).where(EvaluationRun.run_name == run_name)
         ).first()

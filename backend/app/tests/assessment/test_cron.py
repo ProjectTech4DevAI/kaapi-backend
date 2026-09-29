@@ -1,8 +1,8 @@
 """Tests for assessment/cron.py helper functions."""
 
 from datetime import datetime
-from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -21,10 +21,7 @@ from app.models.assessment import (
 from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.config.config import ConfigTag
 from app.tests.utils.auth import get_user_test_auth_context
-from app.tests.utils.test_data import (
-    create_test_config,
-    create_test_evaluation_dataset,
-)
+from app.tests.utils.test_data import create_test_config
 from app.tests.utils.utils import random_lower_string
 
 _ASSESSMENT_BLOB = AssessmentConfigBlob.model_validate(

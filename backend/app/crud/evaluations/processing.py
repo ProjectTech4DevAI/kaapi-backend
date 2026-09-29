@@ -34,6 +34,7 @@ from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import load_json_from_object_store
 from app.crud.evaluations.batch import fetch_dataset_items
 from app.crud.evaluations.core import (
+    build_log_prefix,
     persist_score_traces,
     resolve_model_from_config,
     save_score,
@@ -396,7 +397,7 @@ async def process_completed_evaluation(
     Raises:
         Exception: If processing fails
     """
-    log_prefix = f"[org={eval_run.organization_id}][project={eval_run.project_id}][eval={eval_run.id}]"
+    log_prefix = build_log_prefix(eval_run)
     logger.info(
         f"[process_completed_evaluation] {log_prefix} Processing completed evaluation"
     )
@@ -661,7 +662,7 @@ async def process_completed_embedding_batch(
     Raises:
         Exception: If processing fails
     """
-    log_prefix = f"[org={eval_run.organization_id}][project={eval_run.project_id}][eval={eval_run.id}]"
+    log_prefix = build_log_prefix(eval_run)
     logger.info(
         f"[process_completed_embedding_batch] {log_prefix} Processing completed embedding batch"
     )
@@ -892,7 +893,7 @@ async def check_and_process_evaluation(
             "action": "processed" | "embeddings_completed" | "embeddings_failed" | "failed" | "no_change"
         }
     """
-    log_prefix = f"[org={eval_run.organization_id}][project={eval_run.project_id}][eval={eval_run.id}]"
+    log_prefix = build_log_prefix(eval_run)
     previous_status = eval_run.status
 
     try:

@@ -5,10 +5,13 @@ call out to every thin `evaluation_iteration_run` row still `PROCESSING`; the
 Celery enqueue itself is the only external boundary — the DB is real.
 """
 
+from datetime import timedelta
 from unittest.mock import patch
 
 from sqlmodel import Session
 
+from app.core.config import settings
+from app.core.util import now
 from app.crud.evaluations.cron import dispatch_pending_evaluation_iteration_resumes
 from app.crud.evaluations.iteration import (
     create_evaluation_iteration_run,
@@ -51,13 +54,15 @@ def _make_iteration_run(
         organization_id=user_api_key.organization_id,
         project_id=user_api_key.project_id,
     )
-    if status != EvaluationIterationStatusEnum.PROCESSING:
-        run = update_evaluation_iteration_run(
-            session=db,
-            iteration_run=run,
-            update=EvaluationIterationRunUpdate(status=status),
-        )
-    return run
+    # Kickoff stamps the row inside the cooldown; age it so the tick sees it as due.
+    due = now() - timedelta(
+        minutes=settings.EVAL_ITERATION_DISPATCH_COOLDOWN_MINUTES + 1
+    )
+    return update_evaluation_iteration_run(
+        session=db,
+        iteration_run=run,
+        update=EvaluationIterationRunUpdate(status=status, last_dispatched_at=due),
+    )
 
 
 class TestDispatchPendingEvaluationIterationResumes:
@@ -98,4 +103,9 @@ class TestDispatchPendingEvaluationIterationResumes:
             summary = dispatch_pending_evaluation_iteration_resumes(session=db)
 
         mock_start.assert_not_called()
-        assert summary == {"total": 0, "resumes_dispatched": 0}
+        assert summary == {
+            "total": 0,
+            "resumes_dispatched": 0,
+            "in_flight_skipped": 0,
+            "reaped": 0,
+        }

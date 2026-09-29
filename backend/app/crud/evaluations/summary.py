@@ -1,5 +1,4 @@
-"""Human-readable AI summary of a v2 judge run's per-question diagnostics.
-"""
+"""Human-readable AI summary of a v2 judge run's per-question diagnostics."""
 
 import json
 import logging
@@ -95,8 +94,6 @@ def _format_traces_for_prompt(
     Traces are handed over ungrouped: `question_id` is the 1-based dataset row
     number, which is what the system prompt tells the model to key on.
     """
-    # ponytail: every trace sent whole; ~250 traces (50 questions x dup 5) overflows
-    # context and degrades to None. Sample or group per question_id if runs get bigger.
     payload = [
         {
             "question_id": trace["question_id"],

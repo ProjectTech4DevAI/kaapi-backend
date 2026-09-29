@@ -27,11 +27,6 @@ from app.models.assessment import (
 from app.models.batch_job import BatchJob, BatchJobType
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
 from app.models.llm.request import ConfigBlob
-from app.services.llm.mappers import (
-    map_kaapi_to_anthropic_params,
-    map_kaapi_to_google_params,
-    map_kaapi_to_openai_params,
-)
 from app.services.assessment.utils.attachments import (
     attachment_type_for_row,
     build_anthropic_attachment_parts,
@@ -44,7 +39,12 @@ from app.services.assessment.validators import (
     normalize_llm_text,
     parse_rows,
 )
-from app.services.llm.mappers import kaapi_params_as_dict
+from app.services.llm.mappers import (
+    kaapi_params_as_dict,
+    map_kaapi_to_anthropic_params,
+    map_kaapi_to_google_params,
+    map_kaapi_to_openai_params,
+)
 from app.services.llm.providers.registry import LLMProvider
 from app.utils import get_anthropic_client, get_openai_client
 

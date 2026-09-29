@@ -21,7 +21,7 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation v2"])
 
 @router.post(
     "",
-    description=load_description("evaluation/create_evaluation_v2.md"),
+    description=load_description("evaluation/v2/create_evaluation.md"),
     response_model=APIResponse[EvaluationRunPublic],
     dependencies=[
         Depends(require_permission(Permission.REQUIRE_PROJECT)),

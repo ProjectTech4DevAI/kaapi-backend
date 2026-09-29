@@ -51,7 +51,7 @@ from app.tests.utils.utils import random_lower_string
 
 _SERVICE = "app.services.evaluations.prompt_improvement"
 _ROUTE_VALIDATE = (
-    "app.api.routes.evaluations.prompt_improvement_v2.validate_callback_url"
+    "app.api.routes.evaluations.v2.prompt_improvement.validate_callback_url"
 )
 POST_URL = f"{settings.API_V2_STR}/evaluations/{{evaluation_id}}/improve-prompt"
 

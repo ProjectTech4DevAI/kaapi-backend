@@ -7,8 +7,8 @@ the transactional ``db`` session with only external provider/webhook seams mocke
 
 import json
 from contextlib import contextmanager
-from uuid import uuid4
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException

@@ -29,8 +29,8 @@ from app.models.assessment import (
     AssessmentRunCreate,
     AssessmentRunPublic,
     AssessmentRunResponse,
+    AssessmentSubmission,
 )
-from app.models.assessment import AssessmentSubmission
 from app.services.assessment.service import (
     resume_assessment_run as resume_run,
 )
