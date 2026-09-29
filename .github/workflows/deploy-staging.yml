@@ -36,14 +36,16 @@ jobs:
         env:
           INSTANCE_ID: ${{ secrets.STAGING_EC2_INSTANCE_ID }}
           SECRET_ID: ${{ vars.STAGING_SECRET_ID }}
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           SECRET_ID=$(echo "$SECRET_ID" | tr -d '[:space:]')
+          echo "Deploying commit: $DEPLOY_SHA"
 
           DEPLOY_CMD="cd /data/kaapi-backend \
             && git fetch --all \
-            && git pull origin main \
+            && git checkout $DEPLOY_SHA \
             && SECRET_ID=$SECRET_ID sh scripts/fetch-secrets.sh \
-            && docker compose -f docker-compose.staging.yml build \
+            && GIT_SHA=$DEPLOY_SHA docker compose -f docker-compose.staging.yml build \
             && docker compose -f docker-compose.staging.yml --profile migrate run --rm migrate \
             && docker compose -f docker-compose.staging.yml up -d --wait --remove-orphans \
             && docker image prune -f"
@@ -96,3 +98,18 @@ jobs:
             --instance-id "$INSTANCE_ID" \
             --query '{Status:Status,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
             --output json
+
+  notify:
+    needs: [deploy]
+    if: ${{ always() && needs.deploy.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/discord-notify
+        with:
+          webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          name: kaapi-staging
+          release: "#${{ github.run_number }}"
+          sha: ${{ github.event.workflow_run.head_sha || github.sha }}
+          run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ok: ${{ needs.deploy.result == 'success' }}
