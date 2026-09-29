@@ -68,7 +68,7 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     generate_unique_id_function=custom_generate_unique_id,
     description=(
-        "Licensed under AGPL-3.0-or-later."
+        "Licensed under AGPL-3.0-or-later.\n\n"
         "Source code: https://github.com/ProjectTech4DevAI/kaapi-backend/"
     ),
 )
@@ -112,4 +112,5 @@ instrument_app(app)
 async def health() -> dict[str, str | float]:
     return {
         "status": "ok",
+        "sha": settings.GIT_SHA,
     }
