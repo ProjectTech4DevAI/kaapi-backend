@@ -26,7 +26,10 @@ from app.models.assessment import (
     BatchRunState,
     derive_method,
 )
-from app.models.config.assessment_blob import AssessmentConfigBlob
+from app.models.config.assessment_blob import (
+    ATTACHMENT_COLUMN_TYPES,
+    AssessmentConfigBlob,
+)
 from app.models.config.config import ConfigTag
 from app.services.assessment.api import batch as batch_service
 from app.services.assessment.api.submission_store import (
@@ -39,7 +42,6 @@ logger = logging.getLogger(__name__)
 
 # Attachment cell values are provided as URLs (base64 is unsupported for batch).
 _URL_PREFIXES = ("http://", "https://", "gs://")
-_ATTACHMENT_TYPES = ("image", "pdf")
 _EXTENSION_TYPES = {
     ".pdf": "pdf",
     ".png": "image",
@@ -47,6 +49,15 @@ _EXTENSION_TYPES = {
     ".jpeg": "image",
     ".gif": "image",
     ".webp": "image",
+    ".mp4": "video",
+    ".mov": "video",
+    ".mpeg": "video",
+    ".mpg": "video",
+    ".avi": "video",
+    ".wmv": "video",
+    ".flv": "video",
+    ".webm": "video",
+    ".3gp": "video",
 }
 
 
@@ -93,7 +104,7 @@ def _validate_rows_against_schema(
         for column, spec in input_schema.items():
             column_type = (spec or {}).get("type")
             value = (row.get(column) or "").strip()
-            if value and column_type in _ATTACHMENT_TYPES:
+            if value and column_type in ATTACHMENT_COLUMN_TYPES:
                 if not value.startswith(_URL_PREFIXES):
                     raise HTTPException(
                         status_code=422,

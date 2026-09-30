@@ -1,0 +1,60 @@
+name: Discord deploy notification
+description: Post a green (healthy) or red (failed) deploy-status embed to Discord.
+
+inputs:
+  webhook-url:
+    description: Discord webhook URL. When empty, the step is a no-op.
+    required: true
+  name:
+    description: Deploy target name shown in the title (e.g. kaapi-staging).
+    required: true
+  release:
+    description: Release identifier (tag or run number).
+    required: true
+  sha:
+    description: Full commit SHA; truncated to 7 chars for display.
+    required: true
+  run-url:
+    description: Link to the workflow run.
+    required: true
+  ok:
+    description: "'true' for a healthy deploy; anything else renders as failed."
+    required: true
+  failure-reason:
+    description: Optional extra line explaining a failure (e.g. CI blocked the release).
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        DISCORD_WEBHOOK_URL: ${{ inputs.webhook-url }}
+        NAME: ${{ inputs.name }}
+        RELEASE: ${{ inputs.release }}
+        SHA: ${{ inputs.sha }}
+        RUN_URL: ${{ inputs.run-url }}
+        OK: ${{ inputs.ok }}
+        REASON: ${{ inputs.failure-reason }}
+      run: |
+        [ -z "$DISCORD_WEBHOOK_URL" ] && { echo "No webhook configured, skipping"; exit 0; }
+        if [ "$OK" = "true" ]; then
+          TITLE="🟢 $NAME deployment healthy"; COLOR=3066993   # green
+        else
+          TITLE="🔴 $NAME deployment failed";  COLOR=15158332  # red
+        fi
+        SHA_SHORT=$(echo "$SHA" | cut -c1-7)
+
+        fields=$(jq -n --arg release "$RELEASE" --arg sha "$SHA_SHORT" \
+          '[{name:"Release",value:$release,inline:true},{name:"SHA",value:$sha,inline:true}]')
+        # Only a failed deploy with a stated cause gets the extra Reason line.
+        if [ "$OK" != "true" ] && [ -n "$REASON" ]; then
+          fields=$(echo "$fields" | jq --arg r "$REASON" '. + [{name:"Reason",value:$r,inline:false}]')
+        fi
+
+        payload=$(jq -n --arg title "$TITLE" --argjson color "$COLOR" \
+          --arg url "$RUN_URL" --argjson fields "$fields" \
+          '{embeds:[{title:$title,url:$url,color:$color,fields:$fields,timestamp:(now|todate)}]}')
+        curl -sf -H "Content-Type: application/json" -X POST -d "$payload" "$DISCORD_WEBHOOK_URL" \
+          || echo "Discord notification failed to send"
