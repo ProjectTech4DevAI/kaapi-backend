@@ -8,7 +8,9 @@ from app.api.deps import SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.config import settings
 from app.crud.evaluations import process_all_pending_evaluations
+from app.models.llm.response import LlmCallRedactionResult
 from app.services.job_monitoring import monitor_pending_jobs
+from app.services.llm.retention import redact_aged_llm_calls
 from app.crud.stats import StatRow, get_daily_stats
 from app.services.stats import format_sections, post_to_discord
 
@@ -23,15 +25,10 @@ EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
         "value": settings.CRON_INTERVAL_MINUTES,
         "unit": "minute",
     },
-    # Timezone for the schedule (only affects crontab-style schedules).
     "timezone": "UTC",
-    # Grace period (minutes) before a late check-in is marked as missed.
     "checkin_margin": 2,
-    # Max runtime (minutes) before an in-progress run is marked as timed out.
     "max_runtime": 2 * settings.CRON_INTERVAL_MINUTES,
-    # Consecutive failures/missed/timeouts required to open a Sentry issue.
     "failure_issue_threshold": 2,
-    # Consecutive successful check-ins required to auto-resolve the issue.
     "recovery_threshold": 1,
 }
 
@@ -55,6 +52,16 @@ PENDING_JOBS_CRON_MONITOR_CONFIG: MonitorConfig = {
     "checkin_margin": 2,
     "max_runtime": 2 * settings.PENDING_JOB_MONITOR_INTERVAL_MINUTES,
     "failure_issue_threshold": 2,
+    "recovery_threshold": 1,
+}
+
+
+LLM_CALL_RETENTION_CRON_MONITOR_CONFIG: MonitorConfig = {
+    "schedule": {"type": "crontab", "value": "0 9 * * *"},
+    "timezone": "Asia/Kolkata",
+    "checkin_margin": 5,
+    "max_runtime": 30,
+    "failure_issue_threshold": 1,
     "recovery_threshold": 1,
 }
 
@@ -152,6 +159,35 @@ def daily_stats_cron_job(session: SessionDep) -> dict[str, list[StatRow]]:
     except Exception as e:
         logger.error(
             f"[daily_stats_cron_job] Error executing cron job: {e}",
+            exc_info=True,
+        )
+        sentry_sdk.capture_exception(e)
+        raise
+
+
+@router.get(
+    "/cron/llm-call-retention",
+    include_in_schema=False,
+    dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+)
+@sentry_sdk.monitor(
+    monitor_slug="llm-call-retention-cron-job",
+    monitor_config=LLM_CALL_RETENTION_CRON_MONITOR_CONFIG,
+)
+def llm_call_retention_cron_job(session: SessionDep) -> LlmCallRedactionResult:
+    logger.info("[llm_call_retention_cron_job] Cron job invoked")
+
+    try:
+        result = redact_aged_llm_calls(session=session)
+        logger.info(
+            f"[llm_call_retention_cron_job] Completed: "
+            f"rows_redacted={result.rows_redacted}, "
+            f"cutoff={result.cutoff}"
+        )
+        return result
+    except Exception as e:
+        logger.error(
+            f"[llm_call_retention_cron_job] Error executing cron job: {e}",
             exc_info=True,
         )
         sentry_sdk.capture_exception(e)

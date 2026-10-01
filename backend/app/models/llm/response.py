@@ -19,6 +19,13 @@ class Usage(SQLModel):
     reasoning_tokens: int | None = None
 
 
+class LlmCallRedactionResult(SQLModel):
+    """Outcome of a single llm_call retention redaction run."""
+
+    rows_redacted: int
+    cutoff: datetime
+
+
 class TextOutput(SQLModel):
     type: Literal["text"] = "text"
     content: TextContent
