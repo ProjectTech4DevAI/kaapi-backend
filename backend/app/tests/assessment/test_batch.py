@@ -523,6 +523,23 @@ class TestBatchHelpers:
             "parts": [{"text": "system"}]
         }
 
+    def test_build_google_jsonl_with_video_sets_media_resolution(self) -> None:
+        rows = [{"q": "What happens?", "vid": "https://x.com/a.mp4"}]
+        attachments = [AssessmentAttachment(column="vid", type="video", format="url")]
+
+        google_jsonl = build_google_jsonl(
+            rows=rows,
+            text_columns=["q"],
+            attachments=attachments,
+            prompt_template=None,
+            google_params={
+                "video_part_config": {"videoMetadata": {"fps": 1.0}},
+                "media_resolution": "MEDIA_RESOLUTION_LOW",
+            },
+        )
+        generation_config = google_jsonl[0]["request"]["generationConfig"]
+        assert generation_config["mediaResolution"] == "MEDIA_RESOLUTION_LOW"
+
     def test_build_anthropic_jsonl(self) -> None:
         rows = [
             {
@@ -727,6 +744,7 @@ class TestAttachmentTypeForRow:
 class TestAttachmentResolutionBranches:
     _IMG = AssessmentAttachment(column="Docs", type="image", format="url")
     _PDF = AssessmentAttachment(column="Docs", type="pdf", format="url")
+    _VIDEO = AssessmentAttachment(column="Docs", type="video", format="url")
     _MIXED = AssessmentAttachment(
         column="Docs",
         type="mixed",
@@ -750,6 +768,29 @@ class TestAttachmentResolutionBranches:
         pdf = build_gemini_attachment_parts("https://x.com/a.pdf", self._PDF)[0]
         assert img["fileData"]["mimeType"] == "image/png"
         assert pdf["fileData"]["mimeType"] == "application/pdf"
+
+    def test_openai_and_anthropic_skip_video(self) -> None:
+        url = "https://x.com/a.mp4"
+        assert resolve_attachment_values(url, self._VIDEO) == []
+        assert build_anthropic_attachment_parts(url, self._VIDEO) == []
+
+    def test_gemini_video_part_youtube_omits_mime_type(self) -> None:
+        part = build_gemini_attachment_parts(
+            "https://youtu.be/gKJiCGNaAwg", self._VIDEO
+        )[0]
+        assert part["fileData"] == {"fileUri": "https://youtu.be/gKJiCGNaAwg"}
+
+    def test_gemini_video_part_direct_url_resolves_mime_and_config(self) -> None:
+        part = build_gemini_attachment_parts(
+            "https://x.com/a.mp4",
+            self._VIDEO,
+            video_part_config={"videoMetadata": {"fps": 1.0}},
+        )[0]
+        assert part["fileData"] == {
+            "fileUri": "https://x.com/a.mp4",
+            "mimeType": "video/mp4",
+        }
+        assert part["videoMetadata"] == {"fps": 1.0}
 
     def test_type_for_row_blank_value_returns_none(self) -> None:
         assert attachment_type_for_row(self._MIXED, {"DOC type": "  "}) is None
