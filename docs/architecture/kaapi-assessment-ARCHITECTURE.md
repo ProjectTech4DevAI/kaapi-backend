@@ -1,4 +1,4 @@
-# Kaapi AI Assessments — Architecture Overview
+# Kaapi Assessments — Architecture Overview
 
 ## Purpose
 
@@ -130,22 +130,24 @@ is the pipeline engine.
 
 A request carries the rows to grade, a pinned config, and a `callback_url`.
 
-Rows come from one of two mutually exclusive fields:
+Rows come from either of two fields — the same rows, reached two ways:
 
 | Field | Rows |
 |---|---|
-| `input.data` | a list of submission rows in the request body |
-| `input.submission_doc_id` | an uploaded submission file to read the rows from |
+| `input.submission_doc_id` | the `submission_id` handed back by `POST /assessment/datasets` after uploading a CSV or Excel sheet. The stored route: upload once, reference it by id, reuse it across runs. |
+| `input.data` | the **ad-hoc** form of the same thing — the rows inline in the request body, as a list of objects, one object per row, each keyed `column_name → value`. Nothing to upload first. |
 
 `submit` ([submission.py](../../backend/app/services/assessment/api/submission.py))
-resolves whichever was given into the same list of rows, then validates up front so
-a bad request fails at submit rather than mid-run:
+resolves whichever was given into one list of rows, so everything downstream is
+identical. It then validates up front, so a bad request fails at submit rather
+than mid-run:
 
 - **`callback_url`** — HTTPS + SSRF/private-IP guard; a bad url is `422`.
-- **Every row against the config's `input_schema`** — a missing or extra column is
-  `422`, naming the row.
-- **Attachment shapes** — each attachment value (`image` / `pdf` / `video`) must be
-  an `http(s)://` url or a `gs://bucket/key` reference, `422` otherwise.
+- **Every row against the config's `input_schema`** — each column must be declared
+  there, and its value must match the **type declared for it** (`text`, `image`,
+  `pdf`, `video`). A missing or extra column is `422`, naming the row.
+- **Attachment shapes** — a column typed `image` / `pdf` / `video` must carry an
+  `http(s)://` url or a `gs://bucket/key` reference, `422` otherwise.
 
 Only inline rows are copied into object storage; a `submission_doc_id` already
 points at an immutable file, so the run reads it in place. Either way the pipeline
@@ -230,10 +232,10 @@ flowchart TD
     St -->|PENDING| Sub["submit stage batch"]
     Sub -->|submitted| Wait["stage_status = PROCESSING\nwait for the provider"]
     Sub -->|empty subset| Adv["_advance_or_finalize"]
-    St -->|PROCESSING| Poll["check batch"]
-    Poll -->|still running| Wait
-    Poll -->|failed| Fail["_fail → webhook"]
-    Poll -->|completed| Rec["record results"] --> Adv
+    St -->|PROCESSING| Chk["check batch"]
+    Chk -->|still running| Wait
+    Chk -->|failed| Fail["_fail → webhook"]
+    Chk -->|completed| Rec["record results"] --> Adv
     Adv -->|more stages| Nxt["next stage, PENDING"] --> Sub
     Adv -->|last stage| Fin["_finalize → webhook"]
 ```
@@ -471,7 +473,7 @@ flowchart TD
 
 | Concern | Behaviour |
 |---|---|
-| **Async model** | Provider Batch APIs do all model work; Celery only builds/submits and polls. |
+| **Async model** | Provider Batch APIs do all model work; Celery only builds the requests, submits them, and records what comes back. |
 | **Delivery** | The callback is the result channel, so `callback_url` is validated (HTTPS + SSRF guard) at submit — a bad URL is rejected `422` up front rather than stranding a finished run with nowhere to send it. Delivery is one inline attempt with no retry; the result files stay on the assessment, so a missed callback is recoverable from storage rather than lost. |
 | **All rows gated out** | The assessment stage submits no batch and the run finalizes with an all-gated result (still delivered). |
 | **Non-transient step error** | A bad/deleted config version or a provider/credential/network error during submit routes through `_fail` → status `FAILED`, result files persisted, and a failure callback if one was configured. |
