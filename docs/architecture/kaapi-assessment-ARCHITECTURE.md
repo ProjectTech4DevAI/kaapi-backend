@@ -38,9 +38,9 @@ The caller sends rows along with a config ID/version and a `callback_url`. Kaapi
 validates the data, stores it in S3 for a limited time, and starts a Celery task
 to process the run step by step. It first runs any optional pre-filters and then
 moves to grading, submitting **one batch per stage** and waiting for that batch to
-finish before starting the next — never more than one batch in flight per run. The
-task re-enqueues itself until the whole pipeline is complete, then Kaapi sends the
-results to the provided webhook.
+finish before starting the next — never more than one batch in flight per run.
+Once the whole pipeline is complete, Kaapi sends the results to the provided
+webhook.
 
 The sections below follow the path a request actually takes: **input** (§3) →
 **config** (§4) → **staged pipeline** (§5) → the **state** it keeps (§6) and
@@ -62,10 +62,10 @@ sequenceDiagram
     C->>S: config + input(data or submission_doc_id) + callback_url
     S->>S: validate config + callback_url + rows
     S-->>C: 200 ack (assessment_id, PROCESSING)
-    S->>W: enqueue the first step
-    loop one stage per step, self-re-enqueuing
+    S->>W: hand off the run
+    loop one stage at a time
         W->>P: submit current stage's batch
-        W->>P: (next step) check batch status
+        W->>P: check batch status
         P-->>W: completed → parse verdicts / results
     end
     W->>Hook: POST final AssessmentBatchResult + presigned result files
@@ -75,8 +75,8 @@ sequenceDiagram
 `POST /assessments` is **asynchronous**: it validates the request, persists the
 assessment, invokes the Celery task, and returns immediately with a `200` ack
 (`assessment_id`, `status: PROCESSING`) — it never waits on a model. From there the
-Celery task owns the run: it submits a batch, exits, and re-enqueues itself to
-check on it later. When the last stage completes the run goes terminal, its result
+Celery task owns the run: it submits a batch and picks it up again once the
+provider is done. When the last stage completes the run goes terminal, its result
 files are persisted, and the result is POSTed to the `callback_url`.
 `GET /assessments/{id}` can be called at any point for run metadata — where the
 run is and whether it is done — but it does not carry the graded rows.
@@ -94,7 +94,7 @@ backend/app/
 │   ├── submission.py              ★ submit(): validate config + callback_url + rows,
 │   │                                 persist assessment + execution, seed the bag, dispatch
 │   ├── batch.py                   ★ the staged pipeline driver:
-│   │                                 build_pipeline · run_batch_stage (one step) ·
+│   │                                 build_pipeline · run_batch_stage (one stage) ·
 │   │                                 _submit_stage · _poll_outcome · _advance_or_finalize ·
 │   │                                 _finalize · _fail · parse_batch_results
 │   ├── results.py                 build_result / build_summary → one item per row
@@ -112,7 +112,7 @@ backend/app/
 ├── core/batch/                    shared provider batch infra
 │   └── openai.py · gemini.py · anthropic.py   the three batch providers
 │
-├── celery/tasks/job_execution.py  run_assessment_api_batch (self-re-enqueues per step)
+├── celery/tasks/job_execution.py  run_assessment_api_batch (drives the pipeline)
 │
 └── models/
     ├── assessment/assessment_api.py   request/result models + BatchRunState (the bag)
@@ -218,41 +218,37 @@ flowchart LR
 - **ASSESSMENT** — always last; batches **only** `gate_passed` rows. Gate-failed
   rows carry `assessment: null` plus their pre-filter verdicts into the result.
 
-### One step = `run_batch_stage`
+### The stage machine — `run_batch_stage`
 
-Each Celery invocation runs one step and returns `{"requeue": bool}`:
+`run_batch_stage` is the unit of work: it looks at where the run is and takes it
+one stage forward, keyed off `stage_status` in the bag.
 
 ```mermaid
 flowchart TD
     Start["run_batch_stage"] --> Res["resolve blob (guarded → _fail)"]
     Res --> St{"stage_status?"}
     St -->|PENDING| Sub["submit stage batch"]
-    Sub -->|submitted| RQ["requeue = true"]
+    Sub -->|submitted| Wait["stage_status = PROCESSING\nwait for the provider"]
     Sub -->|empty subset| Adv["_advance_or_finalize"]
-    St -->|PROCESSING| Poll["poll batch"]
-    Poll -->|processing| RQ
+    St -->|PROCESSING| Poll["check batch"]
+    Poll -->|still running| Wait
     Poll -->|failed| Fail["_fail → webhook"]
     Poll -->|completed| Rec["record results"] --> Adv
-    Adv -->|more stages| RQ
+    Adv -->|more stages| Nxt["next stage, PENDING"] --> Sub
     Adv -->|last stage| Fin["_finalize → webhook"]
 ```
 
-- **Submit** a `PENDING` stage's batch, then requeue to check it on the next step.
+- **Submit** a `PENDING` stage's batch and mark the stage `PROCESSING`.
 - **Check** a `PROCESSING` stage's batch; on completion, record verdicts/results
   and `_advance_or_finalize` to the next stage — or `_finalize` if it was the last.
 - **Empty subset** (all rows gated out): the stage submits no batch and
   `_advance_or_finalize` moves on — which, for the last stage, finalizes the run
   (no livelock).
 
-The task [`run_assessment_api_batch`](../../backend/app/celery/tasks/job_execution.py)
-re-enqueues itself after `POLL_COUNTDOWN_SECONDS` whenever `requeue` is true, and
-stops once the run is terminal. That constant is currently derived from the
-`CRON_INTERVAL_MINUTES` setting — a naming leftover, not a cron: nothing schedules
-this task but the task itself.
-
-Each invocation takes the execution row with `SELECT ... FOR UPDATE SKIP LOCKED`,
-so a second delivery for the same execution returns immediately instead of
-double-submitting a stage.
+Because every decision is read from the bag rather than held in memory, the work
+is resumable and safe to repeat: the execution row is taken with
+`SELECT ... FOR UPDATE SKIP LOCKED`, so a second delivery for the same execution
+returns immediately instead of double-submitting a stage.
 
 ### Attachment resolution (`gs://` vs signed URL)
 
@@ -479,7 +475,7 @@ flowchart TD
 | **Delivery** | The callback is the result channel, so `callback_url` is validated (HTTPS + SSRF guard) at submit — a bad URL is rejected `422` up front rather than stranding a finished run with nowhere to send it. Delivery is one inline attempt with no retry; the result files stay on the assessment, so a missed callback is recoverable from storage rather than lost. |
 | **All rows gated out** | The assessment stage submits no batch and the run finalizes with an all-gated result (still delivered). |
 | **Non-transient step error** | A bad/deleted config version or a provider/credential/network error during submit routes through `_fail` → status `FAILED`, result files persisted, and a failure callback if one was configured. |
-| **Transient status-check error** | A provider/network hiccup while checking a batch just retries on the next step — a running batch is never failed for a transient error. Likewise an unreadable stored submission leaves the stage `PENDING` and requeues. |
+| **Transient status-check error** | A provider/network hiccup while checking a batch is retried later — a running batch is never failed for a transient error. Likewise an unreadable stored submission leaves the stage `PENDING` to be retried. |
 | **Duplicate task delivery** | Each step takes the execution row with `SELECT ... FOR UPDATE SKIP LOCKED`, so a concurrent delivery for the same execution returns without doing anything. A later (non-concurrent) redelivery is keyed off `stage_status` in the bag: it re-checks an in-flight batch or re-submits a stage that was never dispatched. Terminal runs exit immediately on status. `_finalize` / `_fail` carry no delivery marker, so a duplicate step that lands after completion can still send a second callback — clients should treat `assessment_id` as the idempotency key. |
 | **Result-file durability** | `finalize_result_files` never raises: it persists what it can and logs the rest, and runs before delivery is considered. A failed dump upload costs that file, not the run — the run still goes terminal and still delivers. |
 | **Per-row validation** | Rows are validated against `input_schema` at submit; a missing/extra column or a non-URL attachment fails `422`, naming the row. Template placeholders are validated earlier, at config-save: every `{column}` in any `submission` must resolve against `input_schema`, or the save is rejected. |
