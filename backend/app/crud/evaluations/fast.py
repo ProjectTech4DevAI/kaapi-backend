@@ -32,6 +32,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Any
+from uuid import uuid4
 
 import openai
 from langfuse import Langfuse
@@ -76,6 +77,10 @@ from app.crud.evaluations.fast_cosine import (
 )
 from app.crud.evaluations.fast_results import (
     EMBEDDING_USAGE_KEYS,
+    GUARDRAIL_APPLIED,
+    GUARDRAIL_METADATA_KEYS,
+    INPUT_GUARDRAIL_METADATA_KEY,
+    OUTPUT_GUARDRAIL_METADATA_KEY,
     RESPONSE_USAGE_KEYS,
     EmbeddingResult,
     ResponseResult,
@@ -83,6 +88,7 @@ from app.crud.evaluations.fast_results import (
     build_response_result,
     extract_usage,
     is_failure_threshold_breached,
+    is_guardrail_blocked,
     parse_embedding_pair,
     sum_usage,
 )
@@ -98,8 +104,11 @@ from app.crud.evaluations.langfuse import (
     create_langfuse_dataset_run,
     update_traces_with_cosine_scores,
 )
-from app.crud.evaluations.response_parsing import extract_response_text
-from app.crud.evaluations.retry import retry_openai_call
+from app.crud.evaluations.response_parsing import (
+    extract_file_search_chunks,
+    field_value,
+)
+from app.crud.evaluations.retry import retry_llm_call, retry_openai_call
 from app.crud.evaluations.score import (
     JUDGE_FAILED_REASON,
     EvaluationScore,
@@ -112,18 +121,21 @@ from app.crud.evaluations.summary import generate_run_ai_summary
 from app.crud.job import create_batch_job, get_batch_job
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.batch_job import BatchJob, BatchJobCreate
-from app.models.llm.request import TextLLMParams
-from app.services.llm.mappers import map_kaapi_to_openai_params
-from app.services.response.response import get_file_search_results
+from app.models.llm.request import (
+    ConfigBlob,
+    LLMCallConfig,
+    QueryParams,
+    TextContent,
+    TextInput,
+)
+from app.models.llm.response import TextOutput
+from app.services.llm.chain.types import BlockResult, GuardrailOutcomeEnum
+from app.services.llm.jobs import execute_llm_call
 
 logger = logging.getLogger(__name__)
 
 _retry_openai_call = retry_openai_call(logger)
-
-
-@_retry_openai_call
-def _create_response(openai_client: OpenAI, params: dict[str, Any]) -> Any:
-    return openai_client.responses.create(**params)
+_retry_llm_call = retry_llm_call(logger)
 
 
 @_retry_openai_call
@@ -151,17 +163,45 @@ def _run_in_pool(
     return results
 
 
-def _responses_call_for_item(
+@_retry_llm_call
+def _execute_llm_call_for_question(
     *,
-    openai_client: OpenAI,
-    base_params: dict[str, Any],
+    config: LLMCallConfig,
+    question: str,
+    project_id: int,
+    organization_id: int,
+) -> BlockResult:
+    """Generate one answer through the same `/llm/call` path production runs."""
+    return execute_llm_call(
+        config=config,
+        # Fresh query per attempt: execute_llm_call mutates it in place.
+        query=QueryParams(input=TextInput(content=TextContent(value=question))),
+        job_id=uuid4(),
+        project_id=project_id,
+        organization_id=organization_id,
+        request_metadata=None,
+        langfuse_credentials=None,
+        # Raw response carries the file_search hits the knowledge_base metric scores.
+        include_provider_raw_response=True,
+        include_guardrail_metadata=True,
+        record_call=False,
+    )
+
+
+def _response_text(result: BlockResult) -> str:
+    """Generated text; empty when blocked or output wasn't text."""
+    output = result.response.response.output if result.response else None
+    return output.content.value if isinstance(output, TextOutput) else ""
+
+
+def _llm_call_for_item(
+    *,
+    config: LLMCallConfig,
+    project_id: int,
+    organization_id: int,
     item: dict[str, Any],
 ) -> ResponseResult:
-    """Run one Responses call for a dataset item, in the batch path's per-item shape.
-
-    `base_params` is the question-independent OpenAI body produced once by
-    `map_kaapi_to_openai_params`; only `input` varies per item.
-    """
+    """Generate one item's answer. Never raises: that would abort the whole chunk."""
     item_id = item["id"]
     question = item["input"].get("question", "") if item.get("input") else ""
     ground_truth = (
@@ -183,27 +223,66 @@ def _responses_call_for_item(
         return failed_result("ERROR: missing question in dataset item")
 
     try:
-        response = _create_response(openai_client, {**base_params, "input": question})
-    except openai.OpenAIError as exc:
+        result = _execute_llm_call_for_question(
+            config=config,
+            question=question,
+            project_id=project_id,
+            organization_id=organization_id,
+        )
+    except Exception as exc:
         logger.warning(
-            f"[_responses_call_for_item] Item failed | item_id={item_id} | error={exc}"
+            f"[_llm_call_for_item] Item failed | item_id={item_id} | error={exc}",
+            exc_info=True,
         )
         return failed_result(f"ERROR: {exc}")
 
+    # Before error check: a rephrased row has no error and would read as success.
+    guardrail: str | None = None
+    input_to_llm: str | None = None
+    output_from_llm: str | None = None
+    if result.guardrail_outcome == GuardrailOutcomeEnum.BLOCKED:
+        generated_output = ""
+        guardrail = f"{GuardrailOutcomeEnum.BLOCKED}: {result.error}"
+    elif result.guardrail_outcome == GuardrailOutcomeEnum.REPHRASED:
+        generated_output = _response_text(result)
+        guardrail = GuardrailOutcomeEnum.REPHRASED
+    elif result.error is not None:
+        logger.warning(
+            f"[_llm_call_for_item] Item failed | item_id={item_id} | "
+            f"error={result.error}"
+        )
+        return failed_result(f"ERROR: {result.error}")
+    else:
+        generated_output = _response_text(result)
+        metadata = result.metadata or {}
+        if any(key in metadata for key in GUARDRAIL_METADATA_KEYS):
+            guardrail = GUARDRAIL_APPLIED
+        # Rephrased rows never reached the LLM; blocked rows carry no metadata.
+        input_to_llm = (metadata.get(INPUT_GUARDRAIL_METADATA_KEY) or {}).get(
+            "input_to_llm"
+        )
+        output_from_llm = (metadata.get(OUTPUT_GUARDRAIL_METADATA_KEY) or {}).get(
+            "output_from_llm"
+        )
+
+    # Tokens are billed even on an output block, so usage is read off every outcome.
     return build_response_result(
         item_id=item_id,
         question=question,
         ground_truth=ground_truth,
         question_id=question_id,
-        generated_output=extract_response_text(response),
-        response_id=getattr(response, "id", None),
-        usage=extract_usage(getattr(response, "usage", None), RESPONSE_USAGE_KEYS),
+        generated_output=generated_output,
+        response_id=(
+            result.response.response.provider_response_id if result.response else None
+        ),
+        usage=extract_usage(result.usage, RESPONSE_USAGE_KEYS),
         failed=False,
-        # Plain dicts (not FileResultChunk) so the unit stays JSON-serializable for S3.
-        retrieved_chunks=[
-            {"score": c.score, "text": c.text, "filename": c.filename}
-            for c in get_file_search_results(response)
-        ],
+        guardrail=guardrail,
+        input_to_llm=input_to_llm,
+        output_from_llm=output_from_llm,
+        retrieved_chunks=extract_file_search_chunks(
+            result.response.provider_raw_response if result.response else None
+        ),
     )
 
 
@@ -317,9 +396,8 @@ def _cleanup_response_chunks(*, session: Session, eval_run: EvaluationRun) -> No
 def run_response_chunk(
     *,
     session: Session,
-    openai_client: OpenAI,
     eval_run: EvaluationRun,
-    config: TextLLMParams,
+    config_blob: ConfigBlob,
     dataset_items_slice: list[dict[str, Any]],
     chunk_index: int,
 ) -> None:
@@ -339,20 +417,22 @@ def run_response_chunk(
     if existing and existing.raw_output_url:
         return
 
-    base_params, mapper_warnings = map_kaapi_to_openai_params(
-        session=session, kaapi_params=config
-    )
+    # Resolved blob passed ad-hoc skips a per-row config fetch; shared read-only.
+    config = LLMCallConfig(blob=config_blob)
+    # Read off the session-bound row here: the workers must not touch it in threads.
+    project_id = eval_run.project_id
+    organization_id = eval_run.organization_id
 
-    # Ask OpenAI to return the file_search hits so knowledge_base can judge them.
-    # tool_choice stays at the model default (auto) — consistent with normal calls;
-    # a row where the model doesn't query the KB is scored N/A, not forced to search.
-    if any(t.get("type") == "file_search" for t in base_params.get("tools", [])):
-        base_params["include"] = ["file_search_call.results"]
+    # Native params are a dict, Kaapi params a typed model; field_value reads either.
+    model = field_value(config_blob.completion.params, "model")
 
     results = _run_in_pool(
         items=dataset_items_slice,
-        worker=lambda item: _responses_call_for_item(
-            openai_client=openai_client, base_params=base_params, item=item
+        worker=lambda item: _llm_call_for_item(
+            config=config,
+            project_id=project_id,
+            organization_id=organization_id,
+            item=item,
         ),
         max_workers=settings.EVAL_FAST_API_CONCURRENCY,
     )
@@ -372,7 +452,7 @@ def run_response_chunk(
             config={
                 "run_mode": "fast",
                 "endpoint": RESPONSES_ENDPOINT,
-                "model": config.model,
+                "model": model,
                 "usage": sum_usage(results, RESPONSE_USAGE_KEYS),
                 CHUNK_CONFIG_RUN_ID: eval_run.id,
                 CHUNK_CONFIG_INDEX: chunk_index,
@@ -476,8 +556,12 @@ def _stage2_embeddings(
     if cached is not None:
         return eval_run, cached
 
-    # Only embed items that succeeded in Stage 1.
-    embed_candidates = [r for r in response_results if not r.get("failed")]
+    # Blocked rows are unscoreable, not failed; embedding them trips the threshold.
+    embed_candidates = [
+        r
+        for r in response_results
+        if not r.get("failed") and not is_guardrail_blocked(r)
+    ]
 
     embedding_results = _run_in_pool(
         items=embed_candidates,

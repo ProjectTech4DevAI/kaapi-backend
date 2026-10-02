@@ -1,0 +1,135 @@
+"""`retry_llm_call`, the result-based retry policy for generation."""
+
+import logging
+from collections.abc import Callable, Iterator
+
+import pytest
+
+from app.crud.evaluations.retry import (
+    RETRY_MAX_ATTEMPTS,
+    retry_llm_call,
+)
+from app.models.llm.response import Usage
+from app.services.llm.chain.types import BlockResult, GuardrailOutcomeEnum
+
+logger = logging.getLogger(__name__)
+
+
+@pytest.fixture
+def sleeps(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[float]]:
+    """Record backoff; tenacity binds nap.sleep at import, so patch time.sleep."""
+    recorded: list[float] = []
+    monkeypatch.setattr("tenacity.nap.time.sleep", recorded.append)
+    yield recorded
+
+
+def _decorate(fn: Callable[[], BlockResult]) -> Callable[[], BlockResult]:
+    return retry_llm_call(logger)(fn)
+
+
+def _failure(error: str = "provider 503") -> BlockResult:
+    return BlockResult(error=error, retryable=True)
+
+
+def _deterministic_failure(error: str = "config_not_found") -> BlockResult:
+    """A failure a second identical call cannot clear; `retryable` stays False."""
+    return BlockResult(error=error)
+
+
+def _success() -> BlockResult:
+    return BlockResult(usage=Usage(input_tokens=1, output_tokens=1, total_tokens=2))
+
+
+def _guardrail(outcome: GuardrailOutcomeEnum) -> BlockResult:
+    return BlockResult(error="uli_slur_match", guardrail_outcome=outcome)
+
+
+class TestRetryLlmCall:
+    def test_clean_success_runs_once(self, sleeps: list[float]) -> None:
+        calls: list[int] = []
+        expected = _success()
+
+        @_decorate
+        def call() -> BlockResult:
+            calls.append(1)
+            return expected
+
+        assert call() is expected
+        assert len(calls) == 1
+        assert sleeps == []
+
+    def test_transient_failure_then_success_runs_twice(
+        self, sleeps: list[float]
+    ) -> None:
+        expected = _success()
+        outcomes = [_failure(), expected]
+
+        @_decorate
+        def call() -> BlockResult:
+            return outcomes.pop(0)
+
+        assert call() is expected
+        assert outcomes == []
+        assert len(sleeps) == 1
+
+    def test_exhaustion_returns_the_last_result_instead_of_raising(
+        self, sleeps: list[float]
+    ) -> None:
+        attempts: list[BlockResult] = []
+
+        @_decorate
+        def call() -> BlockResult:
+            attempts.append(_failure(f"provider 503 #{len(attempts)}"))
+            return attempts[-1]
+
+        result = call()
+
+        assert isinstance(result, BlockResult)
+        assert result is attempts[-1]
+        assert result.error == "provider 503 #2"
+        assert len(attempts) == RETRY_MAX_ATTEMPTS == 3
+        assert len(sleeps) == RETRY_MAX_ATTEMPTS - 1
+
+    def test_deterministic_failure_is_not_retried(self, sleeps: list[float]) -> None:
+        calls: list[int] = []
+        expected = _deterministic_failure()
+
+        @_decorate
+        def call() -> BlockResult:
+            calls.append(1)
+            return expected
+
+        assert call() is expected
+        assert len(calls) == 1
+        assert sleeps == []
+
+    @pytest.mark.parametrize("outcome", ["blocked", "rephrased"])
+    def test_guardrail_verdict_is_never_retried(
+        self, outcome: GuardrailOutcomeEnum, sleeps: list[float]
+    ) -> None:
+        calls: list[int] = []
+
+        @_decorate
+        def call() -> BlockResult:
+            calls.append(1)
+            return _guardrail(outcome)
+
+        assert call().guardrail_outcome == outcome
+        assert len(calls) == 1
+        assert sleeps == []
+
+    def test_raised_exception_propagates_without_retrying(
+        self, sleeps: list[float]
+    ) -> None:
+        calls: list[int] = []
+
+        @_decorate
+        def call() -> BlockResult:
+            calls.append(1)
+            raise RuntimeError("config lookup exploded")
+
+        with pytest.raises(RuntimeError, match="config lookup exploded"):
+            call()
+
+        assert len(calls) == 1
+        assert sleeps == []

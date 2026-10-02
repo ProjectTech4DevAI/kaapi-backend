@@ -11,12 +11,14 @@ from typing import Any
 import numpy as np
 
 from app.crud.evaluations.embeddings import calculate_cosine_similarity
+from app.crud.evaluations.fast_results import is_guardrail_blocked
 from app.crud.evaluations.merge import apply_cosine_breakdown
 from app.crud.evaluations.score import (
     COSINE_SCORE_NAME,
     UNSCOREABLE_EMBEDDING_FAILED,
     UNSCOREABLE_EMPTY_GROUND_TRUTH,
     UNSCOREABLE_EMPTY_OUTPUT,
+    UNSCOREABLE_GUARDRAIL_BLOCKED,
     SummaryScore,
 )
 
@@ -24,7 +26,10 @@ _PER_ITEM_SCORE_PRECISION = 6
 
 
 def classify_empty_side(response: dict[str, Any]) -> str | None:
-    """Why a row can't be scored from its own text, or None if both sides are present."""
+    """Why a row can't be scored, or None. Shared by cosine and judge paths."""
+    # Before empty-output check: a blocked row is empty because of guardrails.
+    if is_guardrail_blocked(response):
+        return UNSCOREABLE_GUARDRAIL_BLOCKED
     if not response.get("generated_output"):
         return UNSCOREABLE_EMPTY_OUTPUT
     if not response.get("ground_truth"):

@@ -7,6 +7,8 @@ extractor instead of maintaining two that can silently drift.
 
 from typing import Any
 
+FILE_SEARCH_CALL_TYPE = "file_search_call"
+
 
 def field_value(obj: Any, name: str, default: Any = None) -> Any:
     """Read a field from an object or dict (SDK object vs test dict), with a default."""
@@ -36,3 +38,20 @@ def extract_response_text(response: Any) -> str:
                 if text:
                     return text
     return ""
+
+
+def extract_file_search_chunks(raw: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Flatten file_search hits from a `model_dump()` Responses payload."""
+    chunks: list[dict[str, Any]] = []
+    for item in field_value(raw, "output") or []:
+        if field_value(item, "type") != FILE_SEARCH_CALL_TYPE:
+            continue
+        for hit in field_value(item, "results") or []:
+            chunks.append(
+                {
+                    "score": field_value(hit, "score"),
+                    "text": field_value(hit, "text"),
+                    "filename": field_value(hit, "filename"),
+                }
+            )
+    return chunks
