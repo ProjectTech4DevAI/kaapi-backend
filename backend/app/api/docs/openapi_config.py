@@ -28,6 +28,13 @@ tags_metadata = [
         "description": "Large Language Model inference and interaction endpoints",
     },
     {
+        "name": "Guardrails",
+        "description": (
+            "Text safety validation: applying guardrails to text, and managing "
+            "the validator configs, ban lists and LLM prompts they run on"
+        ),
+    },
+    {
         "name": "Evaluation",
         "description": "Dataset upload, running evaluations, listing datasets as well as evaluations",
     },
@@ -89,6 +96,7 @@ tag_groups = [
             "Collections",
             "Config Management",
             "LLM",
+            "Guardrails",
             "Evaluation",
             "Fine Tuning",
             "Model Evaluation",
