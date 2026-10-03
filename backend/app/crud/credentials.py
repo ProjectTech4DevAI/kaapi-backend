@@ -229,6 +229,11 @@ def update_creds_for_org(
         session.add(creds)
         session.commit()
         session.refresh(creds)
+
+        # Invalidate cache for this provider (imported lazily to avoid circular import)
+        from app.utils import invalidate_llm_client_cache
+
+        invalidate_llm_client_cache(org_id, project_id, provider)
         return [creds]
 
     creds.credential = encrypted_credentials
@@ -236,6 +241,11 @@ def update_creds_for_org(
     session.add(creds)
     session.commit()
     session.refresh(creds)
+
+    # Invalidate cache for this provider (imported lazily to avoid circular import)
+    from app.utils import invalidate_llm_client_cache
+
+    invalidate_llm_client_cache(org_id, project_id, provider)
     return [creds]
 
 
@@ -280,6 +290,11 @@ def remove_provider_credential(
             detail="Failed to delete provider credential",
         )
     session.commit()
+
+    # Invalidate cache for this provider (imported lazily to avoid circular import)
+    from app.utils import invalidate_llm_client_cache
+
+    invalidate_llm_client_cache(org_id, project_id, provider)
     logger.info(
         f"[remove_provider_credential] Successfully deleted credential | provider {provider}, organization_id {org_id}, project_id {project_id}"
     )
@@ -320,3 +335,8 @@ def remove_creds_for_org(*, session: Session, org_id: int, project_id: int) -> N
             detail="Failed to delete all credentials",
         )
     session.commit()
+
+    # Invalidate all cached clients for this org/project (imported lazily to avoid circular import)
+    from app.utils import invalidate_llm_client_cache
+
+    invalidate_llm_client_cache(org_id, project_id, provider=None)

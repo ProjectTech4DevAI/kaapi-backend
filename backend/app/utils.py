@@ -53,6 +53,10 @@ JsonObject = dict[str, JsonValue]
 
 MAX_AUDIO_SIZE = 50 * 1024 * 1024  # 50 MB
 
+# LLM client cache to prevent recreating clients on every request.
+# Key: (org_id, project_id, provider)
+_llm_client_cache: dict[tuple[int, int, str], Any] = {}
+
 
 class ValidationErrorDetail(BaseModel):
     field: str
@@ -285,10 +289,54 @@ def mask_string(value: str, mask_char: str = "*") -> str:
     return value[:start] + (mask_char * num_mask) + value[end:]
 
 
+def invalidate_llm_client_cache(
+    org_id: int, project_id: int, provider: str | None = None
+) -> None:
+    """
+    Invalidate cached LLM clients for a specific org/project/provider.
+
+    Args:
+        org_id: Organization ID
+        project_id: Project ID
+        provider: Provider name ('openai', 'anthropic', 'langfuse').
+                  If None, invalidates all providers for the org/project.
+    """
+    if provider:
+        cache_key = (org_id, project_id, provider)
+        if cache_key in _llm_client_cache:
+            del _llm_client_cache[cache_key]
+            logger.info(
+                f"[invalidate_llm_client_cache] Invalidated cache | org_id: {org_id}, project_id: {project_id}, provider: {provider}"
+            )
+    else:
+        # Invalidate all providers for this org/project
+        keys_to_remove = [
+            key
+            for key in _llm_client_cache.keys()
+            if key[0] == org_id and key[1] == project_id
+        ]
+        for key in keys_to_remove:
+            del _llm_client_cache[key]
+        if keys_to_remove:
+            logger.info(
+                f"[invalidate_llm_client_cache] Invalidated {len(keys_to_remove)} cached clients | org_id: {org_id}, project_id: {project_id}"
+            )
+
+
 def get_openai_client(session: Session, org_id: int, project_id: int) -> OpenAI:
     """
     Fetch OpenAI credentials for the current org/project and return a configured client.
+    Uses connection pooling by caching client instances per (org_id, project_id, provider).
     """
+    cache_key = (org_id, project_id, "openai")
+
+    # Return cached client if available
+    if cache_key in _llm_client_cache:
+        logger.debug(
+            f"[get_openai_client] Returning cached client | project_id: {project_id}"
+        )
+        return _llm_client_cache[cache_key]
+
     credentials = get_provider_credential(
         session=session,
         org_id=org_id,
@@ -306,7 +354,12 @@ def get_openai_client(session: Session, org_id: int, project_id: int) -> OpenAI:
         )
 
     try:
-        return OpenAI(api_key=credentials["api_key"])
+        client = OpenAI(api_key=credentials["api_key"])
+        _llm_client_cache[cache_key] = client
+        logger.info(
+            f"[get_openai_client] Created and cached new OpenAI client | project_id: {project_id}"
+        )
+        return client
     except Exception as e:
         logger.warning(
             f"[get_openai_client] Failed to configure OpenAI client. | project_id: {project_id} | error: {str(e)}",
@@ -321,7 +374,17 @@ def get_openai_client(session: Session, org_id: int, project_id: int) -> OpenAI:
 def get_anthropic_client(session: Session, org_id: int, project_id: int) -> Anthropic:
     """
     Fetch Anthropic credentials for the current org/project and return a configured client.
+    Uses connection pooling by caching client instances per (org_id, project_id, provider).
     """
+    cache_key = (org_id, project_id, "anthropic")
+
+    # Return cached client if available
+    if cache_key in _llm_client_cache:
+        logger.debug(
+            f"[get_anthropic_client] Returning cached client | project_id: {project_id}"
+        )
+        return _llm_client_cache[cache_key]
+
     credentials = get_provider_credential(
         session=session,
         org_id=org_id,
@@ -339,7 +402,12 @@ def get_anthropic_client(session: Session, org_id: int, project_id: int) -> Anth
         )
 
     try:
-        return Anthropic(api_key=credentials["api_key"])
+        client = Anthropic(api_key=credentials["api_key"])
+        _llm_client_cache[cache_key] = client
+        logger.info(
+            f"[get_anthropic_client] Created and cached new Anthropic client | project_id: {project_id}"
+        )
+        return client
     except Exception as e:
         logger.error(
             f"[get_anthropic_client] Failed to configure Anthropic client. | project_id: {project_id} | error: {str(e)}",
@@ -366,7 +434,17 @@ def _build_langfuse_client(credentials: dict[str, Any]) -> Langfuse:
 def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langfuse:
     """
     Fetch Langfuse credentials for the current org/project and return a configured client.
+    Uses connection pooling by caching client instances per (org_id, project_id, provider).
     """
+    cache_key = (org_id, project_id, "langfuse")
+
+    # Return cached client if available
+    if cache_key in _llm_client_cache:
+        logger.debug(
+            f"[get_langfuse_client] Returning cached client | project_id: {project_id}"
+        )
+        return _llm_client_cache[cache_key]
+
     credentials = get_provider_credential(
         session=session,
         org_id=org_id,
@@ -386,7 +464,12 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
         )
 
     try:
-        return _build_langfuse_client(credentials)
+        client = _build_langfuse_client(credentials)
+        _llm_client_cache[cache_key] = client
+        logger.info(
+            f"[get_langfuse_client] Created and cached new Langfuse client | project_id: {project_id}"
+        )
+        return client
     except Exception as e:
         logger.warning(
             f"[get_langfuse_client] Failed to configure Langfuse client. | project_id: {project_id} | error: {str(e)}",
