@@ -16,10 +16,14 @@ from app.utils import (
     APIResponse,
     ValidationErrorDetail,
     _build_langfuse_client,
+    _llm_client_cache,
     download_audio_bytes,
     generate_eval_completion_email,
+    get_anthropic_client,
     get_langfuse_client,
+    get_openai_client,
     handle_openai_error,
+    invalidate_llm_client_cache,
     mask_string,
     require_organization_for_project,
     resolve_audio_url,
@@ -530,3 +534,107 @@ class TestGetLangfuseClient:
             get_langfuse_client(session=MagicMock(), org_id=1, project_id=2)
         assert exc_info.value.status_code == 500
         assert "bad host" in exc_info.value.detail
+
+
+# ---------------------------------------------------------------------------
+# Client caching and invalidation
+# ---------------------------------------------------------------------------
+class TestLLMClientCaching:
+    """Test that LLM clients are cached and reused to enable connection pooling."""
+
+    def setup_method(self) -> None:
+        """Clear the cache before each test."""
+        _llm_client_cache.clear()
+
+    @patch("app.utils.OpenAI")
+    @patch("app.utils.get_provider_credential")
+    def test_openai_client_cached_on_first_call(
+        self, mock_credential, mock_openai
+    ) -> None:
+        mock_credential.return_value = {"api_key": "sk-test-key"}
+        mock_client = MagicMock()
+        mock_openai.return_value = mock_client
+
+        client1 = get_openai_client(session=MagicMock(), org_id=1, project_id=2)
+        client2 = get_openai_client(session=MagicMock(), org_id=1, project_id=2)
+
+        assert client1 is client2
+        assert mock_openai.call_count == 1  # Only instantiated once
+
+    @patch("app.utils.Anthropic")
+    @patch("app.utils.get_provider_credential")
+    def test_anthropic_client_cached_on_first_call(
+        self, mock_credential, mock_anthropic
+    ) -> None:
+        mock_credential.return_value = {"api_key": "sk-ant-test-key"}
+        mock_client = MagicMock()
+        mock_anthropic.return_value = mock_client
+
+        client1 = get_anthropic_client(session=MagicMock(), org_id=1, project_id=2)
+        client2 = get_anthropic_client(session=MagicMock(), org_id=1, project_id=2)
+
+        assert client1 is client2
+        assert mock_anthropic.call_count == 1
+
+    @patch("app.utils.Langfuse")
+    @patch("app.utils.get_provider_credential")
+    def test_langfuse_client_cached_on_first_call(
+        self, mock_credential, mock_langfuse
+    ) -> None:
+        mock_credential.return_value = LANGFUSE_CREDENTIALS
+        mock_client = MagicMock()
+        mock_langfuse.return_value = mock_client
+
+        client1 = get_langfuse_client(session=MagicMock(), org_id=1, project_id=2)
+        client2 = get_langfuse_client(session=MagicMock(), org_id=1, project_id=2)
+
+        assert client1 is client2
+        assert mock_langfuse.call_count == 1
+
+    @patch("app.utils.OpenAI")
+    @patch("app.utils.get_provider_credential")
+    def test_different_orgs_have_separate_caches(
+        self, mock_credential, mock_openai
+    ) -> None:
+        mock_credential.return_value = {"api_key": "sk-test-key"}
+        mock_openai.side_effect = [MagicMock(), MagicMock()]
+
+        client_org1 = get_openai_client(session=MagicMock(), org_id=1, project_id=2)
+        client_org2 = get_openai_client(session=MagicMock(), org_id=2, project_id=2)
+
+        assert client_org1 is not client_org2
+        assert mock_openai.call_count == 2
+
+
+class TestInvalidateLLMClientCache:
+    """Test cache invalidation when credentials are updated or deleted."""
+
+    def setup_method(self) -> None:
+        """Clear the cache before each test."""
+        _llm_client_cache.clear()
+
+    def test_invalidate_specific_provider(self) -> None:
+        # Populate cache
+        _llm_client_cache[(1, 2, "openai")] = MagicMock()
+        _llm_client_cache[(1, 2, "anthropic")] = MagicMock()
+
+        invalidate_llm_client_cache(org_id=1, project_id=2, provider="openai")
+
+        assert (1, 2, "openai") not in _llm_client_cache
+        assert (1, 2, "anthropic") in _llm_client_cache  # Other provider untouched
+
+    def test_invalidate_all_providers_for_org_project(self) -> None:
+        # Populate cache
+        _llm_client_cache[(1, 2, "openai")] = MagicMock()
+        _llm_client_cache[(1, 2, "anthropic")] = MagicMock()
+        _llm_client_cache[(1, 3, "openai")] = MagicMock()  # Different project
+
+        invalidate_llm_client_cache(org_id=1, project_id=2, provider=None)
+
+        assert (1, 2, "openai") not in _llm_client_cache
+        assert (1, 2, "anthropic") not in _llm_client_cache
+        assert (1, 3, "openai") in _llm_client_cache  # Different project untouched
+
+    def test_invalidate_nonexistent_key_is_safe(self) -> None:
+        # Should not raise an error
+        invalidate_llm_client_cache(org_id=999, project_id=999, provider="openai")
