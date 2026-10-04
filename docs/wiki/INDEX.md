@@ -22,6 +22,7 @@ Deep design narrative lives in `docs/architecture/*.md`; open those only for des
 - [modules/responses.md](modules/responses.md) — OpenAI Responses API integration, conversations, threads, assistants. No deep-dive doc yet.
 - [modules/assessment.md](modules/assessment.md) — assessments and assessment runs. No deep-dive doc yet.
 - [modules/tenancy.md](modules/tenancy.md) — users, orgs, projects, API keys, onboarding, login.
+- [modules/agent.md](modules/agent.md) — read-only `POST /agent` natural-language Q&A; LangGraph + Claude calling Kaapi GET routes in-process; tool registry is the extension point.
 - [modules/platform.md](modules/platform.md) — analytics, notifications, feature flags, languages, credentials, model config, cron.
 
 ### Cross-cutting

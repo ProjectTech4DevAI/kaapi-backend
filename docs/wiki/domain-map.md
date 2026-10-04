@@ -56,6 +56,7 @@ APIKey → Organization, Project, User  # programmatic access
 - **Langfuse** — every LLM call and evaluation run writes traces/scores. A change to run scoring or trace shape ripples here.
 - **kaapi-frontend console** — reads run results, annotation queues, config CRUD. A response-shape change ripples here.
 - **Provider Batch APIs** (OpenAI, Gemini, Anthropic in `core/batch/`) — eval/assessment payload shape changes ripple here.
+- **Agent (`POST /agent`)** — its tool registry (`services/agent/tools.py`) calls text/STT/TTS eval, config-version, collection and document GET routes in-process; a response-shape change to those routes ripples into its projectors and tool descriptions.
 - **Object storage** (`core/cloud/storage.py` S3; `services/buckets/` GCS signed URLs) — files, dataset artifacts, gs:// attachments.
 
 ## Blast-radius procedure

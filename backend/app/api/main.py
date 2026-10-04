@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.routes import (
+    agent,
     analytics,
     api_keys,
     assistants,
@@ -42,6 +43,7 @@ from app.api.routes.assessment import api as assessment_api_routes
 from app.api.routes.evaluations.v2 import router as evaluations_v2_router
 
 api_router = APIRouter()
+api_router.include_router(agent.router)
 api_router.include_router(analytics.router)
 api_router.include_router(api_keys.router)
 api_router.include_router(assessment_routes.router)

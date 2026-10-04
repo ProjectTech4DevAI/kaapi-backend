@@ -39,7 +39,7 @@ def get_db() -> Generator[Session, None, None]:
         yield session
 
 
-api_key_header = APIKeyHeader(name="X-API-KEY", auto_error=False)
+api_key_header = APIKeyHeader(name=security.API_KEY_HEADER_NAME, auto_error=False)
 SessionDep = Annotated[Session, Depends(get_db)]
 TokenDep = Annotated[str, Depends(reusable_oauth2)]
 
@@ -181,7 +181,7 @@ def get_auth_context(
         return auth_context
 
     # 3. Try access_token cookie
-    cookie_token = request.cookies.get("access_token")
+    cookie_token = request.cookies.get(security.ACCESS_TOKEN_COOKIE_NAME)
     if cookie_token:
         auth_context = _authenticate_with_jwt(session, cookie_token)
         _set_tenant_span_attributes(auth_context)

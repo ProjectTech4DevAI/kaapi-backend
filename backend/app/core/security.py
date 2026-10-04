@@ -35,6 +35,8 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT configuration
 ALGORITHM = "HS256"
+API_KEY_HEADER_NAME = "X-API-KEY"
+ACCESS_TOKEN_COOKIE_NAME = "access_token"
 
 # Fernet instance for encryption/decryption
 _fernet = None
