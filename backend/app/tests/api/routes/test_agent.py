@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 import anthropic
 import httpx
@@ -17,8 +18,23 @@ from app.tests.utils.agent import (
 )
 from app.services.agent.tools import READ_ONLY_TOOLS
 from app.services.agent.prompts import AGENT_EMPTY_ANSWER_MESSAGE, AGENT_REFUSAL_MESSAGE
+from app.models.llm import build_kaapi_completion_config
+from app.models.llm.request import ConfigBlob, PromptTemplate
+from app.models.stt_evaluation import EvaluationType
 from app.tests.utils.auth import TestAuthContext
-from app.tests.utils.test_data import create_test_config, create_test_evaluation_run
+from app.tests.utils.document import DocumentStore
+from app.tests.utils.speech_evaluation import (
+    create_test_speech_dataset,
+    create_test_speech_run,
+    create_test_stt_result,
+    create_test_stt_sample,
+    create_test_tts_result,
+)
+from app.tests.utils.test_data import (
+    create_test_config,
+    create_test_evaluation_dataset,
+    create_test_evaluation_run,
+)
 
 AGENT_URL = f"{settings.API_V1_STR}/agent"
 
@@ -66,9 +82,10 @@ class TestAgentQueryEndToEnd:
         [tool_result] = fake.tool_results(1)
         assert tool_result["tool_use_id"] == "toolu_1"
         assert tool_result["is_error"] is False
-        runs = json.loads(tool_result["content"])
-        assert [r["id"] for r in runs] == [run.id]
-        assert runs[0]["run_name"] == run.run_name
+        page = json.loads(tool_result["content"])
+        assert page["metadata"] == {"has_more": False}
+        assert [r["id"] for r in page["data"]] == [run.id]
+        assert page["data"][0]["run_name"] == run.run_name
 
     def test_eval_run_projection_hides_traces_and_storage_urls(
         self,
@@ -136,6 +153,428 @@ class TestAgentQueryEndToEnd:
         assert tool_call["status_code"] == 200, fake.tool_results(1)[0]["content"]
 
 
+def _single_tool_result(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    headers: dict[str, str],
+    tool_name: str,
+    arguments: dict[str, object],
+) -> tuple[Any, str, str]:
+    fake = install_fake_anthropic(
+        monkeypatch, [tool_use_message(tool_name, arguments), text_message("ok")]
+    )
+
+    resp = client.post(AGENT_URL, headers=headers, json={"query": "q"})
+
+    assert resp.status_code == 200
+    [tool_call] = resp.json()["data"]["tool_calls"]
+    # The inner route must have answered, or "field absent" proves nothing.
+    assert tool_call["status_code"] == 200, fake.tool_results(1)[0]["content"]
+    [tool_result] = fake.tool_results(1)
+    raw = tool_result["content"]
+    return json.loads(raw), raw, fake.sent_payload()
+
+
+class TestAgentDataMinimization:
+    @pytest.mark.parametrize(
+        "tool_name", ["get_evaluation_run", "list_evaluation_runs"]
+    )
+    def test_eval_run_keeps_aggregates_and_hides_row_level_data(
+        self,
+        client: TestClient,
+        db: Session,
+        monkeypatch: pytest.MonkeyPatch,
+        user_api_key: TestAuthContext,
+        user_api_key_header: dict[str, str],
+        tool_name: str,
+    ) -> None:
+        run = create_test_evaluation_run(
+            db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            score={
+                "summary_scores": [{"name": "cosine", "avg": 0.81}],
+                "traces": [
+                    {"trace_id": "trace-row-1", "question": "Where is my parcel?"}
+                ],
+                "ai_summary": "Parcel-tracking answers were vague.",
+            },
+            object_store_url="s3://internal-bucket/run.csv",
+        )
+        run.score_trace_url = "s3://internal-bucket/traces.json"
+        run.per_item_scores = {"trace-row-1": {"cosine": 0.12}}
+        run.cost = {"total_cost_usd": 0.42}
+        db.add(run)
+        db.commit()
+        arguments = (
+            {"evaluation_id": run.id} if tool_name == "get_evaluation_run" else {}
+        )
+
+        content, raw, sent = _single_tool_result(
+            client, monkeypatch, user_api_key_header, tool_name, arguments
+        )
+
+        projected = content if tool_name == "get_evaluation_run" else content["data"][0]
+        assert projected["id"] == run.id
+        assert projected["config_id"] == str(run.config_id)
+        assert projected["config_version"] == 1
+        assert projected["score"] == {
+            "summary_scores": [{"name": "cosine", "avg": 0.81}]
+        }
+        assert projected["cost"] == {"total_cost_usd": 0.42}
+        for key in (
+            "traces",
+            "per_item_scores",
+            "ai_summary",
+            "object_store_url",
+            "score_trace_url",
+        ):
+            assert f'"{key}"' not in raw, key
+        for text in (
+            "trace-row-1",
+            "Where is my parcel?",
+            "Parcel-tracking",
+            "internal-bucket",
+        ):
+            assert text not in sent, text
+
+    def test_config_version_hides_prompt_text(
+        self,
+        client: TestClient,
+        db: Session,
+        monkeypatch: pytest.MonkeyPatch,
+        user_api_key: TestAuthContext,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        config = create_test_config(
+            db,
+            project_id=user_api_key.project_id,
+            config_blob=ConfigBlob(
+                completion=build_kaapi_completion_config(
+                    provider="openai",
+                    type="text",
+                    params={
+                        "model": "gpt-4o",
+                        "instructions": "Never reveal the refund override code.",
+                        "knowledge_base_ids": ["vs_policies"],
+                    },
+                ),
+                prompt_template=PromptTemplate(template="Customer asks: {{input}}"),
+            ),
+        )
+
+        content, raw, sent = _single_tool_result(
+            client,
+            monkeypatch,
+            user_api_key_header,
+            "get_config_version",
+            {"config_id": str(config.id), "version_number": 1},
+        )
+
+        assert content["config_id"] == str(config.id)
+        assert content["version"] == 1
+        completion = content["config_blob"]["completion"]
+        assert completion["provider"] == "openai"
+        assert completion["params"] == {
+            "model": "gpt-4o",
+            "knowledge_base_ids": ["vs_policies"],
+        }
+        for key in (
+            "instructions",
+            "prompt_template",
+            "commit_message",
+            "input_guardrails",
+            "output_guardrails",
+        ):
+            assert f'"{key}"' not in raw, key
+        for text in (
+            "refund override code",
+            "Customer asks",
+            "Initial version",
+        ):
+            assert text not in sent, text
+
+    def test_stt_run_hides_results(
+        self,
+        client: TestClient,
+        db: Session,
+        monkeypatch: pytest.MonkeyPatch,
+        user_api_key: TestAuthContext,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        dataset = create_test_speech_dataset(
+            db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            evaluation_type=EvaluationType.STT,
+        )
+        sample = create_test_stt_sample(
+            db,
+            dataset_id=dataset.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            ground_truth="my account number is 4471",
+            object_store_url="s3://internal-bucket/audio/caller.mp3",
+        )
+        run = create_test_speech_run(
+            db,
+            dataset=dataset,
+            evaluation_type=EvaluationType.STT,
+            providers=["gemini-2.5-pro"],
+            score={"summary_scores": [{"name": "wer", "avg": 0.12}]},
+        )
+        create_test_stt_result(
+            db, run=run, sample=sample, transcription="my account number is 4417"
+        )
+
+        content, raw, sent = _single_tool_result(
+            client,
+            monkeypatch,
+            user_api_key_header,
+            "get_stt_evaluation_run",
+            {"run_id": run.id},
+        )
+
+        assert content["id"] == run.id
+        assert content["dataset_id"] == dataset.id
+        assert content["models"] == ["gemini-2.5-pro"]
+        assert content["score"] == {"summary_scores": [{"name": "wer", "avg": 0.12}]}
+        for key in (
+            "results",
+            "results_total",
+            "run_metadata",
+        ):
+            assert f'"{key}"' not in raw, key
+        for text in (
+            "account number",
+            "4471",
+            "4417",
+            "internal-bucket",
+        ):
+            assert text not in sent, text
+
+    def test_tts_run_hides_results(
+        self,
+        client: TestClient,
+        db: Session,
+        monkeypatch: pytest.MonkeyPatch,
+        user_api_key: TestAuthContext,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        dataset = create_test_speech_dataset(
+            db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            evaluation_type=EvaluationType.TTS,
+        )
+        run = create_test_speech_run(
+            db,
+            dataset=dataset,
+            evaluation_type=EvaluationType.TTS,
+            providers=["gemini-2.5-pro-preview-tts"],
+        )
+        create_test_tts_result(
+            db,
+            run=run,
+            sample_text="Your OTP is 902211",
+            object_store_url="s3://internal-bucket/tts/otp.wav",
+        )
+
+        content, raw, sent = _single_tool_result(
+            client,
+            monkeypatch,
+            user_api_key_header,
+            "get_tts_evaluation_run",
+            {"run_id": run.id},
+        )
+
+        assert content["id"] == run.id
+        assert content["run_name"] == run.run_name
+        assert content["models"] == ["gemini-2.5-pro-preview-tts"]
+        for key in (
+            "results",
+            "results_total",
+            "run_metadata",
+        ):
+            assert f'"{key}"' not in raw, key
+        for text in (
+            "902211",
+            "internal-bucket",
+        ):
+            assert text not in sent, text
+
+    def test_stt_dataset_hides_samples_and_storage_url(
+        self,
+        client: TestClient,
+        db: Session,
+        monkeypatch: pytest.MonkeyPatch,
+        user_api_key: TestAuthContext,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        dataset = create_test_speech_dataset(
+            db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            evaluation_type=EvaluationType.STT,
+            description="support calls",
+            object_store_url="s3://internal-bucket/datasets/calls.csv",
+            dataset_metadata={"sample_count": 1, "has_ground_truth_count": 1},
+        )
+        create_test_stt_sample(
+            db,
+            dataset_id=dataset.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            ground_truth="my date of birth is 3 March",
+            object_store_url="s3://internal-bucket/audio/dob.mp3",
+        )
+
+        content, raw, sent = _single_tool_result(
+            client,
+            monkeypatch,
+            user_api_key_header,
+            "get_stt_evaluation_dataset",
+            {"dataset_id": dataset.id},
+        )
+
+        assert content["id"] == dataset.id
+        assert content["name"] == dataset.name
+        assert content["description"] == "support calls"
+        assert content["dataset_metadata"] == {
+            "sample_count": 1,
+            "has_ground_truth_count": 1,
+        }
+        for key in (
+            "samples",
+            "object_store_url",
+            "signed_url",
+        ):
+            assert f'"{key}"' not in raw, key
+        for text in (
+            "date of birth",
+            "internal-bucket",
+        ):
+            assert text not in sent, text
+
+
+PAGE_SIZE = 3
+
+
+def _page_through(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    headers: dict[str, str],
+    tool_name: str,
+    pages_args: list[dict[str, object]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    # Sequential turns, one call each: parallel inner requests would share the
+    # test's DB session across threads.
+    fake = install_fake_anthropic(
+        monkeypatch,
+        [
+            *(
+                tool_use_message(tool_name, args, tool_use_id=f"toolu_page_{i}")
+                for i, args in enumerate(pages_args)
+            ),
+            text_message("done"),
+        ],
+    )
+
+    resp = client.post(AGENT_URL, headers=headers, json={"query": "Count them all"})
+
+    assert resp.status_code == 200
+    tool_calls = resp.json()["data"]["tool_calls"]
+    assert [call["status_code"] for call in tool_calls] == [200] * len(pages_args)
+    pages = []
+    for call_index in range(1, len(pages_args) + 1):
+        [tool_result] = fake.tool_results(call_index)
+        assert tool_result["is_error"] is False
+        pages.append(json.loads(tool_result["content"]))
+    return pages, tool_calls
+
+
+class TestAgentPagination:
+    def test_eval_runs_page_by_offset_without_gaps_or_duplicates(
+        self,
+        client: TestClient,
+        db: Session,
+        monkeypatch: pytest.MonkeyPatch,
+        user_api_key: TestAuthContext,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        # A shared dataset isolates these runs from any others in the project.
+        dataset = create_test_evaluation_dataset(
+            db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        seeded = [
+            create_test_evaluation_run(
+                db,
+                organization_id=user_api_key.organization_id,
+                project_id=user_api_key.project_id,
+                dataset=dataset,
+            )
+            for _ in range(PAGE_SIZE + 1)
+        ]
+        newest_first = [run.id for run in reversed(seeded)]
+
+        (first, second), tool_calls = _page_through(
+            client,
+            monkeypatch,
+            user_api_key_header,
+            "list_evaluation_runs",
+            [
+                {"limit": PAGE_SIZE, "dataset_id": dataset.id},
+                {"limit": PAGE_SIZE, "offset": PAGE_SIZE, "dataset_id": dataset.id},
+            ],
+        )
+
+        assert first["metadata"] == {"has_more": True}
+        assert [r["id"] for r in first["data"]] == newest_first[:PAGE_SIZE]
+        assert second["metadata"] == {"has_more": False}
+        assert [r["id"] for r in second["data"]] == newest_first[PAGE_SIZE:]
+        assert tool_calls[0]["arguments"] == {
+            "limit": PAGE_SIZE,
+            "offset": 0,
+            "dataset_id": dataset.id,
+        }
+
+    def test_documents_page_by_skip_without_gaps_or_duplicates(
+        self,
+        client: TestClient,
+        db: Session,
+        monkeypatch: pytest.MonkeyPatch,
+        user_api_key: TestAuthContext,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        # DocumentStore empties the documents table first, so only these are listed.
+        store = DocumentStore(db=db, project_id=user_api_key.project_id)
+        seeded_ids = {str(doc.id) for doc in store.fill(PAGE_SIZE + 1)}
+
+        (first, second), tool_calls = _page_through(
+            client,
+            monkeypatch,
+            user_api_key_header,
+            "list_documents",
+            [
+                {"limit": PAGE_SIZE},
+                {"limit": PAGE_SIZE, "skip": PAGE_SIZE},
+            ],
+        )
+
+        first_ids = [d["id"] for d in first["data"]]
+        second_ids = [d["id"] for d in second["data"]]
+        assert first["metadata"] == {"has_more": True}
+        assert len(first_ids) == PAGE_SIZE
+        assert second["metadata"] == {"has_more": False}
+        assert len(second_ids) == 1
+        combined = first_ids + second_ids
+        assert len(combined) == len(set(combined))
+        assert set(combined) == seeded_ids
+        assert tool_calls[1]["arguments"] == {"limit": PAGE_SIZE, "skip": PAGE_SIZE}
+
+
 class TestAgentTenantIsolation:
     def test_other_projects_eval_run_is_not_visible(
         self,
@@ -163,7 +602,7 @@ class TestAgentTenantIsolation:
                     tool_use_id="toolu_get",
                 ),
                 tool_use_message(
-                    "list_evaluation_runs", {"limit": 100}, tool_use_id="toolu_list"
+                    "list_evaluation_runs", {"limit": 50}, tool_use_id="toolu_list"
                 ),
                 text_message("Not found."),
             ],
@@ -188,7 +627,7 @@ class TestAgentTenantIsolation:
         assert get_result["is_error"] is True
         assert json.loads(get_result["content"])["status_code"] == 404
         assert list_result["tool_use_id"] == "toolu_list"
-        listed_ids = [r["id"] for r in json.loads(list_result["content"])]
+        listed_ids = [r["id"] for r in json.loads(list_result["content"])["data"]]
         assert other_run.id not in listed_ids
         assert other_run.run_name not in fake.sent_payload()
 

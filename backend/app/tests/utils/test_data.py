@@ -471,15 +471,18 @@ def create_test_evaluation_run(
     status: str = "completed",
     score: dict | None = None,
     object_store_url: str | None = None,
+    dataset: EvaluationDataset | None = None,
 ) -> EvaluationRun:
     """
-    Creates and returns a text evaluation run, with its own dataset and config.
+    Creates and returns a text evaluation run with its own config, over `dataset`
+    when given (so runs can be filtered together) or a fresh dataset otherwise.
 
     Persists the run to the database.
     """
-    dataset = create_test_evaluation_dataset(
-        db=db, organization_id=organization_id, project_id=project_id
-    )
+    if dataset is None:
+        dataset = create_test_evaluation_dataset(
+            db=db, organization_id=organization_id, project_id=project_id
+        )
     config = create_test_config(db, project_id=project_id)
     eval_run = EvaluationRun(
         run_name=run_name or f"test_run_{random_lower_string()}",

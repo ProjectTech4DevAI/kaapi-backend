@@ -204,9 +204,7 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"
 
-    # Read-only /agent Q&A over a tenant's own data; reuses ANTHROPIC_API_KEY above.
     AGENT_MODEL: str = "claude-opus-5"
-    # Sent as output_config.effort; trades answer depth against latency/cost.
     AGENT_EFFORT: str = "medium"
     AGENT_MAX_TOKENS: int = 16000
     # Tool rounds before tools are disabled and the model must answer.

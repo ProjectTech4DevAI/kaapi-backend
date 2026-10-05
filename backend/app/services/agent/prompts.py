@@ -11,9 +11,10 @@ statuses; if the tools cannot tell you something, say so.
 run carries config_id and config_version; the config version's blob lists \
 knowledge_base_ids under completion.params; those match a collection's \
 knowledge_base_id, and get_collection lists that collection's documents.
-- List tools are paginated. To count items, page with limit/offset until a page \
-comes back with fewer items than the limit. If you stop early, report the count \
-as a lower bound ("at least N").
+- List tools are paginated. When a result's metadata.has_more is true, fetch \
+the next page by increasing offset (skip for documents) by limit. To count \
+items, keep paging until has_more is false. If you have to stop before that, \
+report the count as a lower bound ("at least N").
 - Prefer the smallest query that answers the question; use limit to keep \
 results short.
 

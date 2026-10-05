@@ -14,7 +14,12 @@ from pydantic import BaseModel, JsonValue, ValidationError
 
 from app.core.config import settings
 from app.core.security import API_KEY_HEADER_NAME
-from app.services.agent.tools import ALLOWED_TOOL_METHODS, TOOLS_BY_NAME, AgentTool
+from app.services.agent.tools import (
+    ALLOWED_TOOL_METHODS,
+    TOOLS_BY_NAME,
+    AgentTool,
+    QueryParamValue,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,9 @@ _ENVELOPE_DATA_KEY = "data"
 _ENVELOPE_METADATA_KEY = "metadata"
 _ENVELOPE_SUCCESS_KEY = "success"
 _ERROR_BODY_KEYS = ("error", "errors", "detail")
+_HAS_MORE_KEY = "has_more"
+# One extra row tells whether a next page exists, since routes report it inconsistently.
+_PAGE_PROBE_ROWS = 1
 _TRUNCATION_HINT = "narrow the query with limit/offset"
 
 
@@ -52,10 +60,18 @@ def _format_validation_error(exc: ValidationError) -> str:
     return "Invalid arguments — " + "; ".join(problems)
 
 
+def _requested_page_size(tool: AgentTool, arguments: dict[str, Any]) -> int | None:
+    if tool.page_size_param is None:
+        return None
+    page_size = arguments.get(tool.page_size_param)
+    return page_size if isinstance(page_size, int) else None
+
+
 def _build_request_target(
     tool: AgentTool, validated_args: BaseModel
-) -> tuple[str, dict[str, str | int | float | bool]]:
+) -> tuple[str, dict[str, QueryParamValue]]:
     dumped = validated_args.model_dump(mode="json", exclude_none=True)
+    page_size = _requested_page_size(tool, dumped)
 
     path_values: dict[str, str] = {}
     for param_name in tool.path_param_names:
@@ -63,10 +79,15 @@ def _build_request_target(
         path_values[param_name] = quote(str(dumped[param_name]), safe="")
     path = tool.path.format(**path_values)
 
-    query_params: dict[str, str | int | float | bool] = {}
+    query_params: dict[str, QueryParamValue] = {}
     for key, value in dumped.items():
         if key not in tool.path_param_names:
             query_params[key] = value
+    if tool.page_size_param is not None and page_size is not None:
+        query_params[tool.page_size_param] = page_size + _PAGE_PROBE_ROWS
+    # Applied last so a fixed param always wins over anything model-derived.
+    for key, value in tool.fixed_query_params.items():
+        query_params[key] = value
     return path, query_params
 
 
@@ -84,23 +105,28 @@ def _extract_error_detail(response: httpx.Response) -> str:
     return json.dumps(body, default=str, ensure_ascii=False)
 
 
-def _unwrap_envelope(tool: AgentTool, body: JsonValue) -> JsonValue:
+def _unwrap_envelope(
+    tool: AgentTool, body: JsonValue, page_size: int | None
+) -> JsonValue:
     if not isinstance(body, dict) or _ENVELOPE_DATA_KEY not in body:
         return tool.projector(body) if tool.projector else body
 
     data = body[_ENVELOPE_DATA_KEY]
+    metadata: dict[str, JsonValue] = {}
+    if page_size is not None and isinstance(data, list):
+        metadata[_HAS_MORE_KEY] = len(data) > page_size
+        data = data[:page_size]
     if tool.projector:
         data = tool.projector(data)
 
-    metadata = body.get(_ENVELOPE_METADATA_KEY)
     # Some routes return 200 with success=false (e.g. partial score fetch); keep the reason.
     error = body.get("error") if body.get(_ENVELOPE_SUCCESS_KEY) is False else None
     if not metadata and not error:
         return data
 
-    wrapped: dict[str, JsonValue] = {"data": data}
+    wrapped: dict[str, JsonValue] = {_ENVELOPE_DATA_KEY: data}
     if metadata:
-        wrapped["metadata"] = metadata
+        wrapped[_ENVELOPE_METADATA_KEY] = metadata
     if error:
         wrapped["error"] = error
     return wrapped
@@ -149,6 +175,7 @@ async def execute_tool_call(
         )
 
     arguments = validated_args.model_dump(mode="json", exclude_none=True)
+    page_size = _requested_page_size(tool, arguments)
     path, query_params = _build_request_target(tool, validated_args)
 
     # Re-checked at send time so a registry mutation can't smuggle in a write.
@@ -254,7 +281,7 @@ async def execute_tool_call(
             arguments=arguments,
         )
 
-    payload = _unwrap_envelope(tool, body)
+    payload = _unwrap_envelope(tool, body, page_size)
     content = _truncate(json.dumps(payload, default=str, ensure_ascii=False))
 
     return ToolCallOutcome(
