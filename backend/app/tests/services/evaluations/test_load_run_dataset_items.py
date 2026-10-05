@@ -261,7 +261,7 @@ class TestChunkReloadUsesRunFactor:
             patch(f"{_FAST}.get_dataset_by_id", return_value=MagicMock()),
             patch(
                 f"{_FAST}._resolve_config_and_clients",
-                return_value=(MagicMock(), MagicMock(), None),
+                return_value=(MagicMock(), None),
             ),
             patch(
                 f"{_FAST}.load_run_dataset_items", return_value=loaded_items

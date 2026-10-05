@@ -66,7 +66,7 @@ from app.models.llm.response import (
     TextOutput,
     Usage,
 )
-from app.services.llm.chain.types import BlockResult
+from app.services.llm.chain.types import BlockResult, GuardrailOutcomeEnum
 from app.services.llm.guardrails import apply_guardrails, summarize_validator_results
 from app.services.llm.mappers import (
     resolve_default_audio_provider,
@@ -372,13 +372,19 @@ def apply_input_guardrails(
     project_id: int,
     organization_id: int,
     include_guardrail_metadata: bool = False,
-) -> tuple[QueryParams, str | None, str | None, dict[str, Any] | None]:
+) -> tuple[
+    QueryParams,
+    str | None,
+    str | None,
+    dict[str, Any] | None,
+    GuardrailOutcomeEnum | None,
+]:
     """Apply input guardrails from a config_blob. Shared with llm-call and llm-chain.
 
-    Returns (query, error, guardrail_direct_response, metadata).
+    Returns (query, error, guardrail_direct_response, metadata, guardrail_outcome).
     """
     if not config_blob or not config_blob.input_guardrails:
-        return query, None, None, None
+        return query, None, None, None, None
 
     if not isinstance(query.input, TextInput):
         logger.info(
@@ -386,7 +392,7 @@ def apply_input_guardrails(
             f"job_id={job_id}, "
             f"input_type={getattr(query.input, 'type', type(query.input).__name__)}"
         )
-        return query, None, None, None
+        return query, None, None, None, None
 
     original_input_text = query.input.content.value
     outcome = apply_guardrails(
@@ -408,13 +414,19 @@ def apply_input_guardrails(
         }
 
     if outcome.error is not None:
-        return query, outcome.error, None, metadata
+        return (
+            query,
+            outcome.error,
+            None,
+            metadata,
+            GuardrailOutcomeEnum.BLOCKED if outcome.blocked else None,
+        )
 
     if outcome.rephrase_needed:
         logger.info(
             f"[apply_input_guardrails] rephrase_needed=True, returning safe_text directly | job_id={job_id}"
         )
-        return query, None, outcome.safe_text, metadata
+        return query, None, outcome.safe_text, metadata, GuardrailOutcomeEnum.REPHRASED
 
     # No-op paths (no validators, bypassed) leave the query untouched.
     if outcome.applied and outcome.safe_text is not None:
@@ -428,9 +440,10 @@ def apply_input_guardrails(
                 "Input guardrails rejected the request and left no usable content.",
                 None,
                 metadata,
+                GuardrailOutcomeEnum.BLOCKED,
             )
         query.input.content.value = outcome.safe_text
-    return query, None, None, metadata
+    return query, None, None, metadata, None
 
 
 def apply_output_guardrails(
@@ -442,13 +455,14 @@ def apply_output_guardrails(
     organization_id: int,
     input_text: str | None = None,
     include_guardrail_metadata: bool = False,
-) -> tuple[BlockResult, str | None]:
+) -> tuple[BlockResult, str | None, GuardrailOutcomeEnum | None]:
     """Apply output guardrails from a config_blob. Shared by /llm/call and /llm/chain.
 
-    Returns (modified_result, None) on success, or (result, error_string) on failure.
+    Returns (modified_result, None, None) on success, or
+    (result, error_string, guardrail_outcome) on failure.
     """
     if not config_blob or not config_blob.output_guardrails:
-        return result, None
+        return result, None, None
 
     if not isinstance(result.response.response.output, TextOutput):
         logger.info(
@@ -456,7 +470,7 @@ def apply_output_guardrails(
             f"job_id={job_id}, "
             f"output_type={getattr(result.response.response.output, 'type', type(result.response.response.output).__name__)}"
         )
-        return result, None
+        return result, None, None
 
     original_output_text = result.response.response.output.content.value
     outcome = apply_guardrails(
@@ -478,7 +492,11 @@ def apply_output_guardrails(
         result.metadata = existing_metadata
 
     if outcome.error is not None:
-        return result, outcome.error
+        return (
+            result,
+            outcome.error,
+            GuardrailOutcomeEnum.BLOCKED if outcome.blocked else None,
+        )
 
     if outcome.applied and outcome.safe_text is not None:
         if not outcome.safe_text.strip():
@@ -489,9 +507,10 @@ def apply_output_guardrails(
             return (
                 result,
                 "Output guardrails rejected the response and left no usable content.",
+                GuardrailOutcomeEnum.BLOCKED,
             )
         result.response.response.output.content.value = outcome.safe_text
-    return result, None
+    return result, None, None
 
 
 def persist_output_guardrail_result(
@@ -564,6 +583,7 @@ def execute_llm_call(
     include_guardrail_metadata: bool = False,
     chain_id: UUID | None = None,
     detected_language: str | None = None,
+    record_call: bool = True,
 ) -> BlockResult:
     """Execute a single LLM call. Shared by /llm/call and /llm/chain.
 
@@ -571,15 +591,19 @@ def execute_llm_call(
 
     Args:
         detected_language: Language code detected by STT (used to replace {{detected}} marker in TTS)
+        record_call: When False the call is not production traffic — no `LlmCall`
+            row is written, no AI spans are emitted and no LLM metrics are
+            recorded. Used by evaluation runs.
     """
 
     config_blob: ConfigBlob | None = None
     llm_call_id: UUID | None = None
     trace_id = correlation_id.get()
+    _tracer = tracer if record_call else trace.NoOpTracer()
 
     try:
         with Session(engine) as session:
-            with tracer.start_as_current_span("llm.resolve_config") as cfg_span:
+            with _tracer.start_as_current_span("llm.resolve_config") as cfg_span:
                 _set_traceability_attributes(
                     cfg_span,
                     job_id=job_id,
@@ -634,7 +658,7 @@ def execute_llm_call(
                 interpolated = template.replace("{{input}}", query.input.content.value)
                 query.input.content.value = interpolated
 
-            with tracer.start_as_current_span("llm.guardrails.input") as guard_span:
+            with _tracer.start_as_current_span("llm.guardrails.input") as guard_span:
                 _set_traceability_attributes(
                     guard_span,
                     job_id=job_id,
@@ -648,6 +672,7 @@ def execute_llm_call(
                     input_error,
                     guardrail_direct_response,
                     input_guardrail_metadata,
+                    input_guardrail_outcome,
                 ) = apply_input_guardrails(
                     config_blob=config_blob,
                     query=query,
@@ -687,29 +712,34 @@ def execute_llm_call(
                     )
                     if original_input_value is not None:
                         query.input.content.value = original_input_value
-                    llm_call_id = save_rephrase_guardrail_call(
-                        session=session,
-                        query=query,
-                        config=config,
-                        request_metadata=request_metadata,
-                        config_blob=config_blob,
-                        guardrail_direct_response=guardrail_direct_response,
-                        job_id=job_id,
-                        project_id=project_id,
-                        organization_id=organization_id,
-                        chain_id=chain_id,
-                    )
+                    if record_call:
+                        llm_call_id = save_rephrase_guardrail_call(
+                            session=session,
+                            query=query,
+                            config=config,
+                            request_metadata=request_metadata,
+                            config_blob=config_blob,
+                            guardrail_direct_response=guardrail_direct_response,
+                            job_id=job_id,
+                            project_id=project_id,
+                            organization_id=organization_id,
+                            chain_id=chain_id,
+                        )
                     return BlockResult(
                         response=llm_response,
                         usage=guardrail_usage,
                         metadata=request_metadata,
                         llm_call_id=llm_call_id,
+                        guardrail_outcome=input_guardrail_outcome,
                     )
                 if input_error:
                     guard_span.set_status(
                         trace.Status(trace.StatusCode.ERROR, input_error)
                     )
-                    return BlockResult(error=input_error)
+                    return BlockResult(
+                        error=input_error,
+                        guardrail_outcome=input_guardrail_outcome,
+                    )
             # proxy branch, bypass execution of API CAll
             if config_blob.completion.type == Provider.PROXY.value:
                 if not isinstance(query.input, TextInput):
@@ -749,23 +779,24 @@ def execute_llm_call(
                     )
 
                 try:
-                    llm_call_request = LLMCallRequest(
-                        query=query,
-                        config=config,
-                        request_metadata=request_metadata,
-                    )
-                    llm_call = create_llm_call(
-                        session,
-                        request=llm_call_request,
-                        job_id=job_id,
-                        project_id=project_id,
-                        organization_id=organization_id,
-                        resolved_config=config_blob,
-                        original_provider=Provider.PROXY.value,
-                        chain_id=chain_id,
-                        metadata=request_metadata,
-                    )
-                    llm_call_id = llm_call.id
+                    if record_call:
+                        llm_call_request = LLMCallRequest(
+                            query=query,
+                            config=config,
+                            request_metadata=request_metadata,
+                        )
+                        llm_call = create_llm_call(
+                            session,
+                            request=llm_call_request,
+                            job_id=job_id,
+                            project_id=project_id,
+                            organization_id=organization_id,
+                            resolved_config=config_blob,
+                            original_provider=Provider.PROXY.value,
+                            chain_id=chain_id,
+                            metadata=request_metadata,
+                        )
+                        llm_call_id = llm_call.id
                 except Exception as e:
                     logger.error(
                         f"[execute_llm_call] Failed to create proxy LLM call record: {e} | job_id={job_id}",
@@ -775,17 +806,18 @@ def execute_llm_call(
                         error=f"Failed to create LLM call record: {str(e)}"
                     )
 
-                record_llm_call_started(
-                    provider=Provider.PROXY.value,
-                    model="",
-                    operation="chat",
-                    organization_id=organization_id,
-                    project_id=project_id,
-                )
+                if record_call:
+                    record_llm_call_started(
+                        provider=Provider.PROXY.value,
+                        model="",
+                        operation="chat",
+                        organization_id=organization_id,
+                        project_id=project_id,
+                    )
                 proxy_started_at = time.perf_counter()
                 proxy_data: dict | None = None
 
-                with tracer.start_as_current_span("llm.proxy.execute") as proxy_span:
+                with _tracer.start_as_current_span("llm.proxy.execute") as proxy_span:
                     _set_traceability_attributes(
                         proxy_span,
                         job_id=job_id,
@@ -817,15 +849,17 @@ def execute_llm_call(
                         proxy_span.set_status(
                             trace.Status(trace.StatusCode.ERROR, str(e))
                         )
-                        record_llm_call_finished(
-                            provider=Provider.PROXY.value,
-                            model="",
-                            operation="chat",
-                            duration_ms=(time.perf_counter() - proxy_started_at) * 1000,
-                            error=True,
-                            organization_id=organization_id,
-                            project_id=project_id,
-                        )
+                        if record_call:
+                            record_llm_call_finished(
+                                provider=Provider.PROXY.value,
+                                model="",
+                                operation="chat",
+                                duration_ms=(time.perf_counter() - proxy_started_at)
+                                * 1000,
+                                error=True,
+                                organization_id=organization_id,
+                                project_id=project_id,
+                            )
                         logger.error(
                             f"[execute_llm_call] Proxy call failed: {e} | job_id={job_id}, url={client_llm_url}",
                             exc_info=True,
@@ -833,6 +867,7 @@ def execute_llm_call(
                         return BlockResult(
                             error=f"Proxy call failed: {str(e)}",
                             llm_call_id=llm_call_id,
+                            retryable=True,
                         )
 
                 try:
@@ -865,33 +900,35 @@ def execute_llm_call(
                     usage=proxy_usage,
                 )
 
-                try:
-                    update_llm_call_response(
-                        session,
-                        llm_call_id=llm_call_id,
-                        provider_response_id=provider_response_id,
-                        content=proxy_response.response.output.model_dump(),
-                        usage=proxy_usage.model_dump(),
-                        conversation_id=None,
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"[execute_llm_call] Failed to update proxy LLM call record: {e} | llm_call_id={llm_call_id}",
-                        exc_info=True,
-                    )
+                if llm_call_id:
+                    try:
+                        update_llm_call_response(
+                            session,
+                            llm_call_id=llm_call_id,
+                            provider_response_id=provider_response_id,
+                            content=proxy_response.response.output.model_dump(),
+                            usage=proxy_usage.model_dump(),
+                            conversation_id=None,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"[execute_llm_call] Failed to update proxy LLM call record: {e} | llm_call_id={llm_call_id}",
+                            exc_info=True,
+                        )
                 # sentry emit metrics
-                record_llm_call_finished(
-                    provider=Provider.PROXY.value,
-                    model=proxy_model,
-                    operation="chat",
-                    duration_ms=(time.perf_counter() - proxy_started_at) * 1000,
-                    input_tokens=proxy_usage.input_tokens,
-                    output_tokens=proxy_usage.output_tokens,
-                    total_tokens=proxy_usage.total_tokens,
-                    error=False,
-                    organization_id=organization_id,
-                    project_id=project_id,
-                )
+                if record_call:
+                    record_llm_call_finished(
+                        provider=Provider.PROXY.value,
+                        model=proxy_model,
+                        operation="chat",
+                        duration_ms=(time.perf_counter() - proxy_started_at) * 1000,
+                        input_tokens=proxy_usage.input_tokens,
+                        output_tokens=proxy_usage.output_tokens,
+                        total_tokens=proxy_usage.total_tokens,
+                        error=False,
+                        organization_id=organization_id,
+                        project_id=project_id,
+                    )
 
                 result = BlockResult(
                     response=proxy_response,
@@ -900,7 +937,7 @@ def execute_llm_call(
                     metadata=request_metadata,
                 )
 
-                with tracer.start_as_current_span(
+                with _tracer.start_as_current_span(
                     "llm.guardrails.output"
                 ) as out_guard_span:
                     _set_traceability_attributes(
@@ -912,7 +949,11 @@ def execute_llm_call(
                         project_id=project_id,
                         organization_id=organization_id,
                     )
-                    result, output_error = apply_output_guardrails(
+                    (
+                        result,
+                        output_error,
+                        output_guardrail_outcome,
+                    ) = apply_output_guardrails(
                         config_blob=config_blob,
                         result=result,
                         job_id=job_id,
@@ -925,7 +966,13 @@ def execute_llm_call(
                         out_guard_span.set_status(
                             trace.Status(trace.StatusCode.ERROR, output_error)
                         )
-                        return BlockResult(error=output_error, llm_call_id=llm_call_id)
+                        # Proxy already billed these tokens; keep them on the result.
+                        return BlockResult(
+                            error=output_error,
+                            llm_call_id=llm_call_id,
+                            usage=proxy_usage,
+                            guardrail_outcome=output_guardrail_outcome,
+                        )
                     if config_blob.output_guardrails:
                         updated_content = None
                         if isinstance(result.response.response.output, TextOutput):
@@ -952,7 +999,10 @@ def execute_llm_call(
                 ),
             ):
                 completion_config, warnings = transform_kaapi_config_to_native(
-                    session=session, kaapi_config=completion_config
+                    session=session,
+                    kaapi_config=completion_config,
+                    # Hits only come via the raw response; skip unless requested.
+                    include_file_search_results=include_provider_raw_response,
                 )
                 existing = request_metadata or {}
                 existing_warnings = list(existing.get("warnings") or [])
@@ -977,7 +1027,7 @@ def execute_llm_call(
                 output_guardrails=config_blob.output_guardrails,
             )
 
-            with tracer.start_as_current_span("llm.create_call_record") as create_span:
+            with _tracer.start_as_current_span("llm.create_call_record") as create_span:
                 _set_traceability_attributes(
                     create_span,
                     job_id=job_id,
@@ -992,28 +1042,31 @@ def execute_llm_call(
                 if model_name:
                     create_span.set_attribute("llm.request.model", model_name)
                 try:
-                    llm_call_request = LLMCallRequest(
-                        query=query,
-                        config=config,
-                        request_metadata=request_metadata,
-                    )
-                    llm_call = create_llm_call(
-                        session,
-                        request=llm_call_request,
-                        job_id=job_id,
-                        project_id=project_id,
-                        organization_id=organization_id,
-                        resolved_config=resolved_config_blob,
-                        original_provider=original_provider,
-                        chain_id=chain_id,
-                        metadata=request_metadata,
-                    )
-                    llm_call_id = llm_call.id
-                    _set_traceability_attributes(create_span, llm_call_id=llm_call_id)
-                    logger.info(
-                        f"[execute_llm_call] Created LLM call record | "
-                        f"llm_call_id={llm_call_id}, job_id={job_id}"
-                    )
+                    if record_call:
+                        llm_call_request = LLMCallRequest(
+                            query=query,
+                            config=config,
+                            request_metadata=request_metadata,
+                        )
+                        llm_call = create_llm_call(
+                            session,
+                            request=llm_call_request,
+                            job_id=job_id,
+                            project_id=project_id,
+                            organization_id=organization_id,
+                            resolved_config=resolved_config_blob,
+                            original_provider=original_provider,
+                            chain_id=chain_id,
+                            metadata=request_metadata,
+                        )
+                        llm_call_id = llm_call.id
+                        _set_traceability_attributes(
+                            create_span, llm_call_id=llm_call_id
+                        )
+                        logger.info(
+                            f"[execute_llm_call] Created LLM call record | "
+                            f"llm_call_id={llm_call_id}, job_id={job_id}"
+                        )
                 except Exception as e:
                     create_span.record_exception(e)
                     create_span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
@@ -1099,19 +1152,20 @@ def execute_llm_call(
         model_name = str(completion_config.params.get("model") or "")
         completion_type = str(completion_config.type or "")
         # sentry emit
-        record_llm_call_started(
-            provider=provider_name,
-            model=model_name,
-            operation=operation,
-            organization_id=organization_id,
-            project_id=project_id,
-        )
+        if record_call:
+            record_llm_call_started(
+                provider=provider_name,
+                model=model_name,
+                operation=operation,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
         provider_started_at = time.perf_counter()
         response = None
         error = None
 
         ai_span_name = f"chat {model_name}" if model_name else f"chat {provider_name}"
-        with tracer.start_as_current_span(ai_span_name) as ai_span:
+        with _tracer.start_as_current_span(ai_span_name) as ai_span:
             ai_span.set_attribute("sentry.op", "gen_ai.chat")
             _set_traceability_attributes(
                 ai_span,
@@ -1136,7 +1190,7 @@ def execute_llm_call(
 
             try:
                 with resolved_input_context(query.input) as resolved_input:
-                    with tracer.start_as_current_span(
+                    with _tracer.start_as_current_span(
                         "llm.provider.execute"
                     ) as provider_span:
                         _set_traceability_attributes(
@@ -1173,15 +1227,16 @@ def execute_llm_call(
                         )
             except ValueError as ve:
                 ai_span.set_status(trace.Status(trace.StatusCode.ERROR, str(ve)))
-                record_llm_call_finished(
-                    provider=provider_name,
-                    model=model_name,
-                    operation=operation,
-                    duration_ms=(time.perf_counter() - provider_started_at) * 1000,
-                    error=True,
-                    organization_id=organization_id,
-                    project_id=project_id,
-                )
+                if record_call:
+                    record_llm_call_finished(
+                        provider=provider_name,
+                        model=model_name,
+                        operation=operation,
+                        duration_ms=(time.perf_counter() - provider_started_at) * 1000,
+                        error=True,
+                        organization_id=organization_id,
+                        project_id=project_id,
+                    )
                 return BlockResult(error=str(ve), llm_call_id=llm_call_id)
 
             if response:
@@ -1241,7 +1296,7 @@ def execute_llm_call(
 
             with Session(engine) as session:
                 if llm_call_id:
-                    with tracer.start_as_current_span(
+                    with _tracer.start_as_current_span(
                         "llm.update_call_record"
                     ) as update_span:
                         _set_traceability_attributes(
@@ -1273,19 +1328,19 @@ def execute_llm_call(
                                 exc_info=True,
                             )
 
-            duration_ms = (time.perf_counter() - provider_started_at) * 1000
-            record_llm_call_finished(
-                provider=provider_name,
-                model=model_name,
-                operation=operation,
-                duration_ms=duration_ms,
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
-                total_tokens=response.usage.total_tokens,
-                error=False,
-                organization_id=organization_id,
-                project_id=project_id,
-            )
+            if record_call:
+                record_llm_call_finished(
+                    provider=provider_name,
+                    model=model_name,
+                    operation=operation,
+                    duration_ms=(time.perf_counter() - provider_started_at) * 1000,
+                    input_tokens=response.usage.input_tokens,
+                    output_tokens=response.usage.output_tokens,
+                    total_tokens=response.usage.total_tokens,
+                    error=False,
+                    organization_id=organization_id,
+                    project_id=project_id,
+                )
 
             result = BlockResult(
                 response=response,
@@ -1294,7 +1349,7 @@ def execute_llm_call(
                 metadata=request_metadata,
             )
 
-            with tracer.start_as_current_span(
+            with _tracer.start_as_current_span(
                 "llm.guardrails.output"
             ) as out_guard_span:
                 _set_traceability_attributes(
@@ -1306,7 +1361,11 @@ def execute_llm_call(
                     project_id=project_id,
                     organization_id=organization_id,
                 )
-                result, output_error = apply_output_guardrails(
+                (
+                    result,
+                    output_error,
+                    output_guardrail_outcome,
+                ) = apply_output_guardrails(
                     config_blob=config_blob,
                     result=result,
                     job_id=job_id,
@@ -1319,7 +1378,13 @@ def execute_llm_call(
                     out_guard_span.set_status(
                         trace.Status(trace.StatusCode.ERROR, output_error)
                     )
-                    return BlockResult(error=output_error, llm_call_id=llm_call_id)
+                    # Provider already billed these tokens; keep them on the result.
+                    return BlockResult(
+                        error=output_error,
+                        llm_call_id=llm_call_id,
+                        usage=response.usage,
+                        guardrail_outcome=output_guardrail_outcome,
+                    )
                 if config_blob.output_guardrails:
                     updated_content = None
                     if isinstance(result.response.response.output, TextOutput):
@@ -1332,18 +1397,20 @@ def execute_llm_call(
 
             return result
 
-        duration_ms = (time.perf_counter() - provider_started_at) * 1000
-        record_llm_call_finished(
-            provider=provider_name,
-            model=model_name,
-            operation=operation,
-            duration_ms=duration_ms,
-            error=True,
-            organization_id=organization_id,
-            project_id=project_id,
-        )
+        if record_call:
+            record_llm_call_finished(
+                provider=provider_name,
+                model=model_name,
+                operation=operation,
+                duration_ms=(time.perf_counter() - provider_started_at) * 1000,
+                error=True,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
         error_message = error or "Unknown error occurred"
-        return BlockResult(error=error_message, llm_call_id=llm_call_id)
+        # ponytail: every provider failure retries, even deterministic 4xx (unbilled).
+        # Upgrade: have providers return the error category.
+        return BlockResult(error=error_message, llm_call_id=llm_call_id, retryable=True)
 
     except (Timeout, SoftTimeLimitExceeded):
         raise
