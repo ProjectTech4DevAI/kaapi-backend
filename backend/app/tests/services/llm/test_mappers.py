@@ -208,7 +208,12 @@ class TestMapKaapiToGoogleParams:
             kaapi_params.model_dump(exclude_none=True), completion_type="text"
         )
 
-        assert result == {"model": "gemini-2.5-pro", "temperature": 0.7}
+        assert result == {
+            "model": "gemini-2.5-pro",
+            "temperature": 0.7,
+            "video_part_config": {"videoMetadata": {"fps": 1.0}},
+            "media_resolution": "MEDIA_RESOLUTION_LOW",
+        }
         assert warnings == []
 
     def test_text_completion_with_reasoning(self):
