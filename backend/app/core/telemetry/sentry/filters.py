@@ -1,3 +1,5 @@
+"""Sentry before_send filters: drop probe/noise spans, scrub genai content, PII and LLM job kwargs."""
+
 import re
 from importlib import import_module
 from typing import Any
@@ -55,8 +57,7 @@ _GENAI_INTEGRATIONS: tuple[tuple[str, str], ...] = (
 
 _REDACTED = "[REDACTED]"
 
-# LLM job kwargs land in Sentry via sentry_sdk's CeleryIntegration; these keys
-# carry end-user text and must be redacted before that happens.
+# CeleryIntegration ships task kwargs; these keys carry end-user text.
 _LLM_JOB_TASK_NAMES = {
     "app.celery.tasks.job_execution.run_llm_job",
     "app.celery.tasks.job_execution.run_llm_chain_job",
@@ -72,7 +73,6 @@ _SENSITIVE_REQUEST_DATA_KEYS = (
 
 
 _SQL_OR_CONNECT = re.compile(r"^(select|insert|update|delete|connect)\b", re.IGNORECASE)
-_HTTP_SEND_RECEIVE = re.compile(r"http (send|receive)$", re.IGNORECASE)
 _DB_QUERY_SPAN = re.compile(r"^db\.query$", re.IGNORECASE)
 _BARE_HTTP_METHOD = re.compile(
     r"^(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE|TRACE|CONNECT)$", re.IGNORECASE
@@ -152,7 +152,7 @@ def scrub_genai_content(payload: object, depth: int = 0) -> None:
 
 
 def before_send_transaction_filter(event: Event, _hint: Hint) -> Event | None:
-    """Drop ASGI/DB noise spans and scrub genai content before shipping."""
+    """Drop DB noise spans and scrub genai content before shipping."""
     if _should_drop_transaction(event):
         return None
 
@@ -173,8 +173,6 @@ def before_send_transaction_filter(event: Event, _hint: Hint) -> Event | None:
         desc = str(span.get("description") or span.get("name") or "").strip()
         op = str(span.get("op") or "").strip()
 
-        if _HTTP_SEND_RECEIVE.search(desc):
-            continue
         if _DB_QUERY_SPAN.search(desc) or _DB_QUERY_SPAN.search(op):
             continue
         if data.get("db.system") is not None:

@@ -1,3 +1,5 @@
+"""LLM call telemetry: gen_ai span attributes, call/token metrics, HTTP span suppression around provider calls."""
+
 import json
 from collections.abc import Generator
 from contextlib import contextmanager

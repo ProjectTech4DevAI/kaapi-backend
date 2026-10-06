@@ -610,7 +610,7 @@ def send_callback(
             return True
 
     except requests.RequestException as e:
-        logger.error(f"[send_callback] Callback failed: {str(e)}", exc_info=True)
+        logger.warning(f"[send_callback] Callback failed: {str(e)}", exc_info=True)
         return False
 
 

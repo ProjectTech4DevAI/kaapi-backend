@@ -1,3 +1,5 @@
+"""Sentry metrics emitter plus platform monitors: stale pending jobs, rate-threshold alerts."""
+
 import logging
 from collections.abc import Mapping
 from typing import Literal

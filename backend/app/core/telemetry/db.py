@@ -1,3 +1,5 @@
+"""SQLAlchemy telemetry: query spans, slow-query/failure/pool/connection/transaction metrics, SQLSTATE tags."""
+
 import logging
 import time
 

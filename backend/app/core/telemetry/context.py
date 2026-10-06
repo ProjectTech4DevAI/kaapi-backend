@@ -1,3 +1,5 @@
+"""Request-scoped log context: log_context(), LogContextFilter, tenant tags and Sentry user binding."""
+
 import logging
 from collections.abc import Generator
 from contextlib import contextmanager

@@ -149,8 +149,32 @@ def _build_request(headers: dict[str, str] | None = None) -> Request:
             "query_string": b"",
             "root_path": "",
             "headers": raw_headers,
+            "route": SimpleNamespace(path="/api/v1/probe"),
         }
     )
+
+
+class TestUnmatchedRoute:
+    @pytest.mark.asyncio
+    async def test_unrouted_request_emits_only_unmatched_counter(
+        self, non_recording_span: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fake = _active_sentry()
+        request = _request("/wp-admin/setup.php", route=None)
+        call_next = AsyncMock(return_value=SimpleNamespace(status_code=404))
+
+        with (
+            patch.object(middleware, "sentry_sdk", fake),
+            patch.object(metrics, "sentry_sdk", fake),
+            caplog.at_level(logging.INFO, logger="http_request_logger"),
+        ):
+            await middleware._log_http_request(request, call_next)
+
+        assert _metric_names(fake) == ["http.server.request.unmatched"]
+        assert fake.metrics.count.call_args.kwargs["attributes"] == {
+            "http.method": "GET"
+        }
+        assert not [r for r in caplog.records if "_log_http_request" in r.message]
 
 
 class TestResolveRequestBodySize:
@@ -178,15 +202,15 @@ class TestAccessLogLine:
         payload = b"0123456789abcdef"
 
         with caplog.at_level(logging.INFO, logger="http_request_logger"):
-            response = client.post("/api/v1/no-such-route", content=payload)
+            response = client.patch("/api/v1/users/me", content=payload)
 
-        assert response.status_code == 404
+        assert response.status_code == 401
         line = next(
             record.getMessage()
             for record in caplog.records
             if record.name == "http_request_logger"
         )
-        assert "POST /api/v1/no-such-route - 404" in line
+        assert "PATCH /api/v1/users/me - 401" in line
         assert "| request_body_size: 16B |" in line
         assert re.search(r"correlation_id: [0-9a-f]{32}$", line)
 
@@ -194,7 +218,7 @@ class TestAccessLogLine:
         self, client: TestClient, caplog: pytest.LogCaptureFixture
     ) -> None:
         with caplog.at_level(logging.INFO, logger="http_request_logger"):
-            client.get("/api/v1/no-such-route")
+            client.get("/api/v1/users/me")
 
         line = next(
             record.getMessage()

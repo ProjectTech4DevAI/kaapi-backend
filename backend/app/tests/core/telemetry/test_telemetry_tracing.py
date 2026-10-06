@@ -1,3 +1,4 @@
+import os
 import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -117,6 +118,31 @@ class TestShouldDropBareHttpTrace:
         )
 
 
+class TestSemconvOptIn:
+    def test_defaults_to_dup_mode_for_http(self) -> None:
+        assert os.environ[telemetry.OTEL_SEMCONV_OPT_IN_ENV] == "http/dup"
+
+
+class TestShouldDropUnroutedServerSpan:
+    def test_drops_root_server_span_without_route(self) -> None:
+        assert telemetry._should_drop_unrouted_server_span(
+            is_root=True, kind=SpanKind.SERVER, attributes={"http.method": "PROPFIND"}
+        )
+
+    def test_keeps_root_server_span_with_route(self) -> None:
+        assert not telemetry._should_drop_unrouted_server_span(
+            is_root=True, kind=SpanKind.SERVER, attributes={"http.route": "/api/v1/x"}
+        )
+
+    def test_keeps_non_root_and_non_server_spans(self) -> None:
+        assert not telemetry._should_drop_unrouted_server_span(
+            is_root=False, kind=SpanKind.SERVER, attributes={}
+        )
+        assert not telemetry._should_drop_unrouted_server_span(
+            is_root=True, kind=SpanKind.CONSUMER, attributes={}
+        )
+
+
 class TestNoiseFilteringSpanProcessor:
     @staticmethod
     def _root_server_span(span_id: int, start_time_ns: int) -> MagicMock:
@@ -129,6 +155,21 @@ class TestNoiseFilteringSpanProcessor:
             trace_id=0xABC, span_id=span_id, is_valid=True
         )
         return span
+
+    def test_root_span_attributes_forwarded_to_transaction_data(self) -> None:
+        processor = telemetry._NoiseFilteringSpanProcessor()
+        otel_span = MagicMock()
+        otel_span.attributes = {"http.request.body.size": 4096, "http.method": "POST"}
+        otel_span.kind = SpanKind.SERVER
+        transaction = MagicMock()
+
+        with patch.object(
+            SentrySpanProcessor, "_update_transaction_with_otel_data"
+        ) as base:
+            processor._update_transaction_with_otel_data(transaction, otel_span)
+
+        base.assert_called_once_with(transaction, otel_span)
+        transaction.set_data.assert_any_call("http.request.body.size", 4096)
 
     def test_dropped_root_span_is_removed_from_open_spans(self) -> None:
         processor = telemetry._NoiseFilteringSpanProcessor()
@@ -180,6 +221,16 @@ class TestInstrumentApp:
         assert not el.url_disabled("/api/v1/llm/generate")
         assert not el.url_disabled("/api/v1/cronies")
         assert not el.url_disabled("/api/v1/documents")
+
+    def test_asgi_send_receive_spans_excluded_at_source(self) -> None:
+        instrument = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry.FastAPIInstrumentor, "instrument_app", instrument),
+        ):
+            telemetry.instrument_app(self._app())
+
+        assert instrument.call_args.kwargs["exclude_spans"] == ["receive", "send"]
 
     def test_noop_when_otel_disabled(self) -> None:
         instrument = MagicMock()

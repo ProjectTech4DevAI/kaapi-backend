@@ -5,11 +5,13 @@ import sentry_sdk
 from asgi_correlation_id import correlation_id
 from fastapi import Request, Response
 from opentelemetry import trace
+from starlette.middleware.base import RequestResponseEndpoint
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.config import settings
 from app.core.logger import log_service_name
-from app.core.telemetry import record_http_request
+from app.core.telemetry import record_http_request, record_unmatched_request
+from app.core.telemetry.http import UNMATCHED_ROUTE
 
 logger = logging.getLogger("http_request_logger")
 
@@ -52,10 +54,12 @@ def _resolve_http_route(request: Request) -> str:
     """
     route = request.scope.get("route")
     templated = getattr(route, "path", None)
-    return templated or "unmatched"
+    return templated or UNMATCHED_ROUTE
 
 
-async def http_request_logger(request: Request, call_next) -> Response:
+async def http_request_logger(
+    request: Request, call_next: RequestResponseEndpoint
+) -> Response:
     if request.url.path.startswith(CRON_PATH_PREFIX):
         with log_service_name(settings.CRON_SERVICE_NAME):
             return await _log_http_request(request, call_next)
@@ -74,7 +78,9 @@ def _resolve_request_body_size(request: Request) -> int:
         return 0
 
 
-async def _log_http_request(request: Request, call_next) -> Response:
+async def _log_http_request(
+    request: Request, call_next: RequestResponseEndpoint
+) -> Response:
     start_time = time.time()
     method = request.method
     raw_path = request.url.path
@@ -83,9 +89,6 @@ async def _log_http_request(request: Request, call_next) -> Response:
 
     span = trace.get_current_span()
     if span.is_recording():
-        span.set_attribute("http.request.method", method)
-        span.set_attribute("http.request_method", method)
-        span.set_attribute("http.method", method)
         span.set_attribute("http.request.body.size", request_body_size)
 
     if sentry_sdk.get_client().is_active():
@@ -100,15 +103,13 @@ async def _log_http_request(request: Request, call_next) -> Response:
         duration_ms = (time.time() - start_time) * 1000
         status = 500
         http_route = _resolve_http_route(request)
-        if span.is_recording():
-            span.set_attribute("http.route", http_route)
-            span.set_attribute("http.status_code", status)
-            span.set_attribute("http.response.status_code", status)
         if sentry_sdk.get_client().is_active():
             sentry_sdk.set_tag("http.route", http_route)
             sentry_sdk.set_tag("http.status_code", str(status))
             sentry_sdk.set_tag("http.response.status_code", str(status))
-        if metrics_enabled:
+        if http_route == UNMATCHED_ROUTE:
+            record_unmatched_request(method=method)
+        elif metrics_enabled:
             record_http_request(
                 method=method,
                 http_route=http_route,
@@ -123,18 +124,14 @@ async def _log_http_request(request: Request, call_next) -> Response:
     status = response.status_code
     http_route = _resolve_http_route(request)
 
-    if span.is_recording():
-        span.set_attribute("http.route", http_route)
-        span.set_attribute("http.status_code", status)
-        span.set_attribute("http.response.status_code", status)
-        span.set_attribute("http.request.duration_ms", round(duration_ms, 2))
-
     if sentry_sdk.get_client().is_active():
         sentry_sdk.set_tag("http.route", http_route)
         sentry_sdk.set_tag("http.status_code", str(status))
         sentry_sdk.set_tag("http.response.status_code", str(status))
 
-    if metrics_enabled:
+    if http_route == UNMATCHED_ROUTE:
+        record_unmatched_request(method=method)
+    elif metrics_enabled:
         logger.info(
             f"[_log_http_request] {method} {raw_path} - {status} [{duration_ms:.2f}ms] "
             f"| request_body_size: {request_body_size}B "

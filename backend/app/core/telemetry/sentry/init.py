@@ -1,3 +1,5 @@
+"""sentry_sdk.init() with shared sampling, profiling, PII and before_send filters; release id resolution."""
+
 import logging
 
 import sentry_sdk
