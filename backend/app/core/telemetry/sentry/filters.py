@@ -45,14 +45,9 @@ _GENAI_SCRUB_MAX_DEPTH: int = 8
 # Sentry auto-enables these per installed SDK; they record prompts when PII is on.
 _GENAI_INTEGRATIONS: tuple[tuple[str, str], ...] = (
     ("sentry_sdk.integrations.anthropic", "AnthropicIntegration"),
-    ("sentry_sdk.integrations.cohere", "CohereIntegration"),
     ("sentry_sdk.integrations.google_genai", "GoogleGenAIIntegration"),
-    ("sentry_sdk.integrations.huggingface_hub", "HuggingfaceHubIntegration"),
-    ("sentry_sdk.integrations.langchain", "LangchainIntegration"),
     ("sentry_sdk.integrations.langgraph", "LanggraphIntegration"),
     ("sentry_sdk.integrations.openai", "OpenAIIntegration"),
-    ("sentry_sdk.integrations.openai_agents", "OpenAIAgentsIntegration"),
-    ("sentry_sdk.integrations.pydantic_ai", "PydanticAIIntegration"),
 )
 
 _REDACTED = "[REDACTED]"
