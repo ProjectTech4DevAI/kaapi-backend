@@ -46,6 +46,8 @@ COPY alembic.ini /app/alembic.ini
 
 ARG GIT_SHA=unknown
 ENV GIT_SHA=$GIT_SHA
+ARG RELEASE_TAG=""
+ENV RELEASE_TAG=$RELEASE_TAG
 
 # Expose port 80
 EXPOSE 80

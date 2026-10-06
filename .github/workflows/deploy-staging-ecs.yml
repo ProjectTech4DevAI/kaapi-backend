@@ -18,6 +18,12 @@ jobs:
     steps:
       - name: checkout the repo
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release id
+        id: release
+        run: echo "id=kaapi-backend@main+${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -35,7 +41,7 @@ jobs:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           REPOSITORY: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-repo
         run: |
-          docker build --build-arg GIT_SHA=${{ github.sha }} -t $REGISTRY/$REPOSITORY:latest ./backend
+          docker build --build-arg GIT_SHA=${{ github.sha }} --build-arg RELEASE_TAG=main -t $REGISTRY/$REPOSITORY:latest ./backend
           docker push $REGISTRY/$REPOSITORY:latest
 
       - name: Run database migrations
@@ -77,3 +83,15 @@ jobs:
         with:
           cluster: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster
           service: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service
+
+      - name: Register release and deploy in Sentry
+        uses: getsentry/action-release@v3
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_STAGING_PROJECT }}
+        with:
+          release: ${{ steps.release.outputs.id }}
+          environment: staging
+          set_commits: auto
+          ignore_missing: true

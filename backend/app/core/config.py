@@ -161,6 +161,8 @@ class Settings(BaseSettings):
 
     SENTRY_TRACES_SAMPLE_RATE: float = 1.0
     SENTRY_RELEASE: str | None = None
+    GIT_SHA: str = "unknown"
+    RELEASE_TAG: str | None = None
     SENTRY_SEND_DEFAULT_PII: bool = False
     SENTRY_ERROR_SAMPLE_RATE: float = 1.0
     SENTRY_PROFILE_SESSION_SAMPLE_RATE: float = Field(default=1.0, ge=0.0, le=1.0)

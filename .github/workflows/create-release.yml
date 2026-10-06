@@ -44,6 +44,12 @@ jobs:
     steps:
       - name: Checkout the repo
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release id
+        id: release
+        run: echo "id=kaapi-backend@${GITHUB_REF_NAME}+${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -63,6 +69,7 @@ jobs:
         run: |
           docker build \
             --build-arg GIT_SHA=${{ github.sha }} \
+            --build-arg RELEASE_TAG=${{ github.ref_name }} \
             -t $REGISTRY/$REPOSITORY:latest \
             -t $REGISTRY/$REPOSITORY:$TAG \
             ./backend
@@ -119,6 +126,18 @@ jobs:
           cluster: ${{ vars.AWS_RESOURCE_PREFIX }}-cluster
           service: ${{ vars.AWS_RESOURCE_PREFIX }}-celery-task
           task-definition: ${{ vars.AWS_RESOURCE_PREFIX }}-celery-task
+
+      - name: Register release and deploy in Sentry
+        uses: getsentry/action-release@v3
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        with:
+          release: ${{ steps.release.outputs.id }}
+          environment: production
+          set_commits: auto
+          ignore_missing: true
 
   notify:
     needs: [verify-ci, build]

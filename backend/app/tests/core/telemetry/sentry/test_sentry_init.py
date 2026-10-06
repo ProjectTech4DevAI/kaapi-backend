@@ -25,8 +25,39 @@ class TestResolveSentryRelease:
             patch.object(sentry_init.settings, "SENTRY_RELEASE", None),
             patch.object(sentry_init.settings, "BACKEND_SERVICE_NAME", "kaapi-backend"),
             patch.object(sentry_init.settings, "API_VERSION", "1.2.3"),
+            patch.object(sentry_init.settings, "RELEASE_TAG", None),
+            patch.object(sentry_init.settings, "GIT_SHA", "unknown"),
         ):
             assert sentry_init.resolve_sentry_release() == "kaapi-backend@1.2.3"
+
+    def test_uses_release_tag_and_short_sha_from_build(self) -> None:
+        with (
+            patch.object(sentry_init.settings, "SENTRY_RELEASE", None),
+            patch.object(sentry_init.settings, "BACKEND_SERVICE_NAME", "kaapi-backend"),
+            patch.object(sentry_init.settings, "RELEASE_TAG", "v1.7.1"),
+            patch.object(
+                sentry_init.settings,
+                "GIT_SHA",
+                "3c5333f8ca8288407464a8f9065e77d1aab71454",
+            ),
+        ):
+            assert (
+                sentry_init.resolve_sentry_release()
+                == "kaapi-backend@v1.7.1+3c5333f8ca82"
+            )
+
+    def test_sha_without_tag_falls_back_to_api_version(self) -> None:
+        with (
+            patch.object(sentry_init.settings, "SENTRY_RELEASE", None),
+            patch.object(sentry_init.settings, "BACKEND_SERVICE_NAME", "kaapi-backend"),
+            patch.object(sentry_init.settings, "API_VERSION", "1.2.3"),
+            patch.object(sentry_init.settings, "RELEASE_TAG", None),
+            patch.object(sentry_init.settings, "GIT_SHA", "abcdef123456789"),
+        ):
+            assert (
+                sentry_init.resolve_sentry_release()
+                == "kaapi-backend@1.2.3+abcdef123456"
+            )
 
 
 class TestInitSentry:

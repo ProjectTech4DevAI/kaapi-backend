@@ -15,11 +15,20 @@ from app.core.telemetry.sentry.filters import (
 )
 
 
+GIT_SHA_SHORT_LEN = 12
+GIT_SHA_UNKNOWN = "unknown"
+
+
 def resolve_sentry_release() -> str:
-    """Shared release id for both sentry_sdk.init sites; SENTRY_RELEASE overrides."""
+    """Release id shared by API and worker: SENTRY_RELEASE, else <service>@<tag>+<sha> from the build."""
     if settings.SENTRY_RELEASE:
         return settings.SENTRY_RELEASE
-    return f"{settings.BACKEND_SERVICE_NAME}@{settings.API_VERSION}"
+    version = settings.RELEASE_TAG or settings.API_VERSION
+    release = f"{settings.BACKEND_SERVICE_NAME}@{version}"
+    sha = settings.GIT_SHA[:GIT_SHA_SHORT_LEN]
+    if sha and sha != GIT_SHA_UNKNOWN:
+        return f"{release}+{sha}"
+    return release
 
 
 def init_sentry(
