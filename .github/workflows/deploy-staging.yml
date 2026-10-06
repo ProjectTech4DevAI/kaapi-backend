@@ -49,7 +49,7 @@ jobs:
           DEPLOY_CMD="cd $APP_DIR \
             && git fetch --all \
             && git checkout $DEPLOY_SHA \
-            && SECRET_IDs=$SECRET_IDs sh scripts/fetch-secrets.sh \
+            && SECRET_ID=$SECRET_IDs sh scripts/fetch-secrets.sh \
             && GIT_SHA=$DEPLOY_SHA docker compose -f docker-compose.staging.yml build \
             && docker compose -f docker-compose.staging.yml --profile migrate run --rm migrate \
             && docker compose -f docker-compose.staging.yml up -d --wait --remove-orphans \
