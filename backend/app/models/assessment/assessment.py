@@ -138,7 +138,7 @@ class RunExecution(BaseModel):
 
 
 class Assessment(SQLModel, table=True):
-    """Parent — one submission: method + shared data source."""
+    """One submission assessed against one pinned config version."""
 
     __tablename__ = "assessment"
     __table_args__ = (
@@ -150,6 +150,7 @@ class Assessment(SQLModel, table=True):
         Index(
             "idx_assessment_job", "job_id", postgresql_where=text("job_id IS NOT NULL")
         ),
+        Index("idx_assessment_config", "config_id", "config_version"),
     )
 
     id: UUID = SQLField(
@@ -185,12 +186,21 @@ class Assessment(SQLModel, table=True):
         },
     )
 
-    input: dict[str, Any] | None = SQLField(
+    config_id: UUID = SQLField(foreign_key="config.id", nullable=False)
+    config_version: int = SQLField(nullable=False)
+    total_items: int = SQLField(
+        default=0,
+        nullable=False,
+        sa_column_kwargs={
+            "comment": "Submitted row count; sizes the result without reading the rows"
+        },
+    )
+    execution: dict[str, Any] | None = SQLField(
         default=None,
         sa_column=Column(
             JSONB,
             nullable=True,
-            comment="Method-shaped: ResponseInput (RESPONSE) / InputBinding (RUN); NULL for API-client BATCH, which uses submission_input",
+            comment="Staged-batch runtime (AssessmentExecution); NULL for RESPONSE",
         ),
     )
     submission_input: str | None = SQLField(
@@ -245,7 +255,7 @@ class Assessment(SQLModel, table=True):
 
 
 class AssessmentRun(SQLModel, table=True):
-    """Child — one config execution (BATCH + RUN; RESPONSE has no run)."""
+    """Retired: the table is dropped in 086. The class leaves with the RUN code."""
 
     __tablename__ = "assessment_run"
     __table_args__ = (

@@ -1,7 +1,7 @@
 """BATCH API-client submit entrypoint.
 
-Resolves the ASSESSMENT config, persists the parent assessment + one execution,
-seeds the staged-batch runtime bag, and hands the pipeline off to Celery. Only the
+Resolves the ASSESSMENT config, persists the assessment with its seeded runtime bag,
+and hands the pipeline off to Celery. Only the
 BATCH method is wired here; RESPONSE stays a route-level 501 stub (deferred).
 """
 
@@ -19,11 +19,12 @@ from app.crud.assessment.submission import get_submission_by_id
 from app.crud.config import ConfigCrud, ConfigVersionCrud
 from app.models.assessment import (
     AssessmentCreate,
+    AssessmentExecution,
     AssessmentMethod,
     AssessmentStatus,
     AssessmentSubmitResponse,
     BatchInput,
-    BatchRunState,
+    StageStatus,
     derive_method,
 )
 from app.models.config.assessment_blob import (
@@ -284,79 +285,59 @@ def submit(
                 status_code=503,
                 detail="Failed to store the assessment submission. Please retry.",
             )
+    pipeline = batch_service.build_pipeline(blob.pre_filters)
+    bag = AssessmentExecution(
+        pipeline=pipeline,
+        stage=pipeline[0].stage,
+        stage_status=StageStatus.PENDING,
+        gate_passed=[True] * total_items,
+        callback_url=str(request.callback_url) if request.callback_url else None,
+        request_metadata=request.request_metadata,
+    )
     assessment = api.create_assessment(
         session=session,
         assessment_id=assessment_id,
         method=AssessmentMethod.BATCH,
-        input=None,
+        config_id=request.config.id,
+        config_version=request.config.version,
+        total_items=total_items,
+        execution=bag,
         submission_id=submission_id,
         submission_input=submission_url,
         experiment_name=request.experiment_name,
         organization_id=organization_id,
         project_id=project_id,
     )
-
-    execution = api.create_execution(
-        session=session,
-        assessment_id=assessment.id,
-        config_id=request.config.id,
-        config_version=request.config.version,
-        total_items=total_items,
-    )
-
-    pipeline = batch_service.build_pipeline(blob.pre_filters)
-    bag: BatchRunState = {
-        "pipeline": pipeline,
-        "stage": pipeline[0]["stage"],
-        "stage_status": AssessmentStatus.PENDING.value,
-        "stage_batches": {},
-        "stage_output_urls": {},
-        "verdicts": {},
-        "counters": {},
-        "gate_passed": [True] * total_items,
-        "provider": provider,
-        "model": model,
-        "input_schema": input_columns or None,
-        "callback_url": str(request.callback_url) if request.callback_url else None,
-        "request_metadata": request.request_metadata,
-    }
-    api.save_execution_state(session=session, execution=execution, state=bag)
     api.update_status(
-        session=session, obj=assessment, status=AssessmentStatus.PROCESSING
+        session=session, assessment=assessment, status=AssessmentStatus.PROCESSING
     )
 
     trace_id = correlation_id.get() or ""
     try:
         dispatched = run_assessment_api_batch.delay(
-            execution_id=execution.id,
+            assessment_id=str(assessment.id),
             organization_id=organization_id,
             project_id=project_id,
             trace_id=trace_id,
         )
     except Exception as exc:
         logger.exception(
-            "[submit] Failed to enqueue BATCH task | assessment_id=%s | execution_id=%s",
-            assessment.id,
-            execution.id,
+            "[submit] Failed to enqueue BATCH task | assessment_id=%s", assessment.id
         )
         api.update_status(
-            session=session, obj=execution, status=AssessmentStatus.FAILED
-        )
-        api.update_status(
-            session=session, obj=assessment, status=AssessmentStatus.FAILED
+            session=session, assessment=assessment, status=AssessmentStatus.FAILED
         )
         raise HTTPException(
             status_code=503,
             detail="Failed to dispatch the assessment for processing. Please retry.",
         ) from exc
     logger.info(
-        "[submit] Dispatched BATCH assessment | assessment_id=%s | execution_id=%s | "
-        "task_id=%s | provider=%s | stages=%s | rows=%s",
+        "[submit] Dispatched BATCH assessment | assessment_id=%s | task_id=%s | "
+        "provider=%s | stages=%s | rows=%s",
         assessment.id,
-        execution.id,
         dispatched.id,
         provider,
-        [s["stage"] for s in pipeline],
+        [step.stage.value for step in pipeline],
         total_items,
     )
 

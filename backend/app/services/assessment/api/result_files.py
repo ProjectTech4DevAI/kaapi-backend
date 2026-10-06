@@ -17,10 +17,10 @@ from app.core.storage_utils import upload_jsonl_to_object_store
 from app.crud.assessment import api
 from app.crud.job import get_batch_job
 from app.models.assessment import (
+    ApiStage,
     Assessment,
+    AssessmentExecution,
     AssessmentResultFiles,
-    AssessmentRun,
-    BatchRunState,
 )
 from app.models.batch_job import BatchJob
 from app.services.assessment.api.batch import (
@@ -75,20 +75,20 @@ def record_stage_dump(
     )
 
 
-def _row_error_rows(stage_errors: dict[str, dict[str, str]]) -> list[dict[str, Any]]:
+def _row_error_rows(
+    stage_errors: dict[ApiStage, dict[int, str]],
+) -> list[dict[str, Any]]:
     """Per-row errors captured at parse time, flattened across stages."""
-    rows: list[dict[str, Any]] = []
-    for stage, errors in stage_errors.items():
-        for row_index, error in errors.items():
-            rows.append(
-                {
-                    "type": ErrorRecordEnum.ROW_ERROR.value,
-                    "stage": stage,
-                    "row_index": int(row_index) if row_index.isdigit() else row_index,
-                    "error": error,
-                }
-            )
-    return rows
+    return [
+        {
+            "type": ErrorRecordEnum.ROW_ERROR.value,
+            "stage": stage.value,
+            "row_index": row_index,
+            "error": error,
+        }
+        for stage, errors in stage_errors.items()
+        for row_index, error in errors.items()
+    ]
 
 
 def _error_file_rows(
@@ -147,9 +147,8 @@ def _error_file_rows(
 def build_and_upload_errors(
     *,
     session: Session,
-    execution: AssessmentRun,
     assessment: Assessment,
-    bag: BatchRunState,
+    bag: AssessmentExecution,
     failure_message: str | None,
 ) -> str | None:
     """Assemble and upload the run's ``errors.jsonl``; ``None`` when there is nothing
@@ -159,23 +158,19 @@ def build_and_upload_errors(
         rows.append(
             {
                 "type": ErrorRecordEnum.EXECUTION_ERROR.value,
-                "stage": bag.get("stage"),
+                "stage": bag.stage.value,
                 "error": failure_message,
             }
         )
-    rows.extend(_row_error_rows(bag.get("stage_errors") or {}))
-    for stage, batch_job_id in (bag.get("stage_batches") or {}).items():
-        batch_job = (
-            get_batch_job(session=session, batch_job_id=batch_job_id)
-            if batch_job_id
-            else None
-        )
+    rows.extend(_row_error_rows(bag.stage_errors))
+    for stage, batch_job_id in bag.stage_batches.items():
+        batch_job = get_batch_job(session=session, batch_job_id=batch_job_id)
         if batch_job is not None:
             rows.extend(
                 _error_file_rows(
                     session=session,
                     assessment=assessment,
-                    stage=stage,
+                    stage=stage.value,
                     batch_job=batch_job,
                 )
             )
@@ -188,8 +183,8 @@ def build_and_upload_errors(
     except Exception:
         logger.error(
             "[build_and_upload_errors] Storage unavailable, no errors dump | "
-            "execution_id=%s | rows=%s",
-            execution.id,
+            "assessment_id=%s | rows=%s",
+            assessment.id,
             len(rows),
             exc_info=True,
         )
@@ -202,9 +197,9 @@ def build_and_upload_errors(
         subdirectory=assessment_prefix(assessment.id),
     )
     logger.info(
-        "[build_and_upload_errors] Errors dump %s | execution_id=%s | rows=%s | url=%s",
+        "[build_and_upload_errors] Errors dump %s | assessment_id=%s | rows=%s | url=%s",
         "uploaded" if url else "upload failed",
-        execution.id,
+        assessment.id,
         len(rows),
         url,
     )
@@ -214,41 +209,32 @@ def build_and_upload_errors(
 def finalize_result_files(
     *,
     session: Session,
-    execution: AssessmentRun,
     assessment: Assessment,
-    bag: BatchRunState,
+    bag: AssessmentExecution,
     failure_message: str | None = None,
 ) -> None:
-    """Persist every stage dump plus the run's errors.jsonl at terminal time.
+    """Persist the run's errors.jsonl at terminal time; stage dumps were recorded per stage.
 
-    Idempotent (a re-merge replaces only its own kind), so a redelivered tick is
+    Idempotent (a re-merge replaces only its own kind), so a redelivered task is
     harmless. Never raises: durability is best-effort, terminating the run is not.
     """
     try:
-        files: dict[str, dict[str, Any]] = {}
-        for stage, url in (bag.get("stage_output_urls") or {}).items():
-            if not url:
-                continue
-            files[stage] = {"object_store_url": url}
-
         errors_url = build_and_upload_errors(
             session=session,
-            execution=execution,
             assessment=assessment,
             bag=bag,
             failure_message=failure_message,
         )
         if errors_url:
-            files[ERRORS_FILE_KIND] = {"object_store_url": errors_url}
-
-        if files:
-            api.set_result_files(session=session, assessment=assessment, files=files)
+            api.set_result_files(
+                session=session,
+                assessment=assessment,
+                files={ERRORS_FILE_KIND: {"object_store_url": errors_url}},
+            )
     except Exception:
         logger.error(
-            "[finalize_result_files] Could not persist result files | "
-            "assessment_id=%s | execution_id=%s",
+            "[finalize_result_files] Could not persist result files | assessment_id=%s",
             assessment.id,
-            execution.id,
             exc_info=True,
         )
 

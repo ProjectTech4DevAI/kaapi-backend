@@ -35,7 +35,7 @@ APIKey → Organization, Project, User  # programmatic access
 | EvaluationIterationRun | evaluation_iteration.py | Dataset, Config, Org, Project | EvaluationRun, Job (referenced only inside the LangGraph checkpoint state, not FK columns on this table, logical); callback_url caller (logical) |
 | STTSample / STTResult | stt_evaluation.py | Dataset, Run, File, Language | human annotation UI (logical) |
 | TTSResult | tts_evaluation.py | Run, Org, Project | human annotation UI (logical) |
-| Assessment / AssessmentRun | assessment.py | Config, AssessmentSubmission, BatchJob, Job, Org, Project | console UI (logical); webhook consumers (logical) |
+| Assessment | assessment/assessment.py | Config (`config_id`+`config_version`), AssessmentSubmission, BatchJob (via `execution.stage_batches`), Job, Org, Project | console UI (logical); webhook consumers (logical) |
 | Document | document.py | Project, Document (parent) | DocumentCollection, DocTransformationJob, FineTuning, ModelEvaluation |
 | Collection | collection.py | Project | DocumentCollection, CollectionJob; provider vector stores (logical) |
 | DocumentCollection | document_collection.py | Document, Collection | RAG lookups (logical) |
