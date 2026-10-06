@@ -1,4 +1,4 @@
-"""sentry_sdk.init() with shared sampling, profiling, PII and before_send filters; release id resolution."""
+"""sentry_sdk.init() with shared sampling, profiling, PII and before_send filters."""
 
 import logging
 
@@ -15,13 +15,6 @@ from app.core.telemetry.sentry.filters import (
 )
 
 
-def resolve_sentry_release() -> str:
-    """Shared release id for both sentry_sdk.init sites; SENTRY_RELEASE overrides."""
-    if settings.SENTRY_RELEASE:
-        return settings.SENTRY_RELEASE
-    return f"{settings.BACKEND_SERVICE_NAME}@{settings.API_VERSION}"
-
-
 def init_sentry(
     *,
     integrations: list[Integration],
@@ -33,7 +26,7 @@ def init_sentry(
     sentry_sdk.init(
         dsn=str(settings.SENTRY_DSN),
         environment=settings.ENVIRONMENT,
-        release=resolve_sentry_release(),
+        release=settings.API_VERSION,
         instrumenter="otel",
         traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
         sample_rate=settings.SENTRY_ERROR_SAMPLE_RATE,

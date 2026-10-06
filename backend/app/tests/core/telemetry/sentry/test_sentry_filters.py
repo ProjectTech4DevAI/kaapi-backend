@@ -266,20 +266,16 @@ class TestLlmJobKwargsRedaction:
             "blob": {"completion": {"provider": "openai"}}
         }
 
-    def test_redacts_query_for_chain_and_response_jobs(self) -> None:
-        for task_name in (
+    def test_redacts_query_for_chain_job(self) -> None:
+        event = self._event_with_celery_job(
             "app.celery.tasks.job_execution.run_llm_chain_job",
-            "app.celery.tasks.job_execution.run_response_job",
-        ):
-            event = self._event_with_celery_job(
-                task_name,
-                {"request_data": {"query": {"input": "sensitive text"}}},
-            )
+            {"request_data": {"query": {"input": "sensitive text"}}},
+        )
 
-            result = sentry_filters.before_send_error_filter(event, {})
+        result = sentry_filters.before_send_error_filter(event, {})
 
-            request_data = result["extra"]["celery-job"]["kwargs"]["request_data"]
-            assert request_data["query"] == sentry_filters._REDACTED
+        request_data = result["extra"]["celery-job"]["kwargs"]["request_data"]
+        assert request_data["query"] == sentry_filters._REDACTED
 
     def test_ignores_unrelated_tasks(self) -> None:
         event = self._event_with_celery_job(

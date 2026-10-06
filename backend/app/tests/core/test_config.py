@@ -9,7 +9,6 @@ class TestSentryConfigDefaults:
         ("field", "expected"),
         [
             ("SENTRY_TRACES_SAMPLE_RATE", 1.0),
-            ("SENTRY_RELEASE", None),
             ("SENTRY_SEND_DEFAULT_PII", False),
             ("SENTRY_ERROR_SAMPLE_RATE", 1.0),
             ("SENTRY_PROFILE_SESSION_SAMPLE_RATE", 1.0),

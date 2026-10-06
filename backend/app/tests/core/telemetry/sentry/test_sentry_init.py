@@ -13,22 +13,6 @@ class _FakeIntegration(Integration):
         return None
 
 
-class TestResolveSentryRelease:
-    def test_uses_sentry_release_when_set(self) -> None:
-        with patch.object(
-            sentry_init.settings, "SENTRY_RELEASE", "kaapi-backend@9.9.9"
-        ):
-            assert sentry_init.resolve_sentry_release() == "kaapi-backend@9.9.9"
-
-    def test_falls_back_to_service_and_version(self) -> None:
-        with (
-            patch.object(sentry_init.settings, "SENTRY_RELEASE", None),
-            patch.object(sentry_init.settings, "BACKEND_SERVICE_NAME", "kaapi-backend"),
-            patch.object(sentry_init.settings, "API_VERSION", "1.2.3"),
-        ):
-            assert sentry_init.resolve_sentry_release() == "kaapi-backend@1.2.3"
-
-
 class TestInitSentry:
     def test_noop_without_dsn(self) -> None:
         fake = MagicMock()
