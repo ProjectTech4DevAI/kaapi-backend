@@ -36,3 +36,9 @@ def get_language_by_locale(session: Session, locale: str) -> Optional[Language]:
     """Retrieve a language by its locale code."""
     statement = select(Language).where(Language.locale == locale)
     return session.exec(statement).first()
+
+
+def get_language_locale_by_id(session: Session, language_id: int) -> str | None:
+    """Return a language's ISO 639-1 locale, or None if the ID doesn't exist."""
+    statement = select(Language.locale).where(Language.id == language_id)
+    return session.exec(statement).first()

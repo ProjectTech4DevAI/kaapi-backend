@@ -6,7 +6,8 @@ ordered by the per-task `priority`:
     9  LLM call + LLM chain (run_llm_job, run_llm_chain_job, run_response_job)
     6  Fast evaluation (run_evaluation_fast_chunk, run_evaluation_fast_aggregate,
        run_prompt_improvement, run_evaluation_iteration_graph_step)
-    2  Everything else (doctransform, collections, STT/TTS evaluation, assessment)
+    2  Everything else (doctransform, collections, STT/TTS evaluation incl.
+       run_tts_sync_chunk, assessment)
     1  Notifications (send_eval_completion_notification)
 
 Higher priority drains first; within the same priority, delivery is FIFO.
@@ -420,6 +421,29 @@ def run_tts_result_processing(
     return _run_with_otel_parent(
         self,
         lambda: execute_tts_result_processing(
+            project_id=project_id,
+            job_id=job_id,
+            task_id=current_task.request.id,
+            task_instance=self,
+            **kwargs,
+        ),
+    )
+
+
+@celery_app.task(bind=True, queue="default", priority=2)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_sync_chunk")
+def run_tts_sync_chunk(self, project_id: int, job_id: str, trace_id: str, **kwargs):
+    """Synthesize one chunk of a TTS run's sync-model results.
+
+    Idempotent: only results still PENDING are synthesized and written, so a
+    redelivered chunk skips rows an earlier attempt already finished.
+    """
+    from app.services.tts_evaluations.sync_generation import execute_tts_sync_chunk
+
+    _set_trace(trace_id)
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_tts_sync_chunk(
             project_id=project_id,
             job_id=job_id,
             task_id=current_task.request.id,

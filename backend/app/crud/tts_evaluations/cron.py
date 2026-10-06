@@ -21,14 +21,10 @@ from app.crud.evaluations.cron_utils import (
     poll_all_pending_evaluations_by_type,
     poll_batch_jobs,
 )
-from app.crud.tts_evaluations.result import (
-    count_results_by_status,
-    get_pending_results_for_run,
-)
-from app.crud.tts_evaluations.run import update_tts_run
+from app.crud.tts_evaluations.result import get_pending_results_for_run
+from app.crud.tts_evaluations.run import finalize_tts_run_status, update_tts_run
 from app.models import EvaluationRun
 from app.models.batch_job import BatchJob, BatchJobType
-from app.models.job import JobStatus
 from app.models.stt_evaluation import EvaluationType
 
 logger = logging.getLogger(__name__)
@@ -187,23 +183,12 @@ async def poll_tts_run(
         )
 
     # All batch jobs are done and no dispatching needed - finalize the run
-    status_counts = count_results_by_status(session=session, run_id=run.id)
-    pending = status_counts.get(JobStatus.PENDING.value, 0)
-    failed_count = status_counts.get(JobStatus.FAILED.value, 0)
-
-    final_status = "completed" if pending == 0 else "processing"
-    error_message = None
-    if result.any_failed:
-        error_message = "; ".join(result.errors)
-    elif failed_count > 0:
-        error_message = f"{failed_count} synthesis(es) failed"
-
-    update_tts_run(
-        session=session,
-        run_id=run.id,
-        status=final_status,
-        error_message=error_message,
+    batch_error = "; ".join(result.errors) if result.any_failed else None
+    finalized_run = finalize_tts_run_status(
+        session=session, run_id=run.id, error_message=batch_error
     )
+    final_status = finalized_run.status if finalized_run else run.status
+    error_message = finalized_run.error_message if finalized_run else batch_error
 
     action = "completed" if not result.any_failed else "failed"
 

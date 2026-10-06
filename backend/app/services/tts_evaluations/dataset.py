@@ -8,6 +8,7 @@ from typing import Any
 from sqlmodel import Session
 
 from app.core.cloud import get_cloud_storage
+from app.core.cloud.storage import CloudStorage
 from app.core.storage_utils import (
     generate_timestamped_filename,
     upload_to_object_store,
@@ -186,15 +187,47 @@ def get_sample_texts_from_dataset(
 
     try:
         storage = get_cloud_storage(session=session, project_id=project_id)
-        csv_bytes = storage.stream(dataset.object_store_url).read()
-        samples = parse_tts_samples_from_csv(csv_bytes)
-        return [s["text"] for s in samples]
     except Exception as e:
         logger.error(
-            f"[get_sample_texts_from_dataset] Failed to load CSV | "
-            f"dataset_id={dataset.id}, error={str(e)}"
+            f"[get_sample_texts_from_dataset] Failed to init storage | "
+            f"dataset_id={dataset.id}, error={str(e)}",
+            exc_info=True,
         )
         return []
+
+    return load_sample_texts(
+        storage=storage,
+        object_store_url=dataset.object_store_url,
+        dataset_id=dataset.id,
+    )
+
+
+def load_sample_texts(
+    *,
+    storage: CloudStorage,
+    object_store_url: str,
+    dataset_id: int,
+) -> list[str]:
+    """Read a TTS dataset CSV from object storage; needs no DB session.
+
+    Returns:
+        List of text strings (empty on read/parse failure)
+    """
+    try:
+        csv_bytes = storage.stream(object_store_url).read()
+        samples = parse_tts_samples_from_csv(csv_bytes)
+    except Exception as e:
+        logger.error(
+            f"[load_sample_texts] Failed to load CSV | "
+            f"dataset_id={dataset_id}, error={str(e)}",
+            exc_info=True,
+        )
+        return []
+
+    texts: list[str] = []
+    for sample in samples:
+        texts.append(sample["text"])
+    return texts
 
 
 def parse_tts_samples_from_csv(csv_content: bytes) -> list[dict[str, Any]]:

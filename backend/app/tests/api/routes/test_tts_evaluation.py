@@ -604,6 +604,40 @@ class TestTTSEvaluationRun:
         assert data["total_items"] == 5
 
     @patch("app.api.routes.tts_evaluations.evaluation.start_tts_batch_submission")
+    def test_start_evaluation_mixed_models_reports_voice_per_model(
+        self,
+        mock_start_job: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        test_dataset_with_samples: EvaluationDataset,
+    ) -> None:
+        mock_start_job.return_value = "mock-celery-task-id"
+        models = ["gemini-2.5-pro-preview-tts", "bulbul:v3", "eleven_v3"]
+
+        response = client.post(
+            "/api/v1/evaluations/tts/runs",
+            json={
+                "run_name": "mixed_models_run",
+                "dataset_id": test_dataset_with_samples.id,
+                "models": models,
+            },
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["models"] == models
+        assert data["total_items"] == 9
+        assert data["run_metadata"]["voices"] == {
+            "gemini-2.5-pro-preview-tts": "Kore",
+            "bulbul:v3": "shubh",
+            "eleven_v3": "2cdvnKJ5TZi631y5PN1s",
+        }
+        # legacy single-voice key kept for existing clients
+        assert data["run_metadata"]["voice_name"] == "Kore"
+        assert mock_start_job.call_args.kwargs["models"] == models
+
+    @patch("app.api.routes.tts_evaluations.evaluation.start_tts_batch_submission")
     def test_start_evaluation_celery_failure(
         self,
         mock_start_job: MagicMock,

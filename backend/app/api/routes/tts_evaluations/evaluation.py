@@ -25,6 +25,7 @@ from app.models.tts_evaluation import (
 from app.services.tts_evaluations.constants import (
     DEFAULT_STYLE_PROMPT,
     DEFAULT_VOICE_NAME,
+    get_tts_model_spec,
 )
 from app.utils import APIResponse, load_description
 
@@ -83,7 +84,7 @@ def start_tts_evaluation(
         total_items=sample_count * len(run_create.models),
     )
 
-    # Offload batch submission (result creation, JSONL, Gemini upload) to Celery worker
+    # Offload submission (result creation, Gemini batch, sync-model fan-out) to Celery worker
     trace_id = correlation_id.get() or "N/A"
     try:
         celery_task_id = start_tts_batch_submission(
@@ -114,11 +115,17 @@ def start_tts_evaluation(
             detail=f"Failed to queue batch submission: {e}",
         )
 
+    voices: dict[str, str] = {}
+    for model in run_create.models:
+        voices[model] = get_tts_model_spec(model).default_voice
+
     return APIResponse.success_response(
         data=TTSEvaluationRunPublic.from_model(
             run,
             run_metadata={
+                # Legacy key kept for existing clients; `voices` is per model.
                 "voice_name": DEFAULT_VOICE_NAME,
+                "voices": voices,
                 "style_prompt": DEFAULT_STYLE_PROMPT,
             },
         )

@@ -6,7 +6,9 @@ from typing import Any
 from sqlmodel import Session, func, select
 
 from app.core.util import now
+from app.crud.tts_evaluations.result import count_results_by_status
 from app.models import EvaluationRun
+from app.models.job import JobStatus
 from app.models.stt_evaluation import EvaluationType
 from app.models.tts_evaluation import TTSEvaluationRunPublic
 
@@ -216,6 +218,61 @@ def update_tts_run(
 
     logger.info(
         f"[update_tts_run] TTS run updated | run_id: {run_id}, status: {run.status}"
+    )
+
+    return run
+
+
+def finalize_tts_run_status(
+    *,
+    session: Session,
+    run_id: int,
+    error_message: str | None = None,
+) -> EvaluationRun | None:
+    """Recompute a TTS run's status from its result rows and persist it.
+
+    The run row is locked first so concurrent finalizers (sync chunks, Gemini
+    result processing, cron) serialize: whichever commits last counts every
+    result the others already committed, so a run can't be stranded in
+    `processing` after its final result lands.
+
+    Args:
+        session: Database session
+        run_id: Run ID
+        error_message: Overrides the derived "N synthesis(es) failed" message
+
+    Returns:
+        EvaluationRun | None: Updated run, or None if it doesn't exist
+    """
+    statement = (
+        select(EvaluationRun).where(EvaluationRun.id == run_id).with_for_update()
+    )
+    run = session.exec(statement).one_or_none()
+
+    if not run:
+        logger.warning(f"[finalize_tts_run_status] Run not found | run_id: {run_id}")
+        return None
+
+    status_counts = count_results_by_status(session=session, run_id=run_id)
+    pending = status_counts.get(JobStatus.PENDING.value, 0)
+    failed = status_counts.get(JobStatus.FAILED.value, 0)
+
+    run.status = "completed" if pending == 0 else "processing"
+
+    if error_message is None and failed > 0:
+        error_message = f"{failed} synthesis(es) failed"
+    if error_message is not None:
+        run.error_message = error_message
+
+    run.updated_at = now()
+
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    logger.info(
+        f"[finalize_tts_run_status] Run finalized | run_id: {run_id}, "
+        f"status: {run.status}, pending: {pending}, failed: {failed}"
     )
 
     return run

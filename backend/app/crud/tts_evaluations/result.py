@@ -3,13 +3,13 @@
 import logging
 from typing import Any
 
-from sqlmodel import Session, func, select
+from sqlmodel import Session, col, func, select
 
 from app.core.cloud.storage import CloudStorage
 from app.core.exception_handlers import HTTPException
 from app.core.util import now
 from app.models.job import JobStatus
-from app.models.tts_evaluation import TTSResult, TTSResultPublic
+from app.models.tts_evaluation import TTSResult, TTSResultPublic, TTSResultUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +283,83 @@ def get_pending_results_for_run(
     statement = select(TTSResult).where(*where_clauses)
 
     return list(session.exec(statement).all())
+
+
+def list_pending_tts_results_by_ids(
+    *,
+    session: Session,
+    run_id: int,
+    result_ids: list[int],
+) -> list[TTSResult]:
+    """List the still-PENDING results of a run among the given IDs.
+
+    Filtering on PENDING is what makes a redelivered sync chunk a no-op for rows
+    an earlier attempt already finished.
+    """
+    if not result_ids:
+        return []
+
+    statement = (
+        select(TTSResult)
+        .where(
+            TTSResult.evaluation_run_id == run_id,
+            TTSResult.status == JobStatus.PENDING.value,
+            col(TTSResult.id).in_(result_ids),
+        )
+        .order_by(TTSResult.id)
+    )
+
+    return list(session.exec(statement).all())
+
+
+def bulk_update_pending_tts_results(
+    *,
+    session: Session,
+    updates: list[TTSResultUpdate],
+) -> int:
+    """Apply terminal outcomes to results that are still PENDING; commit once.
+
+    Rows already moved out of PENDING (by a concurrent or earlier attempt) are
+    left untouched so a late writer can never clobber a finished result.
+
+    Returns:
+        int: Number of rows updated
+    """
+    if not updates:
+        return 0
+
+    updates_by_id: dict[int, TTSResultUpdate] = {}
+    for update in updates:
+        updates_by_id[update.result_id] = update
+
+    statement = select(TTSResult).where(
+        col(TTSResult.id).in_(list(updates_by_id.keys())),
+        TTSResult.status == JobStatus.PENDING.value,
+    )
+    rows = session.exec(statement).all()
+
+    timestamp = now()
+    for row in rows:
+        update = updates_by_id[row.id]
+        row.status = update.status.value
+        if update.object_store_url is not None:
+            row.object_store_url = update.object_store_url
+        if update.metadata is not None:
+            row.metadata_ = update.metadata
+        if update.error_message is not None:
+            row.error_message = update.error_message
+        row.updated_at = timestamp
+        session.add(row)
+
+    session.commit()
+
+    skipped = len(updates_by_id) - len(rows)
+    logger.info(
+        f"[bulk_update_pending_tts_results] Results updated | "
+        f"updated: {len(rows)}, skipped_not_pending: {skipped}"
+    )
+
+    return len(rows)
 
 
 def count_results_by_status(
