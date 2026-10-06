@@ -31,14 +31,14 @@ class TestBeforeSendErrorFilter:
 
         assert result is event
         headers = result["request"]["headers"]
-        assert headers["Authorization"] == sentry_filters._SCRUBBED
-        assert headers["Cookie"] == sentry_filters._SCRUBBED
-        assert headers["Set-Cookie"] == sentry_filters._SCRUBBED
-        assert headers["X-API-KEY"] == sentry_filters._SCRUBBED
+        assert headers["Authorization"] == sentry_filters._REDACTED
+        assert headers["Cookie"] == sentry_filters._REDACTED
+        assert headers["Set-Cookie"] == sentry_filters._REDACTED
+        assert headers["X-API-KEY"] == sentry_filters._REDACTED
         assert headers["User-Agent"] == "curl/8"
-        assert result["request"]["query_string"] == sentry_filters._SCRUBBED
-        assert result["request"]["cookies"] == sentry_filters._SCRUBBED
-        assert result["request"]["data"] == sentry_filters._SCRUBBED
+        assert result["request"]["query_string"] == sentry_filters._REDACTED
+        assert result["request"]["cookies"] == sentry_filters._REDACTED
+        assert result["request"]["data"] == sentry_filters._REDACTED
 
     def test_passes_normal_event_through(self) -> None:
         event = {
@@ -86,7 +86,7 @@ class TestBeforeSendErrorFilter:
         with patch.object(sentry_filters.settings, "SENTRY_SEND_DEFAULT_PII", True):
             result = sentry_filters.before_send_error_filter(event, {})
 
-        assert result["request"]["data"] == sentry_filters._SCRUBBED
+        assert result["request"]["data"] == sentry_filters._REDACTED
 
     def test_scrubs_genai_content_from_error_event(self) -> None:
         event = {

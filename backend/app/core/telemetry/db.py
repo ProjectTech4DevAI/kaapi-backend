@@ -1,18 +1,26 @@
 import logging
 import time
-from typing import Any
 
 import sentry_sdk
 from opentelemetry import trace
+from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+from sqlalchemy import ExceptionContext, event
+from sqlalchemy.engine import Connection, Engine
+from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor, ExecutionContext
+from sqlalchemy.pool import ConnectionPoolEntry, Pool, PoolProxiedConnection, QueuePool
 
 from app.core.config import settings
-from app.core.telemetry.metrics import _emit_sentry_metric
+from app.core.telemetry.metrics import emit_sentry_metric
 
 logger = logging.getLogger(__name__)
 
 DB_SLOW_QUERY_MS: int = 500
 
 DB_ROWS_ATTRIBUTE: str = "db.rows_affected"
+
+_INSTRUMENTED_ATTR = "_kaapi_db_telemetry_instrumented"
+_STARTED_AT_ATTR = "_kaapi_db_started_at"
+_OPERATION_ATTR = "_kaapi_db_operation"
 
 NOTABLE_SQLSTATES: dict[str, str] = {
     "40P01": "deadlock_detected",
@@ -51,7 +59,7 @@ def record_db_query_failed(
     if sqlstate:
         attrs["db.sqlstate"] = sqlstate
 
-    _emit_sentry_metric("count", "db.query.failed", 1, attributes=attrs)
+    emit_sentry_metric("count", "db.query.failed", 1, attributes=attrs)
 
 
 def record_db_slow_query(operation: str | None = None) -> None:
@@ -63,7 +71,7 @@ def record_db_slow_query(operation: str | None = None) -> None:
     if operation:
         attrs["db.operation"] = operation
 
-    _emit_sentry_metric("count", "db.query.slow", 1, attributes=attrs)
+    emit_sentry_metric("count", "db.query.slow", 1, attributes=attrs)
 
 
 def record_db_connection_event(event: str) -> None:
@@ -74,7 +82,7 @@ def record_db_connection_event(event: str) -> None:
     metric = _DB_CONNECTION_EVENT_METRICS.get(event)
     if metric is None:
         return
-    _emit_sentry_metric("count", metric, 1)
+    emit_sentry_metric("count", metric, 1)
 
 
 def record_db_transaction(outcome: str) -> None:
@@ -85,7 +93,7 @@ def record_db_transaction(outcome: str) -> None:
     metric = _DB_TRANSACTION_METRICS.get(outcome)
     if metric is None:
         return
-    _emit_sentry_metric("count", metric, 1)
+    emit_sentry_metric("count", metric, 1)
 
 
 def _tag_db_error(sqlstate: str | None) -> None:
@@ -117,46 +125,37 @@ def record_db_pool_stats(
     if not settings.OTEL_ENABLED:
         return
 
-    _emit_sentry_metric("gauge", "db.pool.active", active)
-    _emit_sentry_metric("gauge", "db.pool.idle", idle)
-    _emit_sentry_metric("gauge", "db.pool.total", total)
-    _emit_sentry_metric("gauge", "db.pool.overflow", overflow)
+    emit_sentry_metric("gauge", "db.pool.active", active)
+    emit_sentry_metric("gauge", "db.pool.idle", idle)
+    emit_sentry_metric("gauge", "db.pool.total", total)
+    emit_sentry_metric("gauge", "db.pool.overflow", overflow)
 
 
-def instrument_db_engine(engine: object) -> None:
+def instrument_db_engine(engine: Engine) -> None:
     """Instrument a SQLAlchemy engine: query spans, slow-query/pool/connection/transaction metrics."""
     if not settings.OTEL_ENABLED:
         return
-    if getattr(engine, "_kaapi_db_telemetry_instrumented", False):
+    if getattr(engine, _INSTRUMENTED_ATTR, False):
         return
 
     # ProxyTracer defers to the provider set later in setup_telemetry(); load order is safe.
     try:
-        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
-
         SQLAlchemyInstrumentor().instrument(engine=engine)
     except Exception:
         logger.exception(
             "[instrument_db_engine] Failed to load SQLAlchemy span instrumentation"
         )
 
-    try:
-        from sqlalchemy import ExceptionContext, event
-    except Exception:
-        logger.exception("[instrument_db_engine] Failed importing SQLAlchemy events")
-        return
-
-    def _pool_snapshot(pool: Any) -> tuple[int, int, int, int] | None:
-        if not all(hasattr(pool, attr) for attr in ("checkedout", "size", "overflow")):
+    def _pool_snapshot(pool: Pool) -> tuple[int, int, int, int] | None:
+        if not isinstance(pool, QueuePool):
             return None
-        active = int(pool.checkedout())
-        idle = int(pool.checkedin()) if hasattr(pool, "checkedin") else 0
-        configured_size = int(pool.size())
-        overflow = int(pool.overflow())
-        total = max(configured_size + overflow, active + idle)
+        active = pool.checkedout()
+        idle = pool.checkedin()
+        overflow = pool.overflow()
+        total = max(pool.size() + overflow, active + idle)
         return active, idle, total, overflow
 
-    def _emit_pool_metrics(pool: Any) -> None:
+    def _emit_pool_metrics(pool: Pool) -> None:
         snapshot = _pool_snapshot(pool)
         if not snapshot:
             return
@@ -165,31 +164,48 @@ def instrument_db_engine(engine: object) -> None:
 
     @event.listens_for(engine, "before_cursor_execute")
     def _before_cursor_execute(
-        conn, cursor, statement, parameters, context, executemany
+        conn: Connection,
+        cursor: DBAPICursor,
+        statement: str,
+        parameters: object,
+        context: ExecutionContext,
+        executemany: bool,
     ) -> None:
         del cursor, parameters, executemany
-        context._kaapi_db_started_at = time.perf_counter()
-        context._kaapi_db_operation = (
-            str(statement).split(None, 1)[0].upper() if statement else "UNKNOWN"
+        setattr(context, _STARTED_AT_ATTR, time.perf_counter())
+        setattr(
+            context,
+            _OPERATION_ATTR,
+            statement.split(None, 1)[0].upper() if statement else "UNKNOWN",
         )
         _emit_pool_metrics(conn.engine.pool)
 
     @event.listens_for(engine, "after_cursor_execute")
     def _after_cursor_execute(
-        conn, cursor, statement, parameters, context, executemany
+        conn: Connection,
+        cursor: DBAPICursor,
+        statement: str,
+        parameters: object,
+        context: ExecutionContext,
+        executemany: bool,
     ) -> None:
         del cursor, statement, parameters, executemany
-        started_at = getattr(context, "_kaapi_db_started_at", None)
+        started_at = getattr(context, _STARTED_AT_ATTR, None)
         if started_at is not None:
             duration_ms = (time.perf_counter() - started_at) * 1000
             if duration_ms >= DB_SLOW_QUERY_MS:
-                record_db_slow_query(getattr(context, "_kaapi_db_operation", None))
+                record_db_slow_query(getattr(context, _OPERATION_ATTR, None))
         _emit_pool_metrics(conn.engine.pool)
 
     # insert=True: must run before the instrumentor's hook ends the span.
     @event.listens_for(engine, "after_cursor_execute", insert=True)
     def _record_db_rows(
-        conn, cursor, statement, parameters, context, executemany
+        conn: Connection,
+        cursor: DBAPICursor,
+        statement: str,
+        parameters: object,
+        context: ExecutionContext,
+        executemany: bool,
     ) -> None:
         del conn, statement, parameters, executemany
         span = getattr(context, "_otel_span", None)
@@ -203,48 +219,60 @@ def instrument_db_engine(engine: object) -> None:
     def _handle_error(exception_context: ExceptionContext) -> None:
         context = exception_context.execution_context
         operation = (
-            getattr(context, "_kaapi_db_operation", None)
-            if context is not None
-            else None
+            getattr(context, _OPERATION_ATTR, None) if context is not None else None
         )
         sqlstate = getattr(exception_context.original_exception, "sqlstate", None)
         _tag_db_error(sqlstate)
         record_db_query_failed(operation=operation, sqlstate=sqlstate)
 
     @event.listens_for(engine.pool, "checkout")
-    def _on_checkout(dbapi_connection, connection_record, connection_proxy) -> None:
+    def _on_checkout(
+        dbapi_connection: DBAPIConnection,
+        connection_record: ConnectionPoolEntry,
+        connection_proxy: PoolProxiedConnection,
+    ) -> None:
         del dbapi_connection, connection_record, connection_proxy
         _emit_pool_metrics(engine.pool)
 
     @event.listens_for(engine.pool, "checkin")
-    def _on_checkin(dbapi_connection, connection_record) -> None:
+    def _on_checkin(
+        dbapi_connection: DBAPIConnection, connection_record: ConnectionPoolEntry
+    ) -> None:
         del dbapi_connection, connection_record
         _emit_pool_metrics(engine.pool)
 
     @event.listens_for(engine.pool, "connect")
-    def _on_connect(dbapi_connection, connection_record) -> None:
+    def _on_connect(
+        dbapi_connection: DBAPIConnection, connection_record: ConnectionPoolEntry
+    ) -> None:
         del dbapi_connection, connection_record
         record_db_connection_event("opened")
 
     @event.listens_for(engine.pool, "close")
-    def _on_close(dbapi_connection, connection_record) -> None:
+    def _on_close(
+        dbapi_connection: DBAPIConnection, connection_record: ConnectionPoolEntry
+    ) -> None:
         del dbapi_connection, connection_record
         record_db_connection_event("closed")
 
     @event.listens_for(engine.pool, "invalidate")
-    def _on_invalidate(dbapi_connection, connection_record, exception) -> None:
+    def _on_invalidate(
+        dbapi_connection: DBAPIConnection,
+        connection_record: ConnectionPoolEntry,
+        exception: BaseException | None,
+    ) -> None:
         del dbapi_connection, connection_record, exception
         record_db_connection_event("invalidated")
 
     @event.listens_for(engine, "commit")
-    def _on_commit(conn) -> None:
+    def _on_commit(conn: Connection) -> None:
         del conn
         record_db_transaction("commit")
 
     @event.listens_for(engine, "rollback")
-    def _on_rollback(conn) -> None:
+    def _on_rollback(conn: Connection) -> None:
         del conn
         record_db_transaction("rollback")
 
-    engine._kaapi_db_telemetry_instrumented = True
+    setattr(engine, _INSTRUMENTED_ATTR, True)
     logger.debug("[instrument_db_engine] SQLAlchemy DB telemetry enabled")

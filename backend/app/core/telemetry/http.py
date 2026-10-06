@@ -1,4 +1,4 @@
-from app.core.telemetry.metrics import _emit_sentry_metric
+from app.core.telemetry.metrics import emit_sentry_metric
 
 HTTP_ERROR_STATUS_THRESHOLD: int = 400
 
@@ -17,15 +17,15 @@ def record_http_request(
         "http.route": http_route,
         "http.status_code": str(status),
     }
-    _emit_sentry_metric("count", "http.server.request.count", 1, attributes=attrs)
-    _emit_sentry_metric(
+    emit_sentry_metric("count", "http.server.request.count", 1, attributes=attrs)
+    emit_sentry_metric(
         "distribution",
         "http.server.request.duration",
         duration_ms,
         unit="millisecond",
         attributes=attrs,
     )
-    _emit_sentry_metric(
+    emit_sentry_metric(
         "distribution",
         "http.server.request.body.size",
         request_body_size,
@@ -33,4 +33,4 @@ def record_http_request(
         attributes=attrs,
     )
     if status >= HTTP_ERROR_STATUS_THRESHOLD:
-        _emit_sentry_metric("count", "http.server.request.error", 1, attributes=attrs)
+        emit_sentry_metric("count", "http.server.request.error", 1, attributes=attrs)

@@ -3,12 +3,13 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
-from opentelemetry import context as otel_context
 from opentelemetry import trace
-from opentelemetry.instrumentation.utils import _SUPPRESS_HTTP_INSTRUMENTATION_KEY
+from opentelemetry.instrumentation.utils import (
+    suppress_http_instrumentation as otel_suppress_http_instrumentation,
+)
 
 from app.core.config import settings
-from app.core.telemetry.metrics import _emit_sentry_metric
+from app.core.telemetry.metrics import emit_sentry_metric
 
 if TYPE_CHECKING:
     from app.models.llm.response import LLMCallResponse
@@ -44,7 +45,7 @@ def record_llm_call_started(
     if not settings.OTEL_ENABLED:
         return
     attrs = _llm_call_attrs(provider, model, operation, organization_id, project_id)
-    _emit_sentry_metric("count", "llm.call.total", 1, attributes=attrs)
+    emit_sentry_metric("count", "llm.call.total", 1, attributes=attrs)
 
 
 def record_llm_call_finished(
@@ -64,7 +65,7 @@ def record_llm_call_finished(
         return
     attrs = _llm_call_attrs(provider, model, operation, organization_id, project_id)
 
-    _emit_sentry_metric(
+    emit_sentry_metric(
         "distribution",
         "llm.call.duration",
         duration_ms,
@@ -72,15 +73,15 @@ def record_llm_call_finished(
         attributes=attrs,
     )
     if error:
-        _emit_sentry_metric("count", "llm.call.errors", 1, attributes=attrs)
+        emit_sentry_metric("count", "llm.call.errors", 1, attributes=attrs)
     if input_tokens is not None:
-        _emit_sentry_metric("count", "llm.tokens.input", input_tokens, attributes=attrs)
+        emit_sentry_metric("count", "llm.tokens.input", input_tokens, attributes=attrs)
     if output_tokens is not None:
-        _emit_sentry_metric(
+        emit_sentry_metric(
             "count", "llm.tokens.output", output_tokens, attributes=attrs
         )
     if total_tokens is not None:
-        _emit_sentry_metric("count", "llm.tokens.total", total_tokens, attributes=attrs)
+        emit_sentry_metric("count", "llm.tokens.total", total_tokens, attributes=attrs)
 
 
 def set_gen_ai_request_attributes(
@@ -114,8 +115,9 @@ def set_gen_ai_request_attributes(
         ("gen_ai.request.presence_penalty", "presence_penalty"),
         ("gen_ai.request.frequency_penalty", "frequency_penalty"),
     ):
-        if param_key in params:
-            span.set_attribute(attr_key, params.get(param_key))
+        value = params.get(param_key)
+        if value is not None:
+            span.set_attribute(attr_key, value)
 
     tools = params.get("tools")
     if tools is not None:
@@ -131,10 +133,9 @@ def set_gen_ai_response_attributes(
         span.set_attribute("gen_ai.usage.input_tokens", usage.input_tokens)
         span.set_attribute("gen_ai.usage.output_tokens", usage.output_tokens)
         span.set_attribute("gen_ai.usage.total_tokens", usage.total_tokens)
-        if getattr(usage, "reasoning_tokens", None) is not None:
-            span.set_attribute(
-                "gen_ai.usage.output_tokens.reasoning", usage.reasoning_tokens
-            )
+        reasoning_tokens = getattr(usage, "reasoning_tokens", None)
+        if reasoning_tokens is not None:
+            span.set_attribute("gen_ai.usage.output_tokens.reasoning", reasoning_tokens)
 
     if response.response and response.response.model:
         span.set_attribute("gen_ai.response.model", response.response.model)
@@ -143,10 +144,5 @@ def set_gen_ai_response_attributes(
 @contextmanager
 def suppress_http_instrumentation() -> Generator[None]:
     """Skip OTel HTTP client spans for the block; the LLM span already covers the call."""
-    token = otel_context.attach(
-        otel_context.set_value(_SUPPRESS_HTTP_INSTRUMENTATION_KEY, True)
-    )
-    try:
+    with otel_suppress_http_instrumentation():
         yield
-    finally:
-        otel_context.detach(token)

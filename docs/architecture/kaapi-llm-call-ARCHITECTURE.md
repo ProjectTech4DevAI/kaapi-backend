@@ -108,7 +108,7 @@ backend/app/
 │
 └── core/
     ├── langfuse/langfuse.py       observe_llm_execution decorator
-    ├── telemetry/                 OTel setup, gen_ai metrics (llm.py), log_context (context.py)
+    ├── telemetry/                 OTel tracing, gen_ai metrics (llm.py), log_context (context.py)
     └── cloud/storage.py           S3 upload + presigned URLs (STT/TTS audio)
 ```
 

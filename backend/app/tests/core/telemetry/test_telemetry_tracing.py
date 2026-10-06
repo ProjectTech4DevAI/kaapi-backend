@@ -7,7 +7,7 @@ from opentelemetry.trace import SpanKind, StatusCode, format_span_id
 from opentelemetry.util.http import ExcludeList
 from sentry_sdk.integrations.opentelemetry import SentrySpanProcessor
 
-from app.core.telemetry import setup as telemetry
+from app.core.telemetry import tracing as telemetry
 
 
 class TestSetupTelemetryInstrumentors:

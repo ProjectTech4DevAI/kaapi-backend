@@ -2,15 +2,14 @@ import re
 from importlib import import_module
 from typing import Any
 
-from pydantic import JsonValue
 from sentry_sdk.integrations import Integration
+from sentry_sdk.types import Event, Hint, Log
 
 from app.core.config import settings
 
 _SENSITIVE_HEADERS: frozenset[str] = frozenset(
     {"authorization", "cookie", "set-cookie", "x-api-key"}
 )
-_SCRUBBED = "[scrubbed]"
 
 _GENAI_CONTENT_KEYS: frozenset[str] = frozenset(
     {
@@ -84,7 +83,7 @@ _NOISE_PATH = re.compile(
 )
 
 
-def _extract_path(event: dict[str, Any]) -> str:
+def _extract_path(event: Event) -> str:
     request = event.get("request")
     if not isinstance(request, dict):
         return ""
@@ -100,7 +99,7 @@ def _extract_path(event: dict[str, Any]) -> str:
     return ""
 
 
-def _should_drop_transaction(event: dict[str, Any]) -> bool:
+def _should_drop_transaction(event: Event) -> bool:
     transaction = str(event.get("transaction") or "").strip()
     path = _extract_path(event)
 
@@ -137,7 +136,7 @@ def _is_genai_content_key(key: object) -> bool:
     )
 
 
-def scrub_genai_content(payload: JsonValue, depth: int = 0) -> None:
+def scrub_genai_content(payload: object, depth: int = 0) -> None:
     """Strip genai prompt/completion values in-place from a nested Sentry payload."""
     if depth > _GENAI_SCRUB_MAX_DEPTH:
         return
@@ -152,9 +151,7 @@ def scrub_genai_content(payload: JsonValue, depth: int = 0) -> None:
             scrub_genai_content(item, depth + 1)
 
 
-def before_send_transaction_filter(
-    event: dict[str, Any], hint: dict[str, Any]
-) -> dict[str, Any] | None:
+def before_send_transaction_filter(event: Event, _hint: Hint) -> Event | None:
     """Drop ASGI/DB noise spans and scrub genai content before shipping."""
     if _should_drop_transaction(event):
         return None
@@ -170,7 +167,9 @@ def before_send_transaction_filter(
         if not isinstance(span, dict):
             continue
 
-        data = span.get("data") if isinstance(span.get("data"), dict) else {}
+        data = span.get("data")
+        if not isinstance(data, dict):
+            data = {}
         desc = str(span.get("description") or span.get("name") or "").strip()
         op = str(span.get("op") or "").strip()
 
@@ -189,7 +188,7 @@ def before_send_transaction_filter(
     return event
 
 
-def _scrub_request_pii(event: dict[str, Any]) -> None:
+def _scrub_request_pii(event: Event) -> None:
     request = event.get("request")
     if not isinstance(request, dict):
         return
@@ -198,19 +197,19 @@ def _scrub_request_pii(event: dict[str, Any]) -> None:
     if isinstance(headers, dict):
         for key in list(headers):
             if str(key).lower() in _SENSITIVE_HEADERS:
-                headers[key] = _SCRUBBED
+                headers[key] = _REDACTED
 
     if "cookies" in request:
-        request["cookies"] = _SCRUBBED
+        request["cookies"] = _REDACTED
     if request.get("query_string"):
-        request["query_string"] = _SCRUBBED
+        request["query_string"] = _REDACTED
 
 
-def _scrub_request_body(event: dict[str, Any]) -> None:
+def _scrub_request_body(event: Event) -> None:
     """Drop the request body unconditionally — on LLM routes it is the user's message."""
     request = event.get("request")
     if isinstance(request, dict) and "data" in request:
-        request["data"] = _SCRUBBED
+        request["data"] = _REDACTED
 
 
 def _redact_llm_job_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -229,7 +228,7 @@ def _redact_llm_job_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     return redacted_kwargs
 
 
-def _scrub_llm_job_kwargs(event: dict[str, Any]) -> None:
+def _scrub_llm_job_kwargs(event: Event) -> None:
     """Strip end-user query/response text from LLM job celery-job context."""
     extra = event.get("extra")
     if not isinstance(extra, dict):
@@ -247,9 +246,7 @@ def _scrub_llm_job_kwargs(event: dict[str, Any]) -> None:
         celery_job["kwargs"] = _redact_llm_job_kwargs(kwargs)
 
 
-def before_send_error_filter(
-    event: dict[str, Any], hint: dict[str, Any]
-) -> dict[str, Any] | None:
+def before_send_error_filter(event: Event, _hint: Hint) -> Event | None:
     """Drop probe/scanner error events; scrub genai content, request body, and PII."""
     try:
         if _should_drop_transaction(event):
@@ -264,9 +261,7 @@ def before_send_error_filter(
     return event
 
 
-def before_send_log_filter(
-    log: dict[str, Any], hint: dict[str, Any]
-) -> dict[str, Any] | None:
+def before_send_log_filter(log: Log, _hint: Hint) -> Log | None:
     """Strip genai content from Sentry log attributes before shipping."""
     try:
         scrub_genai_content(log.get("attributes"))

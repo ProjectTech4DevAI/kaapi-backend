@@ -6,6 +6,8 @@ from contextvars import ContextVar
 import sentry_sdk
 from opentelemetry import trace
 
+logger = logging.getLogger(__name__)
+
 _log_context_var: ContextVar[dict[str, str] | None] = ContextVar(
     "kaapi_log_context", default=None
 )
@@ -31,7 +33,7 @@ def set_request_log_context(
             if project_id is not None:
                 sentry_sdk.set_tag("tenant.project_id", str(project_id))
     except Exception:
-        pass
+        logger.debug("[set_request_log_context] Failed to tag Sentry scope")
 
 
 def bind_sentry_user(
@@ -53,7 +55,7 @@ def bind_sentry_user(
         if sentry_user:
             sentry_sdk.set_user(sentry_user)
     except Exception:
-        pass
+        logger.debug("[bind_sentry_user] Failed to bind Sentry user")
 
 
 @contextmanager

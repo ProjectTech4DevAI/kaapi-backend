@@ -23,6 +23,6 @@ OTel-first, Sentry as sole in-process sink (`instrumenter="otel"`). Init at `mai
 - Runbook (alerts/dashboards/debugging): `features/sentry-utilization/SENTRY-RUNBOOK.md`.
 
 ## Telemetry / misc
-- `core/telemetry/` package, public API re-exported from `__init__.py`: `setup.py` (OTel bootstrap, span noise filter, FastAPI instrumentation, flush), `context.py` (log context, tenant tags, user binding), `metrics.py` (Sentry metric emit, stale-job and rate-threshold monitors), `http.py` (HTTP request metrics, called from `core/middleware.py`), `llm.py` (gen_ai span attributes, LLM call metrics), `db.py` (SQLAlchemy engine hooks, DB spans `db.statement` / `db.rows_affected`, pool/slow-query/transaction metrics).
+- `core/telemetry/` package, public API re-exported from `__init__.py`: `tracing.py` (OTel tracer provider, span noise filter, FastAPI instrumentation, flush), `context.py` (log context, tenant tags, user binding), `metrics.py` (Sentry metric emit, stale-job and rate-threshold monitors), `http.py` (HTTP request metrics, called from `core/middleware.py`), `llm.py` (gen_ai span attributes, LLM call metrics), `db.py` (SQLAlchemy engine hooks, DB spans `db.statement` / `db.rows_affected`, pool/slow-query/transaction metrics).
 - OTel auto-instrumentation (in `setup_telemetry`): FastAPI, SQLAlchemy, httpx, requests, logging, Celery (Queues insight), Redis (Caches insight), botocore (S3/KMS spans).
 - `core/rate_monitor.py` — provider rate tracking

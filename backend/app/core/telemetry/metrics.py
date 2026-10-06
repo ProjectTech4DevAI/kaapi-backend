@@ -1,36 +1,31 @@
 import logging
+from collections.abc import Mapping
+from typing import Literal
 
 import sentry_sdk
 
 logger = logging.getLogger(__name__)
 
+MetricType = Literal["count", "gauge", "distribution"]
+MetricAttributes = Mapping[str, str | int | float]
 
-def _emit_sentry_metric(
-    metric_type: str,
+
+def emit_sentry_metric(
+    metric_type: MetricType,
     name: str,
     value: float,
     *,
     unit: str | None = None,
-    attributes: dict[str, str | int | float] | None = None,
+    attributes: MetricAttributes | None = None,
 ) -> None:
     """Best-effort Sentry metric emission. No-op if SDK is not active."""
     try:
         if not sentry_sdk.get_client().is_active():
             return
-        if metric_type == "count":
-            sentry_sdk.metrics.count(
-                name=name, value=value, unit=unit, attributes=attributes
-            )
-        elif metric_type == "gauge":
-            sentry_sdk.metrics.gauge(
-                name=name, value=value, unit=unit, attributes=attributes
-            )
-        elif metric_type == "distribution":
-            sentry_sdk.metrics.distribution(
-                name=name, value=value, unit=unit, attributes=attributes
-            )
+        emitter = getattr(sentry_sdk.metrics, metric_type)
+        emitter(name=name, value=value, unit=unit, attributes=dict(attributes or {}))
     except Exception:
-        logger.debug("[_emit_sentry_metric] Failed to emit %s (%s)", name, metric_type)
+        logger.debug("[emit_sentry_metric] Failed to emit %s (%s)", name, metric_type)
 
 
 def record_stale_pending_jobs(
@@ -69,14 +64,14 @@ def record_stale_pending_jobs(
         else "jobs.pending.oldest_age_seconds"
     )
 
-    _emit_sentry_metric(
+    emit_sentry_metric(
         "gauge",
         count_metric,
         stale_count,
         attributes=attrs,
     )
     if oldest_age_seconds is not None:
-        _emit_sentry_metric(
+        emit_sentry_metric(
             "gauge",
             age_metric,
             oldest_age_seconds,

@@ -2,6 +2,8 @@ import logging
 import re
 
 import sentry_sdk
+from fastapi import FastAPI
+from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
@@ -9,8 +11,8 @@ from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.trace import SpanKind, StatusCode, format_span_id
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.trace import SpanContext, SpanKind, StatusCode, format_span_id
 from sentry_sdk.integrations.opentelemetry import SentryPropagator, SentrySpanProcessor
 
 from app.core.config import settings
@@ -48,14 +50,22 @@ class _NoiseFilteringSpanProcessor(SentrySpanProcessor):
         super().__init__()
         self._traces_with_children: set[int] = set()
 
-    def on_start(self, otel_span, parent_context=None):  # type: ignore[override]
+    def on_start(
+        self,
+        otel_span: ReadableSpan,
+        parent_context: otel_context.Context | None = None,
+    ) -> None:
         parent = otel_span.parent
-        if parent is not None and not parent.is_remote:
-            self._traces_with_children.add(otel_span.get_span_context().trace_id)
+        span_context = otel_span.get_span_context()
+        if parent is not None and not parent.is_remote and span_context is not None:
+            self._traces_with_children.add(span_context.trace_id)
         super().on_start(otel_span, parent_context)
 
-    def on_end(self, otel_span) -> None:  # type: ignore[override]
+    def on_end(self, otel_span: ReadableSpan) -> None:
         span_context = otel_span.get_span_context()
+        if span_context is None:
+            super().on_end(otel_span)
+            return
         parent = otel_span.parent
         is_root = parent is None or parent.is_remote
         had_children = span_context.trace_id in self._traces_with_children
@@ -67,13 +77,13 @@ class _NoiseFilteringSpanProcessor(SentrySpanProcessor):
             status_code=otel_span.status.status_code,
             had_children=had_children,
         ):
-            self._forget_span(otel_span)
+            self._forget_span(otel_span, span_context)
             return
         super().on_end(otel_span)
 
-    def _forget_span(self, otel_span) -> None:  # type: ignore[no-untyped-def]
+    def _forget_span(self, otel_span: ReadableSpan, span_context: SpanContext) -> None:
         """Same bookkeeping as SentrySpanProcessor.on_end, minus shipping the span."""
-        span_id = format_span_id(otel_span.get_span_context().span_id)
+        span_id = format_span_id(span_context.span_id)
         self.otel_span_map.pop(span_id, None)
         if otel_span.start_time is not None:
             started_minute = int(otel_span.start_time / 1e9 / 60)
@@ -114,7 +124,7 @@ def setup_telemetry(service_name: str | None = None) -> None:
         # Circular import fix
         from opentelemetry.instrumentation.celery import CeleryInstrumentor
 
-        CeleryInstrumentor().instrument()
+        CeleryInstrumentor().instrument()  # type: ignore[no-untyped-call]
     except Exception:
         logger.exception("[setup_telemetry] Failed to instrument Celery")
 
@@ -128,7 +138,7 @@ def setup_telemetry(service_name: str | None = None) -> None:
     try:
         from opentelemetry.instrumentation.botocore import BotocoreInstrumentor
 
-        BotocoreInstrumentor().instrument()
+        BotocoreInstrumentor().instrument()  # type: ignore[no-untyped-call]
     except Exception:
         logger.exception("[setup_telemetry] Failed to instrument botocore")
 
@@ -161,7 +171,7 @@ def flush_telemetry(timeout_millis: int = 10000) -> None:
         logger.exception("[flush_telemetry] Failed to flush Sentry")
 
 
-def instrument_app(app: object) -> None:
+def instrument_app(app: FastAPI) -> None:
     """Instrument the FastAPI app. Call after the app is created."""
     if not settings.OTEL_ENABLED:
         return
@@ -182,7 +192,7 @@ def instrument_app(app: object) -> None:
     patterns = [rf"^{re.escape(p)}/?$" for p in exact_paths]
     patterns += [rf"^{re.escape(p)}" for p in TRACE_EXCLUDED_PATH_PREFIXES]
     excluded_urls = ",".join(sorted(patterns))
-    FastAPIInstrumentor.instrument_app(  # type: ignore[arg-type]
+    FastAPIInstrumentor.instrument_app(
         app,
         excluded_urls=excluded_urls,
     )

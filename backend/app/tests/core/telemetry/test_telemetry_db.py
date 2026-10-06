@@ -234,7 +234,7 @@ class TestInstrumentDbEngine:
         pool_stats = MagicMock()
         with (
             patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
+            patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", pool_stats),
         ):
             telemetry.instrument_db_engine(engine)
@@ -251,7 +251,7 @@ class TestInstrumentDbEngine:
         tag_error = MagicMock()
         with (
             patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
+            patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
             patch.object(telemetry, "record_db_query_failed", query_failed),
             patch.object(telemetry, "_tag_db_error", tag_error),
@@ -272,9 +272,7 @@ class TestInstrumentDbEngine:
         engine = self._engine()
         with (
             patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch(
-                "opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"
-            ) as instrumentor,
+            patch.object(telemetry, "SQLAlchemyInstrumentor") as instrumentor,
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
         ):
             telemetry.instrument_db_engine(engine)
@@ -288,9 +286,7 @@ class TestInstrumentDbEngine:
         engine = self._engine()
         with (
             patch.object(telemetry.settings, "OTEL_ENABLED", False),
-            patch(
-                "opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"
-            ) as instrumentor,
+            patch.object(telemetry, "SQLAlchemyInstrumentor") as instrumentor,
         ):
             telemetry.instrument_db_engine(engine)
 
@@ -305,7 +301,7 @@ class TestInstrumentDbEngine:
         span.is_recording.return_value = True
         with (
             patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
+            patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
         ):
             telemetry.instrument_db_engine(engine)
@@ -343,7 +339,7 @@ class TestInstrumentDbEngineMetrics:
         with (
             patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry, "DB_SLOW_QUERY_MS", 0),
-            patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
+            patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
             patch.object(telemetry, "record_db_slow_query", slow),
         ):
@@ -360,7 +356,7 @@ class TestInstrumentDbEngineMetrics:
         with (
             patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry, "DB_SLOW_QUERY_MS", 10_000),
-            patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
+            patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
             patch.object(telemetry, "record_db_slow_query", slow),
         ):
@@ -375,7 +371,7 @@ class TestInstrumentDbEngineMetrics:
         conn_event = MagicMock()
         with (
             patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
+            patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
             patch.object(telemetry, "record_db_connection_event", conn_event),
         ):
@@ -390,7 +386,7 @@ class TestInstrumentDbEngineMetrics:
         txn = MagicMock()
         with (
             patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch("opentelemetry.instrumentation.sqlalchemy.SQLAlchemyInstrumentor"),
+            patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
             patch.object(telemetry, "record_db_transaction", txn),
         ):
