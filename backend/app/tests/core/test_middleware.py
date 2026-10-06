@@ -10,6 +10,7 @@ from starlette.requests import Request
 
 from app.core import middleware
 from app.core.middleware import _resolve_request_body_size
+from app.core.telemetry import metrics
 
 
 def _active_sentry() -> MagicMock:
@@ -36,7 +37,7 @@ def _metric_names(fake: MagicMock) -> list[str]:
     calls = list(fake.metrics.count.call_args_list) + list(
         fake.metrics.distribution.call_args_list
     )
-    return [c.args[0] for c in calls]
+    return [c.kwargs["name"] for c in calls]
 
 
 @pytest.fixture
@@ -49,7 +50,10 @@ def non_recording_span():
 
 class TestHttpRequestMetrics:
     async def _run(self, request, call_next, fake):
-        with patch.object(middleware, "sentry_sdk", fake):
+        with (
+            patch.object(middleware, "sentry_sdk", fake),
+            patch.object(metrics, "sentry_sdk", fake),
+        ):
             return await middleware._log_http_request(request, call_next)
 
     @pytest.mark.asyncio
@@ -76,7 +80,7 @@ class TestHttpRequestMetrics:
         error_calls = [
             c
             for c in fake.metrics.count.call_args_list
-            if c.args[0] == "http.server.request.error"
+            if c.kwargs["name"] == "http.server.request.error"
         ]
         assert len(error_calls) == 1
         assert error_calls[0].kwargs["attributes"]["http.status_code"] == "404"
@@ -95,7 +99,7 @@ class TestHttpRequestMetrics:
         error_calls = [
             c
             for c in fake.metrics.count.call_args_list
-            if c.args[0] == "http.server.request.error"
+            if c.kwargs["name"] == "http.server.request.error"
         ]
         assert len(error_calls) == 1
         assert error_calls[0].kwargs["attributes"]["http.status_code"] == "500"
@@ -122,7 +126,7 @@ class TestHttpRequestMetrics:
         count_call = next(
             c
             for c in fake.metrics.count.call_args_list
-            if c.args[0] == "http.server.request.count"
+            if c.kwargs["name"] == "http.server.request.count"
         )
         assert (
             count_call.kwargs["attributes"]["http.route"] == "/api/v1/items/{item_id}"

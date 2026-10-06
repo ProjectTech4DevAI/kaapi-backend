@@ -1,7 +1,7 @@
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from app.core import sentry_filters
+from app.core.telemetry.sentry import filters as sentry_filters
 
 
 class TestBeforeSendErrorFilter:

@@ -108,7 +108,7 @@ backend/app/
 │
 └── core/
     ├── langfuse/langfuse.py       observe_llm_execution decorator
-    ├── telemetry.py               OTel spans, gen_ai metrics, log_context
+    ├── telemetry/                 OTel setup, gen_ai metrics (llm.py), log_context (context.py)
     └── cloud/storage.py           S3 upload + presigned URLs (STT/TTS audio)
 ```
 
@@ -536,9 +536,9 @@ flowchart TD
 
 | Layer | What it captures | Where |
 |---|---|---|
-| **OpenTelemetry / Sentry** | Span tree above. The `chat <model>` span carries `sentry.op = gen_ai.chat` so Sentry **AI Insights** surfaces model, tokens, and latency. | [core/telemetry.py](../../backend/app/core/telemetry.py) |
+| **OpenTelemetry / Sentry** | Span tree above. The `chat <model>` span carries `sentry.op = gen_ai.chat` so Sentry **AI Insights** surfaces model, tokens, and latency. | [core/telemetry/llm.py](../../backend/app/core/telemetry/llm.py) |
 | **Langfuse** | LLM generations/traces around the actual provider call; `session_id` = `conversation_id` for stateful chats. Enabled per‑project via stored `langfuse` credentials. | [core/langfuse/langfuse.py](../../backend/app/core/langfuse/langfuse.py) |
-| **Metrics** | `record_llm_call_started` / `record_llm_call_finished` (provider, model, duration, token counts, error flag). | [core/telemetry.py](../../backend/app/core/telemetry.py) |
+| **Metrics** | `record_llm_call_started` / `record_llm_call_finished` (provider, model, duration, token counts, error flag). | [core/telemetry/llm.py](../../backend/app/core/telemetry/llm.py) |
 | **DB audit** | `job` + `llm_call` rows (see §8). | [crud/llm.py](../../backend/app/crud/llm.py), [crud/jobs.py](../../backend/app/crud/jobs.py) |
 
 `flush_telemetry()` is called in a `finally` so spans/metrics ship even on failure.

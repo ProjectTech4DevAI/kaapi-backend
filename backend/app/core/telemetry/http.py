@@ -1,0 +1,36 @@
+from app.core.telemetry.metrics import _emit_sentry_metric
+
+HTTP_ERROR_STATUS_THRESHOLD: int = 400
+
+
+def record_http_request(
+    *,
+    method: str,
+    http_route: str,
+    status: int,
+    duration_ms: float,
+    request_body_size: int = 0,
+) -> None:
+    """Emit HTTP traffic, latency, payload-size and error counters to Sentry."""
+    attrs: dict[str, str | int | float] = {
+        "http.method": method,
+        "http.route": http_route,
+        "http.status_code": str(status),
+    }
+    _emit_sentry_metric("count", "http.server.request.count", 1, attributes=attrs)
+    _emit_sentry_metric(
+        "distribution",
+        "http.server.request.duration",
+        duration_ms,
+        unit="millisecond",
+        attributes=attrs,
+    )
+    _emit_sentry_metric(
+        "distribution",
+        "http.server.request.body.size",
+        request_body_size,
+        unit="byte",
+        attributes=attrs,
+    )
+    if status >= HTTP_ERROR_STATUS_THRESHOLD:
+        _emit_sentry_metric("count", "http.server.request.error", 1, attributes=attrs)

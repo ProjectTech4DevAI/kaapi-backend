@@ -13,7 +13,7 @@ FastAPI (backend/app/main.py, api/routes/*)
    │      └── app/celery/tasks/job_execution.py, priority queues
    ├── Object storage        core/cloud/storage.py
    ├── Langfuse              core/langfuse/langfuse.py (traces, scores)
-   ├── Sentry                core/sentry_filters.py
+   ├── Sentry                core/telemetry/sentry/ (init.py, filters.py)
    └── Providers
          ├── OpenAI    (llm calls, embeddings, batch, vector stores, responses API)
          ├── Gemini    (llm calls, batch: core/batch/gemini.py)

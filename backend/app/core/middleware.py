@@ -9,6 +9,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.config import settings
 from app.core.logger import log_service_name
+from app.core.telemetry import record_http_request
 
 logger = logging.getLogger("http_request_logger")
 
@@ -52,42 +53,6 @@ def _resolve_http_route(request: Request) -> str:
     route = request.scope.get("route")
     templated = getattr(route, "path", None)
     return templated or "unmatched"
-
-
-def _emit_http_metrics(
-    *,
-    method: str,
-    http_route: str,
-    status: int,
-    duration_ms: float,
-    request_body_size: int = 0,
-) -> None:
-    """Emit HTTP traffic/latency/payload/error counters to Sentry. No-op if the SDK is inactive."""
-    try:
-        if not sentry_sdk.get_client().is_active():
-            return
-        attrs = {
-            "http.method": method,
-            "http.route": http_route,
-            "http.status_code": str(status),
-        }
-        sentry_sdk.metrics.count("http.server.request.count", 1, attributes=attrs)
-        sentry_sdk.metrics.distribution(
-            "http.server.request.duration",
-            duration_ms,
-            unit="millisecond",
-            attributes=attrs,
-        )
-        sentry_sdk.metrics.distribution(
-            "http.server.request.body.size",
-            request_body_size,
-            unit="byte",
-            attributes=attrs,
-        )
-        if status >= 400:
-            sentry_sdk.metrics.count("http.server.request.error", 1, attributes=attrs)
-    except Exception:
-        logger.debug("[_emit_http_metrics] Sentry metric emit failed")
 
 
 async def http_request_logger(request: Request, call_next) -> Response:
@@ -144,7 +109,7 @@ async def _log_http_request(request: Request, call_next) -> Response:
             sentry_sdk.set_tag("http.status_code", str(status))
             sentry_sdk.set_tag("http.response.status_code", str(status))
         if metrics_enabled:
-            _emit_http_metrics(
+            record_http_request(
                 method=method,
                 http_route=http_route,
                 status=status,
@@ -175,7 +140,7 @@ async def _log_http_request(request: Request, call_next) -> Response:
             f"| request_body_size: {request_body_size}B "
             f"| correlation_id: {correlation_id.get()}"
         )
-        _emit_http_metrics(
+        record_http_request(
             method=method,
             http_route=http_route,
             status=status,

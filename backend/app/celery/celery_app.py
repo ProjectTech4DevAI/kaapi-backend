@@ -2,23 +2,17 @@ import logging
 
 from celery import Celery
 from celery.signals import (
-    worker_init,
+    setup_logging,
     task_failure,
     task_postrun,
     task_prerun,
-    setup_logging,
+    worker_init,
     worker_process_init,
 )
 from kombu import Exchange, Queue
 
 from app.core.config import settings
 from app.core.logger import configure_logging
-from app.core.sentry_filters import (
-    before_send_error_filter,
-    before_send_log_filter,
-    before_send_transaction_filter,
-    genai_privacy_integrations,
-)
 
 logger = logging.getLogger(__name__)
 _telemetry_initialized = False
@@ -37,45 +31,17 @@ def _initialize_worker_observability() -> None:
     configure_logging(service_name="kaapi-celery")
 
     if settings.SENTRY_DSN and not _sentry_initialized:
-        import sentry_sdk
         from sentry_sdk.integrations.celery import CeleryIntegration
         from sentry_sdk.integrations.httpx import HttpxIntegration
-        from sentry_sdk.integrations.logging import LoggingIntegration
         from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
-        from app.core.telemetry import resolve_sentry_release
+        from app.core.telemetry import init_sentry
 
-        sentry_sdk.init(
-            dsn=str(settings.SENTRY_DSN),
-            environment=settings.ENVIRONMENT,
-            release=resolve_sentry_release(),
-            instrumenter="otel",
-            traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
-            sample_rate=settings.SENTRY_ERROR_SAMPLE_RATE,
-            profile_session_sample_rate=settings.SENTRY_PROFILE_SESSION_SAMPLE_RATE,
-            profile_lifecycle=settings.SENTRY_PROFILE_LIFECYCLE,
-            send_default_pii=settings.SENTRY_SEND_DEFAULT_PII,
-            enable_logs=True,
-            include_local_variables=False,
-            max_request_body_size="never",
-            before_send=before_send_error_filter,
-            before_send_transaction=before_send_transaction_filter,
-            before_send_log=before_send_log_filter,
+        init_sentry(
             integrations=[
-                *genai_privacy_integrations(),
-                LoggingIntegration(
-                    level=logging.INFO,
-                    sentry_logs_level=logging.INFO,
-                ),
-                CeleryIntegration(
-                    propagate_traces=True,
-                    monitor_beat_tasks=False,
-                ),
+                CeleryIntegration(propagate_traces=True, monitor_beat_tasks=False)
             ],
-            disabled_integrations=[
-                SqlalchemyIntegration(),
-                HttpxIntegration(),
-            ],
+            disabled_integrations=[SqlalchemyIntegration(), HttpxIntegration()],
         )
         _sentry_initialized = True
 
@@ -102,8 +68,9 @@ def log_pool_status(task: "celery.Task", **_: object) -> None:  # type: ignore[n
     If checked_out equals pool size right when a task starts, connections
     are being held across tasks (likely across LLM API calls) and leaking.
     """
-    from app.core.db import engine
     from sqlalchemy.pool import QueuePool
+
+    from app.core.db import engine
 
     pool = engine.pool
     if isinstance(pool, QueuePool):
@@ -120,8 +87,9 @@ def log_pool_status_post(task: "celery.Task", **_: object) -> None:  # type: ign
     Compare with task_prerun log — if checked_out is the same or higher after
     the task, connections were not returned and are leaking.
     """
-    from app.core.db import engine
     from sqlalchemy.pool import QueuePool
+
+    from app.core.db import engine
 
     pool = engine.pool
     if isinstance(pool, QueuePool):
@@ -140,8 +108,9 @@ def log_pool_status_failure(
     Failures are the most likely path for sessions to leak — exceptions can
     bypass session cleanup if not guarded by a context manager.
     """
-    from app.core.db import engine
     from sqlalchemy.pool import QueuePool
+
+    from app.core.db import engine
 
     pool = engine.pool
     if isinstance(pool, QueuePool):
