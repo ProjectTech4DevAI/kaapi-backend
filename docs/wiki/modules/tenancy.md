@@ -10,7 +10,6 @@ All paths relative to `backend/app/`.
 - `api/routes/organization.py`, `api/routes/project.py`
 - `api/routes/api_keys.py`
 - `api/routes/onboarding.py`
-- `api/routes/private.py` — internal endpoints
 
 ## Tables (SQLModel)
 | Table | Model |
@@ -32,4 +31,6 @@ All paths relative to `backend/app/`.
   missing required fields are rejected at the request boundary (422).
 - `ProjectPublic.settings` is `dict[str, JsonValue]` — free-form JSONB whose
   writable keys are defined by `ProjectSettingsUpdate` (`PATCH
-  /projects/settings`), currently just `tracing`.
+  /projects/settings` for the key's own project; `PATCH
+  /projects/{project_id}/settings` for superusers targeting any project),
+  currently just `tracing`.

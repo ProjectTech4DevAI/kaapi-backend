@@ -24,13 +24,7 @@ from app.core.sentry_filters import (
     before_send_transaction_filter,
     genai_privacy_integrations,
 )
-from app.core.telemetry import (
-    SENTRY_PROFILE_LIFECYCLE,
-    SENTRY_PROFILE_SESSION_SAMPLE_RATE,
-    instrument_app,
-    resolve_sentry_release,
-    setup_telemetry,
-)
+from app.core.telemetry import instrument_app, resolve_sentry_release, setup_telemetry
 from app.load_env import load_environment
 
 # Load environment variables
@@ -46,11 +40,10 @@ if settings.SENTRY_DSN:
         instrumenter="otel",
         traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
         sample_rate=settings.SENTRY_ERROR_SAMPLE_RATE,
-        profile_session_sample_rate=SENTRY_PROFILE_SESSION_SAMPLE_RATE,
-        profile_lifecycle=SENTRY_PROFILE_LIFECYCLE,
+        profile_session_sample_rate=settings.SENTRY_PROFILE_SESSION_SAMPLE_RATE,
+        profile_lifecycle=settings.SENTRY_PROFILE_LIFECYCLE,
         send_default_pii=settings.SENTRY_SEND_DEFAULT_PII,
         enable_logs=True,
-        # Frame locals and request bodies hold prompts and completions verbatim.
         include_local_variables=False,
         max_request_body_size="never",
         before_send=before_send_error_filter,
@@ -84,7 +77,11 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     generate_unique_id_function=custom_generate_unique_id,
-    description="**Responsible AI for the development sector**",
+    description=(
+        "**Responsible AI for the development sector**\n\n"
+        "Licensed under AGPL-3.0-or-later.\n\n"
+        "Source code: https://github.com/ProjectTech4DevAI/kaapi-backend/"
+    ),
 )
 
 
@@ -126,4 +123,5 @@ instrument_app(app)
 async def health() -> dict[str, str | float]:
     return {
         "status": "ok",
+        "sha": settings.GIT_SHA,
     }

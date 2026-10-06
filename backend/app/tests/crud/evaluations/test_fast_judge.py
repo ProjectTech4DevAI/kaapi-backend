@@ -30,15 +30,17 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.crud.evaluations.fast import (
-    CHUNK_CONFIG_INDEX,
-    CHUNK_CONFIG_RUN_ID,
-    JOB_TYPE_EVALUATION_FAST_CHUNK,
-    PROMPT_TEMPLATE_LABEL,
-    _format_top_kb_matches,
     _responses_call_for_item,
     run_fast_evaluation,
     run_response_chunk,
 )
+from app.crud.evaluations.fast_chunks import (
+    CHUNK_CONFIG_INDEX,
+    CHUNK_CONFIG_RUN_ID,
+    JOB_TYPE_EVALUATION_FAST_CHUNK,
+)
+from app.crud.evaluations.fast_traces import format_top_kb_matches
+from app.crud.evaluations.judge_stage import PROMPT_TEMPLATE_LABEL
 from app.crud.evaluations.score import (
     GROUND_TRUTH_SCORE_NAME,
     JUDGE_FAILED_REASON,
@@ -56,6 +58,7 @@ from app.models.llm.request import (
     build_kaapi_completion_config,
 )
 from app.models.response import FileResultChunk
+from app.services.llm.providers.claude import STOP_REASON_COMPLETE
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import (
     create_test_config,
@@ -202,7 +205,8 @@ DEFAULT_RUN_SUMMARY = "Overall the run performed reasonably; strongest on ground
 
 def _summary_response(text: str) -> SimpleNamespace:
     return SimpleNamespace(
-        content=[SimpleNamespace(type="text", text=json.dumps({"summary": text}))]
+        content=[SimpleNamespace(type="text", text=text)],
+        stop_reason=STOP_REASON_COMPLETE,
     )
 
 
@@ -1417,10 +1421,10 @@ class TestVerdictBandOnTraceScores:
 
 
 class TestFormatTopKbMatches:
-    """`_format_top_kb_matches` — the human 'Top matches: ...' string for KB comments."""
+    """`format_top_kb_matches` — the human 'Top matches: ...' string for KB comments."""
 
     def test_formats_filename_and_percent_to_one_decimal(self) -> None:
-        result = _format_top_kb_matches(
+        result = format_top_kb_matches(
             [
                 {"filename": "biu-1.pdf", "score": 0.906},
                 {"filename": "faq.pdf", "score": 0.663},
@@ -1429,7 +1433,7 @@ class TestFormatTopKbMatches:
         assert result == "biu-1.pdf (90.6%), faq.pdf (66.3%)"
 
     def test_includes_all_chunks_regardless_of_score(self) -> None:
-        result = _format_top_kb_matches(
+        result = format_top_kb_matches(
             [
                 {"filename": "hi.pdf", "score": 0.9},
                 {"filename": "lo.pdf", "score": 0.5},
@@ -1439,18 +1443,18 @@ class TestFormatTopKbMatches:
 
     def test_caps_at_three_matches(self) -> None:
         chunks = [{"filename": f"f{i}.pdf", "score": 0.9 - i * 0.01} for i in range(5)]
-        result = _format_top_kb_matches(chunks)
+        result = format_top_kb_matches(chunks)
         assert result == "f0.pdf (90.0%), f1.pdf (89.0%), f2.pdf (88.0%)"
 
     def test_missing_filename_renders_unknown(self) -> None:
-        assert _format_top_kb_matches([{"score": 0.9}]) == "unknown (90.0%)"
+        assert format_top_kb_matches([{"score": 0.9}]) == "unknown (90.0%)"
         assert (
-            _format_top_kb_matches([{"filename": None, "score": 0.8}])
+            format_top_kb_matches([{"filename": None, "score": 0.8}])
             == "unknown (80.0%)"
         )
 
     def test_empty_input_is_empty_string(self) -> None:
-        assert _format_top_kb_matches([]) == ""
+        assert format_top_kb_matches([]) == ""
 
 
 class TestFileSearchIncludeParam:
@@ -1487,7 +1491,6 @@ class TestFileSearchIncludeParam:
                 config=TextLLMParams(model="gpt-4o"),
                 dataset_items_slice=[{"id": "item-1"}],
                 chunk_index=0,
-                log_prefix="[test]",
             )
         return captured
 

@@ -1,21 +1,15 @@
-"""Tests for the Sentry before_send error filter in core/sentry_filters.py.
-
-settings is patched via patch.object; no real Sentry connection is used. The
-filter is a pure function over the event dict, so cases assert on the returned
-event (or None) and on in-place PII scrubbing.
-"""
-
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from app.core import sentry_filters
 
 
 class TestBeforeSendErrorFilter:
-    def test_drops_probe_scanner_event(self):
+    def test_drops_probe_scanner_event(self) -> None:
         event = {"transaction": "GET", "request": {"url": "http://x/health"}}
         assert sentry_filters.before_send_error_filter(event, {}) is None
 
-    def test_scrubs_pii_when_send_default_pii_off(self):
+    def test_scrubs_pii_when_send_default_pii_off(self) -> None:
         event = {
             "transaction": "POST /api/v1/llm/generate",
             "request": {
@@ -46,7 +40,7 @@ class TestBeforeSendErrorFilter:
         assert result["request"]["cookies"] == sentry_filters._SCRUBBED
         assert result["request"]["data"] == sentry_filters._SCRUBBED
 
-    def test_passes_normal_event_through(self):
+    def test_passes_normal_event_through(self) -> None:
         event = {
             "transaction": "POST /api/v1/llm/generate",
             "request": {
@@ -60,7 +54,7 @@ class TestBeforeSendErrorFilter:
         assert result is event
         assert result["request"]["headers"]["User-Agent"] == "curl/8"
 
-    def test_keeps_headers_when_send_default_pii_on(self):
+    def test_keeps_headers_when_send_default_pii_on(self) -> None:
         event = {
             "transaction": "POST /api/v1/llm/generate",
             "request": {
@@ -75,13 +69,13 @@ class TestBeforeSendErrorFilter:
         assert result["request"]["headers"]["Authorization"] == "Bearer secret"
         assert result["request"]["cookies"] == {"session": "abc"}
 
-    def test_returns_event_on_internal_exception(self):
+    def test_returns_event_on_internal_exception(self) -> None:
         bad_event = MagicMock()
         bad_event.get.side_effect = RuntimeError("malformed")
 
         assert sentry_filters.before_send_error_filter(bad_event, {}) is bad_event
 
-    def test_scrubs_request_body_when_send_default_pii_on(self):
+    def test_scrubs_request_body_when_send_default_pii_on(self) -> None:
         event = {
             "transaction": "POST /api/v1/llm/generate",
             "request": {
@@ -94,7 +88,7 @@ class TestBeforeSendErrorFilter:
 
         assert result["request"]["data"] == sentry_filters._SCRUBBED
 
-    def test_scrubs_genai_content_from_error_event(self):
+    def test_scrubs_genai_content_from_error_event(self) -> None:
         event = {
             "transaction": "POST /api/v1/llm/generate",
             "contexts": {
@@ -117,7 +111,7 @@ class TestBeforeSendErrorFilter:
 
 
 class TestScrubGenaiContent:
-    def test_drops_content_keys_and_unpacked_subkeys(self):
+    def test_drops_content_keys_and_unpacked_subkeys(self) -> None:
         payload = {
             "gen_ai.request.messages": ["hi"],
             "gen_ai.request.messages.0.content": "hi",
@@ -130,13 +124,13 @@ class TestScrubGenaiContent:
 
         assert payload == {"gen_ai.usage.total_tokens": 42}
 
-    def test_is_case_insensitive(self):
+    def test_is_case_insensitive(self) -> None:
         payload = {"GEN_AI.Response.Text": "hello"}
         sentry_filters.scrub_genai_content(payload)
 
         assert payload == {}
 
-    def test_walks_nested_lists_and_dicts(self):
+    def test_walks_nested_lists_and_dicts(self) -> None:
         payload = {
             "spans": [
                 {"data": {"gen_ai.response.text": "hello", "gen_ai.system": "openai"}}
@@ -146,7 +140,7 @@ class TestScrubGenaiContent:
 
         assert payload["spans"][0]["data"] == {"gen_ai.system": "openai"}
 
-    def test_stops_at_max_depth(self):
+    def test_stops_at_max_depth(self) -> None:
         deepest: dict = {"gen_ai.response.text": "hello"}
         payload: dict = deepest
         for _ in range(sentry_filters._GENAI_SCRUB_MAX_DEPTH + 2):
@@ -158,7 +152,7 @@ class TestScrubGenaiContent:
 
 
 class TestBeforeSendTransactionFilter:
-    def test_scrubs_genai_content_from_spans(self):
+    def test_scrubs_genai_content_from_spans(self) -> None:
         event = {
             "transaction": "POST /api/v1/llm/generate",
             "spans": [
@@ -179,7 +173,7 @@ class TestBeforeSendTransactionFilter:
         span_data = result["spans"][0]["data"]
         assert span_data == {"gen_ai.usage.total_tokens": 12}
 
-    def test_keeps_gen_ai_span_itself(self):
+    def test_keeps_gen_ai_span_itself(self) -> None:
         event = {
             "transaction": "POST /api/v1/llm/generate",
             "spans": [{"op": "gen_ai.chat", "description": "chat gpt-4o", "data": {}}],
@@ -191,7 +185,7 @@ class TestBeforeSendTransactionFilter:
 
 
 class TestBeforeSendLogFilter:
-    def test_scrubs_genai_attributes(self):
+    def test_scrubs_genai_attributes(self) -> None:
         log = {
             "body": "[execute] done",
             "attributes": {
@@ -202,7 +196,7 @@ class TestBeforeSendLogFilter:
         assert sentry_filters.before_send_log_filter(log, {}) is log
         assert log["attributes"] == {"org_id": "1"}
 
-    def test_returns_log_on_internal_exception(self):
+    def test_returns_log_on_internal_exception(self) -> None:
         bad_log = MagicMock()
         bad_log.get.side_effect = RuntimeError("malformed")
 
@@ -210,16 +204,95 @@ class TestBeforeSendLogFilter:
 
 
 class TestGenaiPrivacyIntegrations:
-    def test_all_returned_integrations_disable_prompts(self):
+    def test_all_returned_integrations_disable_prompts(self) -> None:
         integrations = sentry_filters.genai_privacy_integrations()
 
         assert integrations
         assert all(i.include_prompts is False for i in integrations)
 
-    def test_skips_integrations_whose_sdk_is_missing(self):
+    def test_skips_integrations_whose_sdk_is_missing(self) -> None:
         with patch.object(
             sentry_filters,
             "_GENAI_INTEGRATIONS",
             (("app.core.does_not_exist", "MissingIntegration"),),
         ):
             assert sentry_filters.genai_privacy_integrations() == []
+
+
+class TestLlmJobKwargsRedaction:
+    @staticmethod
+    def _event_with_celery_job(
+        task_name: str, kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            "extra": {
+                "celery-job": {
+                    "task_name": task_name,
+                    "args": [],
+                    "kwargs": kwargs,
+                }
+            }
+        }
+
+    def test_redacts_query_for_llm_job(self) -> None:
+        event = self._event_with_celery_job(
+            "app.celery.tasks.job_execution.run_llm_job",
+            {
+                "job_id": "b9ce6621-9b5a-45c4-969f-df7613ff7dc4",
+                "organization_id": 1,
+                "project_id": 1,
+                "request_data": {
+                    "callback_url": "https://webhooksite.net/some-id",
+                    "config": {"blob": {"completion": {"provider": "openai"}}},
+                    "query": {
+                        "input": {
+                            "type": "text",
+                            "content": {
+                                "value": "Amit Gupta phone number is 919611188278"
+                            },
+                        }
+                    },
+                    "request_metadata": None,
+                },
+            },
+        )
+
+        result = sentry_filters.before_send_error_filter(event, {})
+
+        request_data = result["extra"]["celery-job"]["kwargs"]["request_data"]
+        assert request_data["query"] == sentry_filters._REDACTED
+        assert request_data["callback_url"] == sentry_filters._REDACTED
+        assert request_data["config"] == {
+            "blob": {"completion": {"provider": "openai"}}
+        }
+
+    def test_redacts_query_for_chain_and_response_jobs(self) -> None:
+        for task_name in (
+            "app.celery.tasks.job_execution.run_llm_chain_job",
+            "app.celery.tasks.job_execution.run_response_job",
+        ):
+            event = self._event_with_celery_job(
+                task_name,
+                {"request_data": {"query": {"input": "sensitive text"}}},
+            )
+
+            result = sentry_filters.before_send_error_filter(event, {})
+
+            request_data = result["extra"]["celery-job"]["kwargs"]["request_data"]
+            assert request_data["query"] == sentry_filters._REDACTED
+
+    def test_ignores_unrelated_tasks(self) -> None:
+        event = self._event_with_celery_job(
+            "app.celery.tasks.job_execution.run_doctransform_job",
+            {"request_data": {"query": {"input": "not an llm job"}}},
+        )
+
+        result = sentry_filters.before_send_error_filter(event, {})
+
+        request_data = result["extra"]["celery-job"]["kwargs"]["request_data"]
+        assert request_data["query"] == {"input": "not an llm job"}
+
+    def test_passes_through_events_without_celery_job(self) -> None:
+        event = {"message": "some unrelated error"}
+
+        assert sentry_filters.before_send_error_filter(event, {}) is event

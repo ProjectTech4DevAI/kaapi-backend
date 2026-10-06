@@ -1,10 +1,3 @@
-"""Tests for HTTP request metrics and access logging in core/middleware.py.
-
-sentry_sdk and the OTel span are mocked; no real Sentry connection is used. The
-middleware is driven directly with a fake Request + call_next so traffic, latency,
-payload-size and error counters can be asserted without an ASGI server.
-"""
-
 import logging
 import re
 from types import SimpleNamespace
@@ -35,7 +28,6 @@ def _request(
     req.url.path = path
     req.method = method
     req.scope = {"route": SimpleNamespace(path=route)} if route else {}
-    # Real dict: _resolve_request_body_size calls int() on whatever .get returns.
     req.headers = {"content-length": content_length} if content_length else {}
     return req
 

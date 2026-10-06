@@ -1,0 +1,53 @@
+name: Deploy ECS service and verify rollout
+description: >-
+  Force a new deployment on one ECS service (turning on the deployment circuit
+  breaker with rollback) and wait until its rollout COMPLETED or FAILED.
+
+inputs:
+  cluster:
+    description: ECS cluster name.
+    required: true
+  service:
+    description: ECS service name.
+    required: true
+  task-definition:
+    description: >-
+      Task-definition family (no revision). When set, rolls the service to the
+      family's latest active revision; when empty, keeps the service's current
+      task definition.
+    required: false
+    default: ""
+  poll-interval:
+    description: Seconds between rollout-state polls.
+    required: false
+    default: "15"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        CLUSTER: ${{ inputs.cluster }}
+        SERVICE: ${{ inputs.service }}
+        FAMILY: ${{ inputs.task-definition }}
+        POLL_INTERVAL: ${{ inputs.poll-interval }}
+      run: |
+        args=(--cluster "$CLUSTER" --service "$SERVICE" --force-new-deployment
+              --deployment-configuration '{"deploymentCircuitBreaker":{"enable":true,"rollback":true},"maximumPercent":200,"minimumHealthyPercent":100}')
+        [ -n "$FAMILY" ] && args+=(--task-definition "$FAMILY")
+
+        echo "[$SERVICE] forcing new deployment"
+        aws ecs update-service "${args[@]}" >/dev/null
+
+        while true; do
+          STATE=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" \
+            --query "services[0].deployments[?status=='PRIMARY'].rolloutState | [0]" \
+            --output text)
+          case "$STATE" in
+            COMPLETED) echo "[$SERVICE] rollout COMPLETED"; break ;;
+            FAILED)
+              echo "::error::[$SERVICE] rollout FAILED — new tasks never became healthy (rolled back by circuit breaker)"
+              exit 1 ;;
+            *) echo "[$SERVICE] rollout $STATE — waiting ${POLL_INTERVAL}s"; sleep "$POLL_INTERVAL" ;;
+          esac
+        done

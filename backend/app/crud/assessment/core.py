@@ -35,7 +35,7 @@ def _write_exec(run: AssessmentRun, **values: Any) -> None:
 def create_assessment(
     session: Session,
     experiment_name: str,
-    dataset_id: int,
+    submission_id: UUID,
     organization_id: int,
     project_id: int,
     input_binding: dict[str, Any] | None = None,
@@ -48,7 +48,7 @@ def create_assessment(
     assessment = Assessment(
         experiment_name=experiment_name,
         method=AssessmentMethod.RUN,
-        dataset_id=dataset_id,
+        submission_id=submission_id,
         input=input_binding,
         status=AssessmentStatus.PENDING,
         organization_id=organization_id,

@@ -25,13 +25,12 @@ from app.crud.evaluations.embeddings import (
     calculate_cosine_similarity,
     start_embedding_batch,
 )
-from app.crud.evaluations.fast import (
+from app.crud.evaluations.fast import run_fast_evaluation, run_response_chunk
+from app.crud.evaluations.fast_chunks import (
     JOB_TYPE_EMBEDDING_FAST,
     JOB_TYPE_EVALUATION_FAST,
     JOB_TYPE_EVALUATION_FAST_CHUNK,
     list_response_chunk_jobs,
-    run_fast_evaluation,
-    run_response_chunk,
 )
 from app.crud.evaluations.iteration import (
     create_evaluation_iteration_run,

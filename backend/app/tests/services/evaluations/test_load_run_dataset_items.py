@@ -3,8 +3,8 @@
 Covers the v2 run-time-duplication slice of the three-metric SRD
 (docs/srd-three-metric-evaluation-verdict.md, FR-21/FR-22):
 
-- FR-21: a v2 dataset (null Langfuse id, run-time-duplication marker, factor N)
-  expands each original row ×N with unique ids at run time.
+- FR-21: a v2 dataset (null Langfuse id, stored factor N) expands each original
+  row ×N with unique ids at run time — the S3-backed shape alone drives it.
 - FR-22: a v1 dataset (Langfuse-backed) is read from Langfuse as-is, never
   re-multiplied, and its S3 CSV is not touched.
 
@@ -20,7 +20,6 @@ from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.crud.evaluations.dataset import (
-    DATASET_META_DUPLICATE_AT_RUNTIME,
     DATASET_META_DUPLICATION_FACTOR,
     DATASET_META_ORIGINAL_ITEMS,
     DATASET_META_TOTAL_ITEMS,
@@ -52,9 +51,8 @@ def _make_v2_dataset(
     auth: TestAuthContext,
     original_items_count: int,
     duplication_factor: int,
-    duplicate_at_runtime: bool = True,
 ) -> EvaluationDataset:
-    """A Langfuse-free dataset: null langfuse id, S3 url, run-time-dup metadata."""
+    """A Langfuse-free dataset: null langfuse id, S3 url, stored-factor metadata."""
     return create_evaluation_dataset(
         session=db,
         name=f"v2_ds_{random_lower_string()}",
@@ -62,7 +60,6 @@ def _make_v2_dataset(
             DATASET_META_ORIGINAL_ITEMS: original_items_count,
             DATASET_META_TOTAL_ITEMS: original_items_count * duplication_factor,
             DATASET_META_DUPLICATION_FACTOR: duplication_factor,
-            DATASET_META_DUPLICATE_AT_RUNTIME: duplicate_at_runtime,
         },
         object_store_url="s3://bucket/datasets/v2.csv",
         langfuse_dataset_id=None,
@@ -118,16 +115,15 @@ class TestV2RunTimeDuplication:
         assert sorted(groups) == [1, 2, 3]
         assert all(len(ids) == 4 for ids in groups.values())
 
-    def test_marker_absent_does_not_multiply(
+    def test_stored_factor_one_loads_rows_as_is(
         self, db: Session, user_api_key: TestAuthContext
     ) -> None:
-        """A null-langfuse dataset without the run-time-dup marker loads as-is."""
+        """An S3-backed dataset with stored factor 1 loads one item per row."""
         dataset = _make_v2_dataset(
             db=db,
             auth=user_api_key,
             original_items_count=5,
-            duplication_factor=5,
-            duplicate_at_runtime=False,
+            duplication_factor=1,
         )
 
         with (
@@ -189,31 +185,6 @@ class TestDuplicationFactorOverride:
             )
 
         assert len(items) == 40
-
-    def test_non_runtime_dataset_forces_one_despite_override(
-        self, db: Session, user_api_key: TestAuthContext
-    ) -> None:
-        """Defensive: a non-runtime dataset ignores the override and stays ×1."""
-        dataset = _make_v2_dataset(
-            db=db,
-            auth=user_api_key,
-            original_items_count=6,
-            duplication_factor=5,
-            duplicate_at_runtime=False,
-        )
-
-        with (
-            patch(f"{_FAST}.get_cloud_storage", return_value=MagicMock()),
-            patch(
-                f"{_FAST}.download_csv_from_object_store",
-                return_value=_csv_bytes(6),
-            ),
-        ):
-            items = _load_items_from_object_store(
-                session=db, dataset=dataset, duplication_factor=3
-            )
-
-        assert len(items) == 6
 
     def test_load_run_dataset_items_threads_override_to_object_store(
         self, db: Session, user_api_key: TestAuthContext

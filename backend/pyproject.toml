@@ -3,6 +3,7 @@ name = "app"
 version = "0.1.0"
 description = ""
 requires-python = ">=3.12,<4.0"
+license = "AGPL-3.0-or-later"
 dependencies = [
     "fastapi[standard]>=0.116.0",
     "python-multipart>=0.0.31,<1.0.0",
@@ -19,7 +20,7 @@ dependencies = [
     # Pin bcrypt until passlib supports the latest
     "bcrypt==4.0.1",
     "pydantic-settings<3.0.0,>=2.2.1",
-    "sentry-sdk[fastapi]>=2.24.1",
+    "sentry-sdk[fastapi]>=2.35.0",
     "opentelemetry-api>=1.30.0",
     "opentelemetry-sdk>=1.30.0",
     "opentelemetry-instrumentation>=0.51b0",

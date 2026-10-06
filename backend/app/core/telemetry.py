@@ -15,9 +15,11 @@ from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.instrumentation.requests import RequestsInstrumentor
 from opentelemetry.instrumentation.utils import _SUPPRESS_HTTP_INSTRUMENTATION_KEY
+from opentelemetry.propagate import set_global_textmap
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.trace import SpanKind, StatusCode, format_span_id
+from sentry_sdk.integrations.opentelemetry import SentryPropagator, SentrySpanProcessor
 
 from app.core.config import settings
 
@@ -26,15 +28,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Queries at/above this duration increment the db.query.slow counter.
 DB_SLOW_QUERY_MS: int = 500
 
-# Row count attached to a query span (count only, never row data).
 DB_ROWS_ATTRIBUTE: str = "db.rows_affected"
-
-# Continuous profiling; session rate sampled once per process at init.
-SENTRY_PROFILE_SESSION_SAMPLE_RATE: float = 1.0
-SENTRY_PROFILE_LIFECYCLE: str = "trace"
 
 
 def resolve_sentry_release() -> str:
@@ -44,7 +40,6 @@ def resolve_sentry_release() -> str:
     return f"{settings.BACKEND_SERVICE_NAME}@{settings.API_VERSION}"
 
 
-# Postgres SQLSTATE codes surfaced as named Sentry tags; others pass through as the raw code.
 NOTABLE_SQLSTATES: dict[str, str] = {
     "40P01": "deadlock_detected",
     "57014": "query_canceled",  # statement timeout
@@ -70,10 +65,8 @@ _log_context_var: ContextVar[dict[str, str] | None] = ContextVar(
     "kaapi_log_context", default=None
 )
 
-# OTel instrumentation scope emitted by SQLAlchemyInstrumentor; used to filter its spans.
 _SQLALCHEMY_SCOPE = "opentelemetry.instrumentation.sqlalchemy"
 
-# When True in the current context, SQLAlchemy DB spans are dropped before reaching Sentry.
 _suppress_db_spans_var: ContextVar[bool] = ContextVar(
     "kaapi_suppress_db_spans", default=False
 )
@@ -90,11 +83,7 @@ def _should_drop_db_span(otel_span: object) -> bool:
 def _should_drop_bare_http_trace(
     *, is_root: bool, kind: SpanKind, status_code: StatusCode, had_children: bool
 ) -> bool:
-    """True for a root HTTP server span whose trace has no child spans and no error.
-
-    These single-span transactions carry no work worth a trace; errors are kept so
-    failures stay visible (5xx also surface in http.server.request.error metrics).
-    """
+    """True for a root server span with no children and no error: nothing worth a trace."""
     return (
         is_root
         and not had_children
@@ -135,11 +124,7 @@ def set_request_log_context(
     org_id: int | None = None,
     project_id: int | None = None,
 ) -> None:
-    """Attach org/project to the current request's log context and Sentry tags.
-
-    Call once per authenticated request (from the auth dependency); LogContextFilter
-    then stamps org_id/project_id on every later log record in the request.
-    """
+    """Attach org/project to the request's log context and Sentry tags."""
     current = _log_context_var.get() or {}
     payload = dict(current)
     if org_id is not None:
@@ -163,11 +148,7 @@ def bind_sentry_user(
     org_id: int | None = None,
     project_id: int | None = None,
 ) -> None:
-    """Bind the caller's ids to the Sentry scope so issues report users/orgs affected.
-
-    Scope-only by design: these never enter the log context, which would stamp
-    per-user cardinality on every INFO record `enable_logs` ships.
-    """
+    """Bind caller ids to the Sentry scope only; log context would add per-user cardinality."""
     try:
         if not sentry_sdk.get_client().is_active():
             return
@@ -262,18 +243,52 @@ def _build_resource(service_name: str | None = None) -> Resource:
     )
 
 
+class _NoiseFilteringSpanProcessor(SentrySpanProcessor):
+    """Drop SQLAlchemy spans under suppress_db_instrumentation() and childless HTTP root spans."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._traces_with_children: set[int] = set()
+
+    def on_start(self, otel_span, parent_context=None):  # type: ignore[override]
+        if _should_drop_db_span(otel_span):
+            return
+        parent = otel_span.parent
+        if parent is not None and not parent.is_remote:
+            self._traces_with_children.add(otel_span.get_span_context().trace_id)
+        super().on_start(otel_span, parent_context)
+
+    def on_end(self, otel_span) -> None:  # type: ignore[override]
+        span_context = otel_span.get_span_context()
+        parent = otel_span.parent
+        is_root = parent is None or parent.is_remote
+        had_children = span_context.trace_id in self._traces_with_children
+        if is_root:
+            self._traces_with_children.discard(span_context.trace_id)
+        if _should_drop_bare_http_trace(
+            is_root=is_root,
+            kind=otel_span.kind,
+            status_code=otel_span.status.status_code,
+            had_children=had_children,
+        ):
+            self._forget_span(otel_span)
+            return
+        super().on_end(otel_span)
+
+    def _forget_span(self, otel_span) -> None:  # type: ignore[no-untyped-def]
+        """Same bookkeeping as SentrySpanProcessor.on_end, minus shipping the span."""
+        span_id = format_span_id(otel_span.get_span_context().span_id)
+        self.otel_span_map.pop(span_id, None)
+        if otel_span.start_time is not None:
+            started_minute = int(otel_span.start_time / 1e9 / 60)
+            bucket = self.open_spans.get(started_minute)
+            if bucket is not None:
+                bucket.discard(span_id)
+        self._prune_old_spans()
+
+
 def setup_telemetry(service_name: str | None = None) -> None:
-    """Initialize OpenTelemetry tracing and bridge spans into Sentry.
-
-    Sentry is the single sink:
-    - Traces:  OTel TracerProvider -> SentrySpanProcessor -> Sentry
-    - Logs:    stdlib logging -> Sentry LoggingIntegration (configured at
-               sentry_sdk.init time; see app/main.py and celery_app.py)
-    - Metrics: code calls _emit_sentry_metric / sentry_sdk.metrics.* directly
-
-    Args:
-        service_name: Override OTEL_SERVICE_NAME (e.g. "kaapi-celery" in workers).
-    """
+    """Initialize OTel tracing and bridge spans into Sentry; logs/metrics go via the SDK directly."""
     root_logger = logging.getLogger()
     log_context_filter = LogContextFilter()
     if not any(isinstance(f, LogContextFilter) for f in root_logger.filters):
@@ -289,55 +304,13 @@ def setup_telemetry(service_name: str | None = None) -> None:
     resource = _build_resource(service_name)
     tracer_provider = TracerProvider(resource=resource)
 
-    # Bridge OTel spans into Sentry as Sentry transactions and spans, with full attribute and error capture.
     if settings.SENTRY_DSN:
-        from sentry_sdk.integrations.opentelemetry import SentrySpanProcessor
-
-        class _NoiseFilteringSpanProcessor(SentrySpanProcessor):
-            """Keep Sentry traces meaningful: drop suppressed DB spans and empty HTTP traces.
-
-            - DB: while suppress_db_instrumentation() is active, SQLAlchemy spans are
-              skipped by scope (HTTP/Requests keep flowing).
-            - HTTP: a root server span whose trace gathered no child spans (and no error)
-              is dropped at on_end — it never reaches Sentry as a bare single-span trace.
-            """
-
-            def __init__(self) -> None:
-                super().__init__()
-                self._traces_with_children: set[int] = set()
-
-            def on_start(self, otel_span, parent_context=None):  # type: ignore[override]
-                if _should_drop_db_span(otel_span):
-                    return
-                parent = otel_span.parent
-                if parent is not None and not parent.is_remote:
-                    self._traces_with_children.add(
-                        otel_span.get_span_context().trace_id
-                    )
-                super().on_start(otel_span, parent_context)
-
-            def on_end(self, otel_span) -> None:  # type: ignore[override]
-                span_context = otel_span.get_span_context()
-                parent = otel_span.parent
-                is_root = parent is None or parent.is_remote
-                had_children = span_context.trace_id in self._traces_with_children
-                if is_root:
-                    self._traces_with_children.discard(span_context.trace_id)
-                if _should_drop_bare_http_trace(
-                    is_root=is_root,
-                    kind=otel_span.kind,
-                    status_code=otel_span.status.status_code,
-                    had_children=had_children,
-                ):
-                    self.otel_span_map.pop(format_span_id(span_context.span_id), None)
-                    return
-                super().on_end(otel_span)
-
         tracer_provider.add_span_processor(_NoiseFilteringSpanProcessor())
+        # Downstream services extract sentry-trace, not W3C traceparent.
+        set_global_textmap(SentryPropagator())
 
     trace.set_tracer_provider(tracer_provider)
 
-    # Auto-instrumentation — generates OTel spans the SentrySpanProcessor forwards
     LoggingInstrumentor().instrument(set_logging_format=False)
     HTTPXClientInstrumentor().instrument()
     RequestsInstrumentor().instrument()
@@ -497,11 +470,7 @@ def set_gen_ai_response_attributes(
 
 @contextmanager
 def suppress_http_instrumentation() -> Iterator[None]:
-    """Suppress OTel HTTP client auto-instrumentation for the wrapped block.
-
-    Used around LLM provider calls so the outbound HTTP call does not emit a
-    redundant child span — the LLM-level span already carries the trace.
-    """
+    """Skip OTel HTTP client spans for the block; the LLM span already covers the call."""
     token = otel_context.attach(
         otel_context.set_value(_SUPPRESS_HTTP_INSTRUMENTATION_KEY, True)
     )
@@ -513,13 +482,7 @@ def suppress_http_instrumentation() -> Iterator[None]:
 
 @contextmanager
 def suppress_db_instrumentation() -> Iterator[None]:
-    """Drop SQLAlchemy DB spans from the Sentry trace for the wrapped block.
-
-    Wrap LLM job execution so its DB reads/writes do not clutter the LLM waterfall.
-    Only DB spans are filtered (by _NoiseFilteringSpanProcessor via instrumentation
-    scope) — HTTP/Requests instrumentation stays active. Trade-off: the wrapped
-    DB queries also drop from the Sentry Queries page.
-    """
+    """Drop SQLAlchemy spans for the block (LLM jobs); they also vanish from Sentry Queries."""
     token = _suppress_db_spans_var.set(True)
     try:
         yield
@@ -723,8 +686,7 @@ def instrument_app(app: object) -> None:
         return
     from app.core.middleware import SILENT_LOG_PATHS, TRACE_EXCLUDED_PATH_PREFIXES
 
-    # Non-business request spans are noise: health/utility, FastAPI's own doc/schema
-    # endpoints (read off the app so they track config), and cron polling (prefix).
+    # Doc/schema paths are read off the app so they follow config.
     exact_paths = set(SILENT_LOG_PATHS)
     for attr in (
         "docs_url",
@@ -753,8 +715,7 @@ def instrument_db_engine(engine: object) -> None:
     if getattr(engine, "_kaapi_db_telemetry_instrumented", False):
         return
 
-    # DB query spans -> SentrySpanProcessor -> Sentry Insights/Queries. ProxyTracer defers
-    # to the real provider set later in setup_telemetry(), so load order here is safe.
+    # ProxyTracer defers to the provider set later in setup_telemetry(); load order is safe.
     try:
         from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
@@ -792,7 +753,6 @@ def instrument_db_engine(engine: object) -> None:
         conn, cursor, statement, parameters, context, executemany
     ) -> None:
         del cursor, parameters, executemany
-        # Timing only flags slow queries; per-query duration lives on the span.
         context._kaapi_db_started_at = time.perf_counter()
         context._kaapi_db_operation = (
             str(statement).split(None, 1)[0].upper() if statement else "UNKNOWN"
@@ -811,8 +771,7 @@ def instrument_db_engine(engine: object) -> None:
                 record_db_slow_query(getattr(context, "_kaapi_db_operation", None))
         _emit_pool_metrics(conn.engine.pool)
 
-    # insert=True: must run before the instrumentor's own after hook ends the
-    # DB span (stored on context._otel_span); set_attribute after end() is a no-op.
+    # insert=True: must run before the instrumentor's hook ends the span.
     @event.listens_for(engine, "after_cursor_execute", insert=True)
     def _record_db_rows(
         conn, cursor, statement, parameters, context, executemany

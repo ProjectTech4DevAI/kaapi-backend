@@ -2,17 +2,16 @@ import re
 from importlib import import_module
 from typing import Any
 
+from pydantic import JsonValue
 from sentry_sdk.integrations import Integration
 
 from app.core.config import settings
 
-# Request headers stripped from error events while PII is off (case-insensitive).
 _SENSITIVE_HEADERS: frozenset[str] = frozenset(
     {"authorization", "cookie", "set-cookie", "x-api-key"}
 )
 _SCRUBBED = "[scrubbed]"
 
-# Attribute keys carrying prompt/completion text; Langfuse is the only sink for those.
 _GENAI_CONTENT_KEYS: frozenset[str] = frozenset(
     {
         "gen_ai.request.messages",
@@ -40,10 +39,9 @@ _GENAI_CONTENT_KEYS: frozenset[str] = frozenset(
     }
 )
 
-# event -> spans -> data -> unpacked message parts.
 _GENAI_SCRUB_MAX_DEPTH: int = 8
 
-# Auto-enabled per installed provider SDK; each records prompts once PII is on.
+# Sentry auto-enables these per installed SDK; they record prompts when PII is on.
 _GENAI_INTEGRATIONS: tuple[tuple[str, str], ...] = (
     ("sentry_sdk.integrations.anthropic", "AnthropicIntegration"),
     ("sentry_sdk.integrations.cohere", "CohereIntegration"),
@@ -55,6 +53,24 @@ _GENAI_INTEGRATIONS: tuple[tuple[str, str], ...] = (
     ("sentry_sdk.integrations.openai_agents", "OpenAIAgentsIntegration"),
     ("sentry_sdk.integrations.pydantic_ai", "PydanticAIIntegration"),
 )
+
+_REDACTED = "[REDACTED]"
+
+# LLM job kwargs land in Sentry via sentry_sdk's CeleryIntegration; these keys
+# carry end-user text and must be redacted before that happens.
+_LLM_JOB_TASK_NAMES = {
+    "app.celery.tasks.job_execution.run_llm_job",
+    "app.celery.tasks.job_execution.run_llm_chain_job",
+    "app.celery.tasks.job_execution.run_response_job",
+}
+_SENSITIVE_REQUEST_DATA_KEYS = (
+    "query",
+    "request_metadata",
+    "response",
+    "output",
+    "callback_url",
+)
+
 
 _SQL_OR_CONNECT = re.compile(r"^(select|insert|update|delete|connect)\b", re.IGNORECASE)
 _HTTP_SEND_RECEIVE = re.compile(r"http (send|receive)$", re.IGNORECASE)
@@ -92,7 +108,6 @@ def _should_drop_transaction(event: dict[str, Any]) -> bool:
     if _BARE_HTTP_METHOD.match(transaction):
         return True
 
-    # Drop known non-app noise paths (probes / scanners).
     if path and _NOISE_PATH.search(path):
         return True
 
@@ -100,11 +115,7 @@ def _should_drop_transaction(event: dict[str, Any]) -> bool:
 
 
 def genai_privacy_integrations() -> list[Integration]:
-    """Sentry AI integrations pinned to include_prompts=False.
-
-    Passed to `sentry_sdk.init(integrations=...)` so the explicit instance wins over the
-    auto-enabled one. Absent provider SDKs are skipped: init raises on those.
-    """
+    """AI integrations pinned to include_prompts=False; missing SDKs are skipped."""
     integrations: list[Integration] = []
     for module_path, class_name in _GENAI_INTEGRATIONS:
         try:
@@ -126,7 +137,7 @@ def _is_genai_content_key(key: object) -> bool:
     )
 
 
-def scrub_genai_content(payload: Any, depth: int = 0) -> None:
+def scrub_genai_content(payload: JsonValue, depth: int = 0) -> None:
     """Strip genai prompt/completion values in-place from a nested Sentry payload."""
     if depth > _GENAI_SCRUB_MAX_DEPTH:
         return
@@ -144,15 +155,7 @@ def scrub_genai_content(payload: Any, depth: int = 0) -> None:
 def before_send_transaction_filter(
     event: dict[str, Any], hint: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """Drop low-signal spans and genai message content before they ship to Sentry.
-
-    Filters out:
-    - ASGI lifecycle spans ending with `http send` / `http receive`
-    - DB spans carrying `db.system`
-    - SQL / `connect` spans matched by description prefix
-    - Custom DB query spans (`db.query`)
-    - Prompt/completion attributes anywhere in the event (`scrub_genai_content`)
-    """
+    """Drop ASGI/DB noise spans and scrub genai content before shipping."""
     if _should_drop_transaction(event):
         return None
 
@@ -210,6 +213,40 @@ def _scrub_request_body(event: dict[str, Any]) -> None:
         request["data"] = _SCRUBBED
 
 
+def _redact_llm_job_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Replace end-user text and identifying URLs in request_data; keep config/ids."""
+    request_data = kwargs.get("request_data")
+    if not isinstance(request_data, dict):
+        return kwargs
+
+    redacted_request_data = dict(request_data)
+    for key in _SENSITIVE_REQUEST_DATA_KEYS:
+        if key in redacted_request_data:
+            redacted_request_data[key] = _REDACTED
+
+    redacted_kwargs = dict(kwargs)
+    redacted_kwargs["request_data"] = redacted_request_data
+    return redacted_kwargs
+
+
+def _scrub_llm_job_kwargs(event: dict[str, Any]) -> None:
+    """Strip end-user query/response text from LLM job celery-job context."""
+    extra = event.get("extra")
+    if not isinstance(extra, dict):
+        return
+
+    celery_job = extra.get("celery-job")
+    if not isinstance(celery_job, dict):
+        return
+
+    if celery_job.get("task_name") not in _LLM_JOB_TASK_NAMES:
+        return
+
+    kwargs = celery_job.get("kwargs")
+    if isinstance(kwargs, dict):
+        celery_job["kwargs"] = _redact_llm_job_kwargs(kwargs)
+
+
 def before_send_error_filter(
     event: dict[str, Any], hint: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -218,6 +255,7 @@ def before_send_error_filter(
         if _should_drop_transaction(event):
             return None
         _scrub_request_body(event)
+        _scrub_llm_job_kwargs(event)
         scrub_genai_content(event)
         if not settings.SENTRY_SEND_DEFAULT_PII:
             _scrub_request_pii(event)

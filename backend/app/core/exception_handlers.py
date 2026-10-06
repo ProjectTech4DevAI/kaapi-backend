@@ -110,7 +110,6 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def generic_error_handler(request: Request, exc: Exception) -> JSONResponse:
-        # Capture within the active span so the Issue links to its trace.
         sentry_sdk.capture_exception(exc)
         return JSONResponse(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,

@@ -133,7 +133,7 @@ class TestSentryCaptureRouting:
             raise HTTPException(status_code=404, detail="nope")
 
         @app.post("/validate")
-        def validate(body: Body) -> dict:
+        def validate(body: Body) -> dict[str, bool]:
             return {"ok": True}
 
         return TestClient(app, raise_server_exceptions=False)

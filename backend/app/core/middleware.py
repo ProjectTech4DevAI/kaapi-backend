@@ -21,7 +21,6 @@ SILENT_LOG_PATHS: frozenset[str] = frozenset(
 
 CRON_PATH_PREFIX: str = f"{settings.API_V1_STR}/cron/"
 
-# Excluded from traces only; logs/metrics and spans inside the handler still emit.
 TRACE_EXCLUDED_PATH_PREFIXES: frozenset[str] = frozenset({CRON_PATH_PREFIX})
 
 
@@ -114,7 +113,6 @@ async def _log_http_request(request: Request, call_next) -> Response:
     start_time = time.time()
     method = request.method
     raw_path = request.url.path
-    # Health/utility paths excluded so they don't skew platform traffic metrics.
     metrics_enabled = raw_path not in SILENT_LOG_PATHS
     request_body_size = _resolve_request_body_size(request)
 

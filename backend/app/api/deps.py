@@ -45,13 +45,7 @@ TokenDep = Annotated[str, Depends(reusable_oauth2)]
 
 
 def _set_tenant_span_attributes(auth_context: AuthContext) -> None:
-    """Tag the active OTel span, log context and Sentry scope with tenant info after auth.
-
-    Sets org/project on:
-    - OTel span   → Sentry traces filterable by tenant
-    - log context → every log record in this request carries org_id/project_id
-    - Sentry scope → tenant tags, plus the user binding that drives users-affected
-    """
+    """Stamp org/project on the span, log context and Sentry scope after auth."""
     span = trace.get_current_span()
     if span.is_recording():
         span.set_attribute("user.id", str(auth_context.user.id))

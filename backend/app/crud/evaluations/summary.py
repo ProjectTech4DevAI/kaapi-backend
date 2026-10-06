@@ -1,27 +1,19 @@
-"""Human-readable AI summary of a v2 judge run's per-question diagnostics.
-"""
+"""Human-readable AI summary of a v2 judge run's per-question diagnostics."""
 
 import json
 import logging
-from typing import Any
 
 from app.core.config import settings
 from app.crud.evaluations.score import TraceData
-from app.services.llm.providers.claude import ClaudeProvider, log_anthropic_error
+from app.services.llm.providers.claude import (
+    STOP_REASON_COMPLETE,
+    ClaudeProvider,
+    log_anthropic_error,
+)
 
 logger = logging.getLogger(__name__)
 
-# Headroom for the overall read + up to 3 flagged items + closing line; too low
-# truncates into invalid JSON.
 _SUMMARY_MAX_TOKENS: int = 3000
-
-_LLM_KEY_SUMMARY: str = "summary"
-_OUTPUT_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "properties": {_LLM_KEY_SUMMARY: {"type": "string"}},
-    "required": [_LLM_KEY_SUMMARY],
-    "additionalProperties": False,
-}
 
 _NO_CONFIG_PROMPT: str = "(no instructions configured)"
 
@@ -102,8 +94,6 @@ def _format_traces_for_prompt(
     Traces are handed over ungrouped: `question_id` is the 1-based dataset row
     number, which is what the system prompt tells the model to key on.
     """
-    # ponytail: every trace sent whole; ~250 traces (50 questions x dup 5) overflows
-    # context and degrades to None. Sample or group per question_id if runs get bigger.
     payload = [
         {
             "question_id": trace["question_id"],
@@ -166,15 +156,13 @@ def generate_run_ai_summary(
             max_tokens=_SUMMARY_MAX_TOKENS,
             system=_SUMMARY_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_message}],
-            output_config={"format": {"type": "json_schema", "schema": _OUTPUT_SCHEMA}},
         )
-        text = next(b.text for b in response.content if b.type == "text")
-        data: dict[str, str] = json.loads(text)
-        summary: str = data[_LLM_KEY_SUMMARY].strip()
+        summary: str = "".join(
+            block.text for block in response.content if block.type == "text"
+        ).strip()
+        stop_reason: str | None = response.stop_reason
 
-    # Deliberately broad: a summary failure (typed Anthropic error, bad JSON,
-    # unexpected shape) must never fail the run, so it degrades to a None
-    # result regardless of cause.
+    # A summary failure must never fail the run.
     except Exception as exc:
         log_anthropic_error(
             exc,
@@ -189,5 +177,11 @@ def generate_run_ai_summary(
             f"run_name={run_name}"
         )
         return None
+
+    if stop_reason != STOP_REASON_COMPLETE:
+        logger.warning(
+            f"[generate_run_ai_summary] Summary may be truncated | "
+            f"stop_reason={stop_reason} | model={model} | run_name={run_name}"
+        )
 
     return summary

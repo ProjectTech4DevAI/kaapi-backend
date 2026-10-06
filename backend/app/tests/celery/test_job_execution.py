@@ -1,11 +1,3 @@
-"""Tests for the LLM/response Celery task wrappers in tasks/job_execution.py.
-
-The service entrypoints are mocked; no DB, OTel provider, or broker is used.
-Celery tasks are callable and run synchronously when invoked directly (self is
-bound), so we drive the real wrapper — including the gevent_timeout decorator
-and suppress_db_instrumentation — end to end.
-"""
-
 from unittest.mock import patch
 
 import pytest
@@ -70,8 +62,6 @@ class TestJobWrappers:
 
 
 class TestAssessmentApiBatchReenqueue:
-    """The poll-cycle self re-enqueue must start a fresh Sentry trace each tick."""
-
     def _run(self, requeue: bool):
         with (
             patch.object(job_execution, "_set_trace", lambda trace_id: None),

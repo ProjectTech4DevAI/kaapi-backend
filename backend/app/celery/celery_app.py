@@ -43,11 +43,7 @@ def _initialize_worker_observability() -> None:
         from sentry_sdk.integrations.logging import LoggingIntegration
         from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
-        from app.core.telemetry import (
-            SENTRY_PROFILE_LIFECYCLE,
-            SENTRY_PROFILE_SESSION_SAMPLE_RATE,
-            resolve_sentry_release,
-        )
+        from app.core.telemetry import resolve_sentry_release
 
         sentry_sdk.init(
             dsn=str(settings.SENTRY_DSN),
@@ -56,11 +52,10 @@ def _initialize_worker_observability() -> None:
             instrumenter="otel",
             traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
             sample_rate=settings.SENTRY_ERROR_SAMPLE_RATE,
-            profile_session_sample_rate=SENTRY_PROFILE_SESSION_SAMPLE_RATE,
-            profile_lifecycle=SENTRY_PROFILE_LIFECYCLE,
+            profile_session_sample_rate=settings.SENTRY_PROFILE_SESSION_SAMPLE_RATE,
+            profile_lifecycle=settings.SENTRY_PROFILE_LIFECYCLE,
             send_default_pii=settings.SENTRY_SEND_DEFAULT_PII,
             enable_logs=True,
-            # Frame locals and task payloads hold prompts and completions verbatim.
             include_local_variables=False,
             max_request_body_size="never",
             before_send=before_send_error_filter,
@@ -72,8 +67,6 @@ def _initialize_worker_observability() -> None:
                     level=logging.INFO,
                     sentry_logs_level=logging.INFO,
                 ),
-                # propagate_traces=True links an API request to the task it
-                # enqueues as one trace; poll-loop re-enqueues opt out per-call.
                 CeleryIntegration(
                     propagate_traces=True,
                     monitor_beat_tasks=False,

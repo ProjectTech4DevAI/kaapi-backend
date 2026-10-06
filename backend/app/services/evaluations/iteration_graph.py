@@ -16,8 +16,7 @@ DB-related may survive between calls except what's persisted in the checkpoint
 """
 
 import logging
-from functools import lru_cache
-from typing import Any, TypedDict
+from typing import Any
 from uuid import UUID
 
 from celery.exceptions import SoftTimeLimitExceeded
@@ -25,8 +24,6 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, interrupt
-from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool
 from sqlmodel import Session
 
 from app.core.config import settings
@@ -38,18 +35,23 @@ from app.crud.evaluations.iteration import (
 )
 from app.crud.jobs import JobCrud
 from app.models.evaluation_iteration import (
-    EvaluationIterationReportPublic,
-    EvaluationIterationRoundPublic,
     EvaluationIterationRunUpdate,
     EvaluationIterationStatusEnum,
 )
 from app.models.job import JobStatus
 from app.services.evaluations.fast import validate_and_start_fast_evaluation
 from app.services.evaluations.iteration import (
-    STOP_REASON_CEILING_REACHED,
     STOP_REASON_MAX_ROUNDS_REACHED,
     STOP_REASON_ROUND_FAILED,
     compute_round_scores,
+)
+from app.services.evaluations.iteration_checkpointer import (
+    get_evaluation_iteration_checkpointer,
+)
+from app.services.evaluations.iteration_state import (
+    EvaluationIterationState,
+    advance_round_state,
+    build_iteration_report,
 )
 from app.services.evaluations.prompt_improvement import start_prompt_improvement_job
 from app.utils import APIResponse, get_webhook_secret, send_callback
@@ -57,63 +59,6 @@ from app.utils import APIResponse, get_webhook_secret, send_callback
 logger = logging.getLogger(__name__)
 
 _JOB_WAITING_STATUSES = {JobStatus.PENDING, JobStatus.PROCESSING}
-
-
-class EvaluationIterationState(TypedDict):
-    iteration_run_id: int
-    dataset_id: int
-    experiment_name: str
-    config_id: str
-    config_version: int
-    round_number: int
-    max_rounds: int
-    current_eval_run_id: int | None
-    current_improvement_job_id: str | None
-    history: list[dict[str, Any]]
-    best_round_number: int | None
-    best_config_version: int | None
-    best_stop_score: float | None
-    consecutive_low_delta_rounds: int
-    stop_reason: str | None
-    error_message: str | None
-    organization_id: int
-    project_id: int
-    callback_url: str
-
-
-def _psycopg_conn_string() -> str:
-    """Derive a plain psycopg conninfo string from the app's SQLAlchemy DSN.
-
-    langgraph-checkpoint-postgres connects via psycopg (v3) directly rather than
-    through the SQLAlchemy engine, but the app's DSN already targets the psycopg
-    driver (`postgresql+psycopg://`) — stripping the SQLAlchemy dialect qualifier
-    is the only adaptation needed.
-    """
-    return str(settings.SQLALCHEMY_DATABASE_URI).replace(
-        "postgresql+psycopg://", "postgresql://", 1
-    )
-
-
-@lru_cache(maxsize=1)
-def get_evaluation_iteration_checkpointer() -> PostgresSaver:
-    """Module-level singleton checkpointer, backed by its own small connection pool.
-
-    `.setup()` creates the checkpoint tables (`checkpoints`, `checkpoint_blobs`,
-    `checkpoint_writes`) — schema owned by the library, not Alembic. It's a
-    `CREATE TABLE IF NOT EXISTS`-style call, so it's safe to run on every first
-    access rather than gating it behind a separate startup hook.
-    """
-    pool = ConnectionPool(
-        conninfo=_psycopg_conn_string(),
-        min_size=1,
-        max_size=5,
-        open=True,
-        kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
-    )
-    checkpointer = PostgresSaver(pool)
-    checkpointer.setup()
-    logger.info("[get_evaluation_iteration_checkpointer] Checkpointer ready")
-    return checkpointer
 
 
 def start_eval_node(state: EvaluationIterationState) -> dict[str, Any]:
@@ -133,11 +78,6 @@ def start_eval_node(state: EvaluationIterationState) -> dict[str, Any]:
             project_id=state["project_id"],
             is_judge_run=True,
         )
-    logger.info(
-        f"[start_eval_node] Round eval started | "
-        f"iteration_run_id={state['iteration_run_id']} | "
-        f"round_number={state['round_number']} | eval_run_id={eval_run.id}"
-    )
     return {"current_eval_run_id": eval_run.id}
 
 
@@ -194,52 +134,11 @@ def wait_eval_node(state: EvaluationIterationState) -> dict[str, Any]:
         eval_run_id = eval_run.id
 
     stop_score, kb_score = scores
-    round_entry = {
-        "round_number": state["round_number"],
-        "eval_run_id": eval_run_id,
-        "config_version": state["config_version"],
-        "stop_score": stop_score,
-        "kb_score": kb_score,
-    }
-    history = [*state["history"], round_entry]
-
-    best_stop_score = state.get("best_stop_score")
-    best_round_number = state.get("best_round_number")
-    best_config_version = state.get("best_config_version")
-    if best_stop_score is None or stop_score > best_stop_score:
-        best_stop_score = stop_score
-        best_round_number = state["round_number"]
-        best_config_version = state["config_version"]
-
-    previous_scores = [entry["stop_score"] for entry in state["history"]]
-    consecutive_low_delta_rounds = 0
-    if previous_scores:
-        delta = stop_score - previous_scores[-1]
-        if delta < settings.EVAL_ITERATION_CEILING_DELTA_THRESHOLD:
-            consecutive_low_delta_rounds = (
-                state.get("consecutive_low_delta_rounds", 0) + 1
-            )
-
-    update: dict[str, Any] = {
-        "history": history,
-        "best_stop_score": best_stop_score,
-        "best_round_number": best_round_number,
-        "best_config_version": best_config_version,
-        "consecutive_low_delta_rounds": consecutive_low_delta_rounds,
-    }
-    if (
-        consecutive_low_delta_rounds
-        >= settings.EVAL_ITERATION_CEILING_CONSECUTIVE_ROUNDS
-    ):
-        update["stop_reason"] = STOP_REASON_CEILING_REACHED
-    elif state["round_number"] >= state["max_rounds"]:
-        update["stop_reason"] = STOP_REASON_MAX_ROUNDS_REACHED
-
-    logger.info(
-        f"[wait_eval_node] Round scored | iteration_run_id={state['iteration_run_id']} | "
-        f"round_number={state['round_number']} | stop_score={stop_score} | "
-        f"consecutive_low_delta_rounds={consecutive_low_delta_rounds} | "
-        f"stop_reason={update.get('stop_reason')}"
+    update = advance_round_state(
+        state=state,
+        eval_run_id=eval_run_id,
+        stop_score=stop_score,
+        kb_score=kb_score,
     )
     return update
 
@@ -269,10 +168,6 @@ def start_improve_node(state: EvaluationIterationState) -> dict[str, Any]:
             callback_url="",
             require_judge_run=True,
         )
-    logger.info(
-        f"[start_improve_node] Prompt improvement job started | "
-        f"iteration_run_id={state['iteration_run_id']} | job_id={job.id}"
-    )
     return {"current_improvement_job_id": str(job.id)}
 
 
@@ -321,34 +216,11 @@ def wait_improve_node(state: EvaluationIterationState) -> dict[str, Any]:
             "error_message": "Prompt improvement job succeeded without a version in meta",
         }
 
-    logger.info(
-        f"[wait_improve_node] Prompt improved | "
-        f"iteration_run_id={state['iteration_run_id']} | "
-        f"next_round_number={state['round_number'] + 1} | config_version={new_version}"
-    )
     return {
         "round_number": state["round_number"] + 1,
         "config_version": new_version,
         "current_improvement_job_id": None,
     }
-
-
-def _build_iteration_report(
-    state: EvaluationIterationState, status: EvaluationIterationStatusEnum
-) -> EvaluationIterationReportPublic:
-    history = [EvaluationIterationRoundPublic(**entry) for entry in state["history"]]
-    best_round = next(
-        (r for r in history if r.round_number == state.get("best_round_number")),
-        None,
-    )
-    return EvaluationIterationReportPublic(
-        iteration_run_id=state["iteration_run_id"],
-        status=status,
-        stop_reason=state.get("stop_reason"),
-        best_round=best_round,
-        history=history,
-        error_message=state.get("error_message"),
-    )
 
 
 def finalize_node(state: EvaluationIterationState) -> dict[str, Any]:
@@ -380,6 +252,10 @@ def finalize_node(state: EvaluationIterationState) -> dict[str, Any]:
                 f"iteration_run_id={state['iteration_run_id']}"
             )
             return {}
+        if iteration_run.status != EvaluationIterationStatusEnum.PROCESSING:
+            # Reaper (or another terminal writer) got here first; its callback
+            # already went out, so a second one would contradict it.
+            return {}
 
         update_evaluation_iteration_run(
             session=session,
@@ -391,7 +267,7 @@ def finalize_node(state: EvaluationIterationState) -> dict[str, Any]:
             ),
         )
 
-    report = _build_iteration_report(state, status)
+    report = build_iteration_report(state, status)
     error_message = state.get("error_message")
     envelope = (
         APIResponse.failure_response(
@@ -405,11 +281,6 @@ def finalize_node(state: EvaluationIterationState) -> dict[str, Any]:
         state["callback_url"], envelope.model_dump(), webhook_secret=webhook_secret
     )
 
-    logger.info(
-        f"[finalize_node] Loop finished | iteration_run_id={state['iteration_run_id']} | "
-        f"status={status.value} | stop_reason={stop_reason} | "
-        f"rounds={len(state['history'])}"
-    )
     return {}
 
 
@@ -480,10 +351,14 @@ def _build_initial_state(
         )
 
 
-def _mark_iteration_run_failed(
+def mark_iteration_run_failed(
     *, iteration_run_id: int, organization_id: int, project_id: int, error_message: str
 ) -> None:
-    """Fail a loop from a fresh session so a killed task leaves no dangling row."""
+    """Fail a loop from a fresh session so a killed task leaves no dangling row.
+
+    Public because the cron zombie reaper calls it too — a loop the graph never
+    got to fail itself still owes its caller the failure callback.
+    """
     try:
         with Session(engine) as session:
             iteration_run = get_evaluation_iteration_run_by_id(
@@ -512,13 +387,9 @@ def _mark_iteration_run_failed(
         send_callback(
             callback_url, envelope.model_dump(), webhook_secret=webhook_secret
         )
-
-        logger.info(
-            f"[_mark_iteration_run_failed] iteration_run_id={iteration_run_id} marked failed"
-        )
     except Exception:
         logger.error(
-            f"[_mark_iteration_run_failed] Could not mark iteration_run_id="
+            f"[mark_iteration_run_failed] Could not mark iteration_run_id="
             f"{iteration_run_id} failed",
             exc_info=True,
         )
@@ -572,10 +443,6 @@ def execute_evaluation_iteration_graph_step(
     PROCESSING) or reaches `finalize_node` (which already updated the thin row and
     sent the callback before this returns).
     """
-    logger.info(
-        f"[execute_evaluation_iteration_graph_step] Starting | "
-        f"iteration_run_id={iteration_run_id} | resume={resume}"
-    )
     try:
         _run_graph_step(
             iteration_run_id=iteration_run_id,
@@ -590,7 +457,7 @@ def execute_evaluation_iteration_graph_step(
             f"[execute_evaluation_iteration_graph_step] Soft time limit | "
             f"iteration_run_id={iteration_run_id}"
         )
-        _mark_iteration_run_failed(
+        mark_iteration_run_failed(
             iteration_run_id=iteration_run_id,
             organization_id=organization_id,
             project_id=project_id,
@@ -603,7 +470,7 @@ def execute_evaluation_iteration_graph_step(
             f"iteration_run_id={iteration_run_id}",
             exc_info=True,
         )
-        _mark_iteration_run_failed(
+        mark_iteration_run_failed(
             iteration_run_id=iteration_run_id,
             organization_id=organization_id,
             project_id=project_id,

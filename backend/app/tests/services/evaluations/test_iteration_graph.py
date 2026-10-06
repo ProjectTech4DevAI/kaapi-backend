@@ -26,7 +26,10 @@ from langgraph.types import Command
 from sqlmodel import Session
 
 from app.core.config import settings
-from app.crud.evaluations.iteration import create_evaluation_iteration_run
+from app.crud.evaluations.iteration import (
+    create_evaluation_iteration_run,
+    update_evaluation_iteration_run,
+)
 from app.crud.evaluations.score import (
     GROUND_TRUTH_SCORE_NAME,
     KNOWLEDGE_BASE_SCORE_NAME,
@@ -37,6 +40,7 @@ from app.models import EvaluationDataset, EvaluationRun
 from app.models.evaluation import RunModeEnum
 from app.models.evaluation_iteration import (
     EvaluationIterationRun,
+    EvaluationIterationRunUpdate,
     EvaluationIterationStatusEnum,
 )
 from app.models.job import JobStatus, JobType, JobUpdate
@@ -501,6 +505,48 @@ class TestFinalizeNode:
         assert persisted.status == EvaluationIterationStatusEnum.COMPLETED
         assert persisted.stop_reason == STOP_REASON_CEILING_REACHED
         mock_send.assert_called_once()
+
+    def test_already_terminal_row_is_left_alone_and_no_callback_is_sent(
+        self, db: Session, user_api_key: TestAuthContext
+    ) -> None:
+        # The cron reaper won the race: row is already FAILED with its callback sent.
+        iteration_run = _make_iteration_run(db, user_api_key)
+        update_evaluation_iteration_run(
+            session=db,
+            iteration_run=iteration_run,
+            update=EvaluationIterationRunUpdate(
+                status=EvaluationIterationStatusEnum.FAILED,
+                error_message="reaped as stalled",
+            ),
+        )
+        state = _base_state(
+            iteration_run_id=iteration_run.id,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            stop_reason=STOP_REASON_CEILING_REACHED,
+            history=[
+                {
+                    "round_number": 1,
+                    "eval_run_id": 11,
+                    "config_version": 1,
+                    "stop_score": 0.7,
+                    "kb_score": None,
+                },
+            ],
+            best_round_number=1,
+        )
+
+        with _patch_session(db), patch(
+            "app.services.evaluations.iteration_graph.send_callback"
+        ) as mock_send:
+            finalize_node(state)
+
+        db.expire_all()
+        persisted = db.get(EvaluationIterationRun, iteration_run.id)
+        assert persisted.status == EvaluationIterationStatusEnum.FAILED
+        assert persisted.error_message == "reaped as stalled"
+        assert persisted.stop_reason is None
+        mock_send.assert_not_called()
 
     def test_round_failed_persists_failed_status_with_error_message(
         self, db: Session, user_api_key: TestAuthContext

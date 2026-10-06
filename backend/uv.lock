@@ -379,7 +379,7 @@ requires-dist = [
     { name = "redis", specifier = ">=5.0.0,<6.0.0" },
     { name = "sarvamai", specifier = ">=0.1.25" },
     { name = "scikit-learn", specifier = ">=1.7.1" },
-    { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.24.1" },
+    { name = "sentry-sdk", extras = ["fastapi"], specifier = ">=2.35.0" },
     { name = "sqlmodel", specifier = ">=0.0.21,<1.0.0" },
     { name = "tenacity", specifier = ">=8.2.3,<9.0.0" },
     { name = "whisper-normalizer", specifier = ">=0.1.12" },
