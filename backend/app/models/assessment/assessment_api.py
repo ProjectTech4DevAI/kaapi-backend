@@ -5,7 +5,8 @@ UI-only RUN models live in ``assessment.py``.
 """
 
 from datetime import datetime
-from typing import Annotated, Any, NotRequired, TypedDict
+from enum import StrEnum
+from typing import Annotated, Any, TypedDict
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, JsonValue, model_validator
@@ -15,6 +16,7 @@ from app.models.assessment.assessment import (
     AssessmentConfigRef,
     AssessmentMethod,
     AssessmentStatus,
+    StageStatus,
 )
 from app.models.llm.request import ImageInput, PDFInput
 
@@ -62,11 +64,70 @@ class BatchInput(SQLModel):
         return self
 
 
-class Verdict(TypedDict):
-    """A pre-filter's parsed judgement for one row."""
+class ApiStage(StrEnum):
+    """Pipeline stage identifiers; names match the pre-filter config + result fields."""
+
+    TOPIC_RELEVANCE = "topic_relevance"
+    ASSESSMENT = "assessment"
+
+
+class StageKind(StrEnum):
+    GATE = "GATE"
+    PASS_THROUGH = "PASS_THROUGH"
+    ASSESSMENT = "ASSESSMENT"
+
+
+class PreFilterVerdict(BaseModel):
+    """Structured pre-filter result per item."""
 
     verdict: bool
-    reasoning: str
+    reasoning: str = ""
+
+
+class PipelineStep(BaseModel):
+    stage: ApiStage
+    kind: StageKind
+
+
+class StageCounters(BaseModel):
+    total: int = 0
+    passed: int = 0
+    rejected: int = 0
+
+
+class AssessmentExecution(BaseModel):
+    """Runtime state of the staged BATCH pipeline, stored on ``assessment.execution``.
+
+    Advanced one Celery task at a time by ``run_batch_stage``; ``stage_status`` keys the
+    idempotent redelivery. Deliberately O(stages), never O(rows): per-row verdicts and
+    outputs live in each stage's dump (``assessment.result_files``), not here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    pipeline: list[PipelineStep]
+    stage: ApiStage
+    stage_status: StageStatus
+    stage_batches: dict[ApiStage, int] = Field(default_factory=dict)
+    stage_errors: dict[ApiStage, dict[int, str]] = Field(default_factory=dict)
+    counters: dict[ApiStage, StageCounters] = Field(default_factory=dict)
+    callback_url: str | None = None
+    request_metadata: dict[str, JsonValue] | None = None
+    error: str | None = None
+
+    def stage_kind(self, stage: ApiStage) -> StageKind:
+        for step in self.pipeline:
+            if step.stage == stage:
+                return step.kind
+        raise ValueError(f"[stage_kind] Stage {stage} not in pipeline")
+
+    def next_stage(self, current: ApiStage) -> ApiStage | None:
+        stages = [step.stage for step in self.pipeline]
+        idx = stages.index(current)
+        return stages[idx + 1] if idx + 1 < len(stages) else None
+
+    def gate_stages(self) -> list[ApiStage]:
+        return [step.stage for step in self.pipeline if step.kind == StageKind.GATE]
 
 
 class ParsedResult(TypedDict):
@@ -79,31 +140,6 @@ class ParsedResult(TypedDict):
     error: str | None
     usage: dict[str, Any] | None
     response_id: str | None
-
-
-class BatchRunState(TypedDict):
-    """Persisted runtime state of the staged BATCH pipeline, stored on
-    ``AssessmentRun.execution`` (JSONB). Advanced one Celery tick at a time by
-    ``run_batch_stage``; keyed off ``stage_status`` for idempotent redelivery."""
-
-    pipeline: list[dict[str, str]]  # ordered [{"stage","kind"}]
-    stage: str  # current stage
-    stage_status: str  # PENDING | PROCESSING | COMPLETED | FAILED
-    # Values are None-typed at the write sites: batch_job.id is an ORM-optional PK and
-    # raw_output_url is Optional, so the map value types must admit None.
-    stage_batches: dict[str, int | None]  # stage -> provider batch_job id
-    stage_output_urls: dict[str, str | None]  # stage -> raw result url
-    # stage -> {row_index -> error}, captured at parse time (raw dumps are too big here)
-    stage_errors: NotRequired[dict[str, dict[str, str]]]
-    verdicts: dict[str, dict[str, Verdict]]  # stage -> {item_idx -> verdict}
-    counters: dict[str, dict[str, int]]  # stage -> {total,passed,rejected}
-    gate_passed: list[bool]  # per-item still-eligible flag
-    provider: str
-    model: str
-    input_schema: dict[str, Any] | None
-    callback_url: str | None  # None when the client polls instead of receiving a push
-    request_metadata: dict[str, Any] | None
-    error: NotRequired[str]  # only set on failure (_fail)
 
 
 # Strict, tagless discrimination via extra=forbid: an input carrying `data` is a
@@ -154,13 +190,6 @@ class AssessmentSubmitResponse(BaseModel):
     message: str
     inserted_at: datetime
     updated_at: datetime
-
-
-class PreFilterVerdict(BaseModel):
-    """Structured pre-filter result per item."""
-
-    verdict: bool
-    reasoning: str = ""
 
 
 class PreFilter(BaseModel):

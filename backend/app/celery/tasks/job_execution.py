@@ -15,6 +15,7 @@ Higher priority drains first; within the same priority, delivery is FIFO.
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, TypeVar
+from uuid import UUID
 
 from asgi_correlation_id import correlation_id
 from celery import Task, current_task
@@ -370,7 +371,7 @@ def run_assessment_pipeline(
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_assessment_api_batch")
 def run_assessment_api_batch(
     self,
-    execution_id: int,
+    assessment_id: str,
     organization_id: int,
     project_id: int,
     trace_id: str,
@@ -389,7 +390,7 @@ def run_assessment_api_batch(
     result = _run_with_otel_parent(
         self,
         lambda: run_batch_stage(
-            execution_id=execution_id,
+            assessment_id=UUID(assessment_id),
             organization_id=organization_id,
             project_id=project_id,
         ),
@@ -397,7 +398,7 @@ def run_assessment_api_batch(
     if result and result.get("requeue"):
         self.apply_async(
             kwargs={
-                "execution_id": execution_id,
+                "assessment_id": assessment_id,
                 "organization_id": organization_id,
                 "project_id": project_id,
                 "trace_id": trace_id,
