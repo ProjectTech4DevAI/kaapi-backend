@@ -39,12 +39,14 @@ jobs:
         env:
           INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
           SECRET_IDs: ${{ vars.SECRET_MANAGER_IDS }}
+          APP_DIR: ${{ secrets.APP_DIR }}
           DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           SECRET_IDs=$(echo "$SECRET_IDs" | tr -d '[:space:]')
-          echo "Deploying commit: $DEPLOY_SHA"
+          : "${APP_DIR:?APP_DIR repo/environment variable is not set}"
+          echo "Deploying commit: $DEPLOY_SHA to $APP_DIR"
 
-          DEPLOY_CMD="cd /data/kaapi-backend \
+          DEPLOY_CMD="cd $APP_DIR \
             && git fetch --all \
             && git checkout $DEPLOY_SHA \
             && SECRET_IDs=$SECRET_IDs sh scripts/fetch-secrets.sh \
@@ -57,7 +59,7 @@ jobs:
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy kaapi-backend kaapi-staging" \
-            --parameters commands='["set -eux","chown -R ubuntu:ubuntu /data/kaapi-backend","sudo -iu ubuntu bash -lc \"'"$DEPLOY_CMD"'\""]' \
+            --parameters commands='["set -eux","sudo -iu ec2-user bash -lc \"'"$DEPLOY_CMD"'\""]' \
             --cloud-watch-output-config CloudWatchOutputEnabled=true \
             --query "Command.CommandId" --output text)
           echo "cmd_id=$CMD_ID" >> "$GITHUB_OUTPUT"
