@@ -1,10 +1,12 @@
 name: Deploy Kaapi to Non-Prod EC2 (Staging)
 
 on:
-  workflow_run:
-    workflows: ["Kaapi CI"]
-    branches: [feat/read-only-agent]
-    types: [completed]
+  # workflow_run:
+  #   workflows: ["Kaapi CI"]
+  #   branches: [feat/read-only-agent]
+  #   types: [completed]
+  push:
+    branches: [feat/non-prod-script-updates]
   workflow_dispatch:
 
 concurrency:
@@ -15,9 +17,10 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: Staging
-    # workflow_dispatch runs unconditionally; workflow_run only on a green CI.
+    # push/workflow_dispatch run unconditionally; workflow_run only on a green CI.
     if: >-
       ${{ github.event_name == 'workflow_dispatch' ||
+          github.event_name == 'push' ||
           github.event.workflow_run.conclusion == 'success' }}
 
     permissions:
