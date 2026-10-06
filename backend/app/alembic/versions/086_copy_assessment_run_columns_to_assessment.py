@@ -24,8 +24,15 @@ depends_on = None
 CONFIG_INDEX = "idx_assessment_config"
 CONFIG_FK = "fk_assessment_config_id_config"
 RUN_TABLE = "assessment_run"
-# Derivable from the pinned config version, or duplicated in result_files.
-DROPPED_EXECUTION_KEYS = ("stage_output_urls", "provider", "model", "input_schema")
+# Derivable from config_version or already in the stage dumps.
+DROPPED_EXECUTION_KEYS = (
+    "stage_output_urls",
+    "provider",
+    "model",
+    "input_schema",
+    "verdicts",
+    "gate_passed",
+)
 
 
 def upgrade() -> None:

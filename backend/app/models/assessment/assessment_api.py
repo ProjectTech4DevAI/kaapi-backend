@@ -99,7 +99,8 @@ class AssessmentExecution(BaseModel):
     """Runtime state of the staged BATCH pipeline, stored on ``assessment.execution``.
 
     Advanced one Celery task at a time by ``run_batch_stage``; ``stage_status`` keys the
-    idempotent redelivery. Row-indexed maps use int keys (JSON strings coerce on load).
+    idempotent redelivery. Deliberately O(stages), never O(rows): per-row verdicts and
+    outputs live in each stage's dump (``assessment.result_files``), not here.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -109,9 +110,7 @@ class AssessmentExecution(BaseModel):
     stage_status: StageStatus
     stage_batches: dict[ApiStage, int] = Field(default_factory=dict)
     stage_errors: dict[ApiStage, dict[int, str]] = Field(default_factory=dict)
-    verdicts: dict[ApiStage, dict[int, PreFilterVerdict]] = Field(default_factory=dict)
     counters: dict[ApiStage, StageCounters] = Field(default_factory=dict)
-    gate_passed: list[bool]
     callback_url: str | None = None
     request_metadata: dict[str, JsonValue] | None = None
     error: str | None = None
@@ -126,6 +125,9 @@ class AssessmentExecution(BaseModel):
         stages = [step.stage for step in self.pipeline]
         idx = stages.index(current)
         return stages[idx + 1] if idx + 1 < len(stages) else None
+
+    def gate_stages(self) -> list[ApiStage]:
+        return [step.stage for step in self.pipeline if step.kind == StageKind.GATE]
 
 
 class ParsedResult(TypedDict):

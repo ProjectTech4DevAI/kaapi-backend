@@ -10,7 +10,6 @@ router = APIRouter(
     dependencies=[Depends(require_feature(FeatureFlag.ASSESSMENT))],
 )
 
-# RUN routers (assessments, runs) are retired; their modules go in the follow-up PR.
 router.include_router(datasets.router)
 
 __all__ = ["router"]

@@ -2,8 +2,8 @@
 
 One result unit per input row. Gate-failed rows carry ``assessment=null`` plus
 their pre-filter verdicts; gate-passed rows carry the assessment call's parsed
-output. Pre-filter verdicts live in the execution bag; assessment outputs are
-streamed back from object storage.
+output. Both verdicts and outputs are streamed back from the stage dumps in object
+storage; the execution bag holds nothing per row.
 """
 
 import json
@@ -12,8 +12,8 @@ from typing import Any
 
 from sqlmodel import Session
 
-from app.core.cloud import get_cloud_storage
 from app.crud.assessment import api
+from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.assessment import (
     ApiStage,
     Assessment,
@@ -32,11 +32,10 @@ from app.models.assessment import (
     Submission,
 )
 from app.services.assessment.api.batch import (
-    parse_batch_results,
+    _parse_verdict,
+    load_stage_outputs,
     resolve_blob,
-    stage_provider_model,
 )
-from app.services.assessment.utils.parsing import parse_stored_results
 
 logger = logging.getLogger(__name__)
 
@@ -56,32 +55,28 @@ def _parse_assessment(out: ParsedResult) -> dict[str, Any] | str | None:
     return parsed if isinstance(parsed, dict) else text
 
 
-def _load_assessment_outputs(
-    session: Session, assessment: Assessment
+def _load_stage(
+    session: Session,
+    assessment: Assessment,
+    blob: AssessmentConfigBlob,
+    stage: ApiStage,
 ) -> tuple[dict[int, ParsedResult], str | None]:
-    """Stream + parse the assessment stage dump. Returns ``(outputs, load_error)``.
+    """One stage's dump as ``(outputs, load_error)``.
 
-    ``load_error`` is set only on a failed read of a present URL, so the caller
-    can flag it per-row instead of mistaking it for a clean run. A missing URL
-    (all rows gated) is a legit empty, not an error.
+    ``load_error`` is set only on a failed read of a present dump, so the caller can
+    flag it per-row instead of mistaking it for a clean run. No dump (stage not in the
+    pipeline, or every row gated out) is a legit empty, not an error.
     """
-    record = assessment.result_files.get(ApiStage.ASSESSMENT.value) or {}
-    url = record.get("object_store_url")
-    if not url:
-        return {}, None
     try:
-        blob = resolve_blob(session, assessment)
-        provider, _ = stage_provider_model(blob, ApiStage.ASSESSMENT)
-        storage = get_cloud_storage(session=session, project_id=assessment.project_id)
-        raw = parse_stored_results(storage.stream(url).read().decode("utf-8"))
-        return parse_batch_results(raw, provider), None
+        return load_stage_outputs(session, assessment, blob, stage) or {}, None
     except Exception as exc:
         logger.warning(
-            "[_load_assessment_outputs] Could not read assessment output | url=%s | %s",
-            url,
+            "[_load_stage] Could not read stage output | assessment_id=%s | stage=%s | %s",
+            assessment.id,
+            stage,
             exc,
         )
-        return {}, "Assessment output could not be read from storage."
+        return {}, f"{stage.value} output could not be read from storage."
 
 
 def build_result(
@@ -90,7 +85,7 @@ def build_result(
     assessment: Assessment,
     bag: AssessmentExecution | None = None,
 ) -> AssessmentBatchResult:
-    """Build the per-row result from stored verdicts (bag) + assessment output (store).
+    """Build the per-row result from the stage dumps: gate verdicts + assessment output.
 
     Status lives on the response envelope, so this body carries only rows and tallies.
     Pass ``bag`` when the caller already holds it, so a poll does not re-parse the column.
@@ -98,34 +93,50 @@ def build_result(
     if bag is None:
         bag = api.load_execution_state(assessment)
 
-    # Off the row, not re-derived: the terminal path must not fetch rows to count them.
     total_items = assessment.total_items
-    gate_passed = bag.gate_passed if bag else [True] * total_items
-    outputs, load_error = _load_assessment_outputs(session, assessment)
+    blob = resolve_blob(session, assessment)
+
+    tr_outputs: dict[int, ParsedResult] = {}
+    tr_error: str | None = None
+    rejected: set[int] = set()
+    if bag and ApiStage.TOPIC_RELEVANCE in {step.stage for step in bag.pipeline}:
+        tr_outputs, tr_error = _load_stage(
+            session, assessment, blob, ApiStage.TOPIC_RELEVANCE
+        )
+        if ApiStage.TOPIC_RELEVANCE in bag.gate_stages():
+            rejected = {
+                idx
+                for idx, out in tr_outputs.items()
+                if not _parse_verdict(out.get("output")).verdict
+            }
+
+    outputs, load_error = _load_stage(session, assessment, blob, ApiStage.ASSESSMENT)
     # Rows the provider rejected are absent from the output dump; the bag kept their error.
     row_errors = bag.stage_errors.get(ApiStage.ASSESSMENT, {}) if bag else {}
-    tr_verdicts = bag.verdicts.get(ApiStage.TOPIC_RELEVANCE, {}) if bag else {}
 
     items: list[AssessmentResult] = []
     counts = AssessmentCounts()
     for idx in range(total_items):
+        gate_passed = idx not in rejected
         # dict shape is the config's own json_output_schema (runtime-defined, no fixed
         # model); str for free-text output, None when gated/failed.
         assessment_output: dict[str, Any] | str | None = None
         error: str | None = None
-        if gate_passed[idx]:
+        if gate_passed:
             if idx in outputs:
                 out = outputs[idx]
                 assessment_output = _parse_assessment(out)
                 error = out.get("error")
             elif idx in row_errors:
                 error = row_errors[idx]
-            elif load_error:
-                error = load_error
+            elif load_error or tr_error:
+                error = load_error or tr_error
 
-        topic_relevance = tr_verdicts.get(idx)
+        tr_out = tr_outputs.get(idx)
         pre_filter = (
-            PreFilter(topic_relevance=topic_relevance) if topic_relevance else None
+            PreFilter(topic_relevance=_parse_verdict(tr_out.get("output")))
+            if tr_out
+            else None
         )
         items.append(
             AssessmentResult(
@@ -139,7 +150,7 @@ def build_result(
 
         if assessment_output is not None:
             counts.assessed += 1
-        if not gate_passed[idx]:
+        if not gate_passed:
             counts.filtered += 1
         if error:
             counts.errors += 1

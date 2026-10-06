@@ -5,12 +5,14 @@ One assessment -> an ordered series of provider batches: all GATE pre-filters fi
 state lives entirely in ``assessment.execution`` (``AssessmentExecution``).
 
 Conditional forwarding:
-  - a GATE stage runs on every row; rows whose verdict fails are marked
-    ``gate_passed=False`` but still flow through the remaining pass-through stages
-    so their metadata is complete.
-  - a PASS-THROUGH stage runs on every row and never changes ``gate_passed``.
+  - a GATE stage runs on every row; a row whose verdict fails is excluded from the
+    assessment stage but still flows through the remaining pass-through stages.
+  - a PASS-THROUGH stage runs on every row and never excludes one.
   - the assessment stage batches ONLY gate-passed rows; gate-failed rows get
-    ``response=null`` in the result, carrying their pre-filter verdicts.
+    ``assessment=null`` in the result, carrying their pre-filter verdicts.
+
+Per-row state is never held in the bag: a stage's verdicts are re-read from its dump
+(``assessment.result_files[stage]``) when the next stage needs them.
 """
 
 import json
@@ -35,6 +37,7 @@ from app.core.batch import (
     start_batch_job,
 )
 from app.core.batch.base import BatchProvider
+from app.core.cloud import get_cloud_storage
 from app.core.batch.client import GeminiClient
 from app.core.config import settings
 from app.core.db import engine
@@ -74,6 +77,7 @@ from app.services.llm.mappers import (
     map_kaapi_to_openai_params,
 )
 from app.services.assessment.utils.attachments import rewrite_gcs_attachment_urls
+from app.services.assessment.utils.parsing import parse_stored_results
 from app.services.assessment.validators import normalize_llm_text, stage_batch_prefix
 from app.services.llm.providers.registry import LLMProvider
 from app.utils import (
@@ -82,6 +86,10 @@ from app.utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class StageDumpUnavailableError(Exception):
+    """A completed stage's dump could not be read; the caller should retry the task."""
 
 
 def _google_gcp_credential(
@@ -573,30 +581,67 @@ def _record_stage(
     kind: StageKind,
     parsed: dict[int, ParsedResult],
 ) -> None:
-    """Fold a completed stage's parsed results into the bag per its kind."""
+    """Fold a completed stage's tallies into the bag. Verdicts stay in the stage dump."""
     if kind == StageKind.ASSESSMENT:
-        return  # assessment outputs are read from object store at result time
-
-    verdicts: dict[int, PreFilterVerdict] = {}
-    passed_count = 0
-    for idx, out in parsed.items():
-        verdict = _parse_verdict(out.get("output"))
-        verdicts[idx] = verdict
-        if verdict.verdict:
-            passed_count += 1
-        elif kind == StageKind.GATE:
-            bag.gate_passed[idx] = False
-
-    bag.verdicts[stage] = verdicts
+        return
+    passed = sum(
+        1 for out in parsed.values() if _parse_verdict(out.get("output")).verdict
+    )
     bag.counters[stage] = StageCounters(
-        total=len(parsed), passed=passed_count, rejected=len(parsed) - passed_count
+        total=len(parsed), passed=passed, rejected=len(parsed) - passed
     )
 
 
-def _row_subset(bag: AssessmentExecution, kind: StageKind, total: int) -> list[int]:
-    if kind == StageKind.ASSESSMENT:
-        return [i for i in range(total) if bag.gate_passed[i]]
-    return list(range(total))
+def load_stage_outputs(
+    session: Session,
+    assessment: Assessment,
+    blob: AssessmentConfigBlob,
+    stage: ApiStage,
+) -> dict[int, ParsedResult] | None:
+    """Stream + parse one stage's dump. ``None`` when the stage left no dump."""
+    record = assessment.result_files.get(stage.value) or {}
+    url = record.get("object_store_url")
+    if not url:
+        return None
+    provider, _ = stage_provider_model(blob, stage)
+    storage = get_cloud_storage(session=session, project_id=assessment.project_id)
+    raw = parse_stored_results(storage.stream(url).read().decode("utf-8"))
+    return parse_batch_results(raw, provider)
+
+
+def gate_rejected_rows(
+    session: Session,
+    assessment: Assessment,
+    blob: AssessmentConfigBlob,
+    bag: AssessmentExecution,
+) -> set[int]:
+    """Row indices some GATE stage rejected, read from those stages' dumps."""
+    rejected: set[int] = set()
+    for stage in bag.gate_stages():
+        try:
+            outputs = load_stage_outputs(session, assessment, blob, stage)
+        except Exception as exc:
+            raise StageDumpUnavailableError(
+                f"Gate stage {stage} dump could not be read: {exc}"
+            ) from exc
+        for idx, out in (outputs or {}).items():
+            if not _parse_verdict(out.get("output")).verdict:
+                rejected.add(idx)
+    return rejected
+
+
+def _row_subset(
+    session: Session,
+    assessment: Assessment,
+    blob: AssessmentConfigBlob,
+    bag: AssessmentExecution,
+    kind: StageKind,
+) -> list[int]:
+    total = assessment.total_items
+    if kind != StageKind.ASSESSMENT:
+        return list(range(total))
+    rejected = gate_rejected_rows(session, assessment, blob, bag)
+    return [i for i in range(total) if i not in rejected]
 
 
 def _submit_stage(
@@ -641,7 +686,7 @@ def _submit_stage(
         for name, col in blob.input_schema.items()
     }
     text_columns, attachments = column_kinds(list(input_columns), input_columns)
-    subset = _row_subset(bag, kind, assessment.total_items)
+    subset = _row_subset(session, assessment, blob, bag, kind)
 
     if not subset:
         # No rows left for this stage (everything gated out upstream). Persist the
@@ -872,10 +917,10 @@ def _advance_or_finalize(
             organization_id=organization_id,
             project_id=project_id,
         )
-    except SubmissionUnavailableError as exc:
+    except (SubmissionUnavailableError, StageDumpUnavailableError) as exc:
         # Storage blip, not a bad run: the stage is still PENDING, so retry the task.
         logger.warning(
-            "[_advance_or_finalize] Submission unreadable, will retry | "
+            "[_advance_or_finalize] Storage unreadable, will retry | "
             "assessment_id=%s | stage=%s | %s",
             assessment.id,
             nxt,
@@ -964,10 +1009,10 @@ def run_batch_stage(
                     organization_id=organization_id,
                     project_id=project_id,
                 )
-            except SubmissionUnavailableError as exc:
+            except (SubmissionUnavailableError, StageDumpUnavailableError) as exc:
                 # Storage blip, not a bad run: the stage stays PENDING, retry the task.
                 logger.warning(
-                    "[run_batch_stage] Submission unreadable, will retry | "
+                    "[run_batch_stage] Storage unreadable, will retry | "
                     "assessment_id=%s | stage=%s | %s",
                     assessment_id,
                     stage,

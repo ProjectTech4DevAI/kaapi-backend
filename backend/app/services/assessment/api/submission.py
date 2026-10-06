@@ -290,7 +290,6 @@ def submit(
         pipeline=pipeline,
         stage=pipeline[0].stage,
         stage_status=StageStatus.PENDING,
-        gate_passed=[True] * total_items,
         callback_url=str(request.callback_url) if request.callback_url else None,
         request_metadata=request.request_metadata,
     )
