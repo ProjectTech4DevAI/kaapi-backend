@@ -14,7 +14,6 @@ from app.core.telemetry.sentry.filters import (
     genai_privacy_integrations,
 )
 
-
 GIT_SHA_SHORT_LEN = 12
 GIT_SHA_UNKNOWN = "unknown"
 

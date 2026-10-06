@@ -1,8 +1,8 @@
-"""Sentry before_send filters: drop probe/noise spans, scrub genai content, PII and LLM job kwargs."""
+"""Sentry before_send filters: drop probe events, scrub genai content, request PII and LLM job kwargs."""
 
 import re
 from importlib import import_module
-from typing import Any
+from urllib.parse import urlsplit
 
 from sentry_sdk.integrations import Integration
 from sentry_sdk.types import Event, Hint, Log
@@ -56,19 +56,10 @@ _REDACTED = "[REDACTED]"
 _LLM_JOB_TASK_NAMES = {
     "app.celery.tasks.job_execution.run_llm_job",
     "app.celery.tasks.job_execution.run_llm_chain_job",
-    "app.celery.tasks.job_execution.run_response_job",
 }
-_SENSITIVE_REQUEST_DATA_KEYS = (
-    "query",
-    "request_metadata",
-    "response",
-    "output",
-    "callback_url",
-)
+_SENSITIVE_REQUEST_DATA_KEYS = ("query", "request_metadata", "callback_url")
 
 
-_SQL_OR_CONNECT = re.compile(r"^(select|insert|update|delete|connect)\b", re.IGNORECASE)
-_DB_QUERY_SPAN = re.compile(r"^db\.query$", re.IGNORECASE)
 _BARE_HTTP_METHOD = re.compile(
     r"^(GET|HEAD|OPTIONS|POST|PUT|PATCH|DELETE|TRACE|CONNECT)$", re.IGNORECASE
 )
@@ -78,34 +69,19 @@ _NOISE_PATH = re.compile(
 )
 
 
-def _extract_path(event: Event) -> str:
+def _request_path(event: Event) -> str:
     request = event.get("request")
-    if not isinstance(request, dict):
-        return ""
-
-    url = request.get("url")
-    if isinstance(url, str) and url:
-        if "://" in url:
-            after_scheme = url.split("://", 1)[1]
-            if "/" in after_scheme:
-                return "/" + after_scheme.split("/", 1)[1].split("?", 1)[0]
-            return "/"
-        return url.split("?", 1)[0]
-    return ""
+    url = request.get("url") if isinstance(request, dict) else None
+    return urlsplit(url).path if isinstance(url, str) else ""
 
 
-def _should_drop_transaction(event: Event) -> bool:
-    transaction = str(event.get("transaction") or "").strip()
-    path = _extract_path(event)
-
+def _is_probe_event(event: Event) -> bool:
     # Sentry shows probe traffic as bare "GET"/"HEAD" transactions.
+    transaction = str(event.get("transaction") or "").strip()
     if _BARE_HTTP_METHOD.match(transaction):
         return True
-
-    if path and _NOISE_PATH.search(path):
-        return True
-
-    return False
+    path = _request_path(event)
+    return bool(path and _NOISE_PATH.search(path))
 
 
 def genai_privacy_integrations() -> list[Integration]:
@@ -146,109 +122,59 @@ def scrub_genai_content(payload: object, depth: int = 0) -> None:
             scrub_genai_content(item, depth + 1)
 
 
-def before_send_transaction_filter(event: Event, _hint: Hint) -> Event | None:
-    """Drop DB noise spans and scrub genai content before shipping."""
-    if _should_drop_transaction(event):
-        return None
-
-    scrub_genai_content(event)
-
-    spans = event.get("spans")
-    if not isinstance(spans, list):
-        return event
-
-    filtered: list[dict[str, Any]] = []
-    for span in spans:
-        if not isinstance(span, dict):
-            continue
-
-        data = span.get("data")
-        if not isinstance(data, dict):
-            data = {}
-        desc = str(span.get("description") or span.get("name") or "").strip()
-        op = str(span.get("op") or "").strip()
-
-        if _DB_QUERY_SPAN.search(desc) or _DB_QUERY_SPAN.search(op):
-            continue
-        if data.get("db.system") is not None:
-            continue
-        if _SQL_OR_CONNECT.match(desc):
-            continue
-
-        filtered.append(span)
-
-    event["spans"] = filtered
-    return event
-
-
-def _scrub_request_pii(event: Event) -> None:
+def _scrub_request(event: Event) -> None:
+    """Drop the body always (LLM routes carry the user message); headers/cookies/query only when PII is off."""
     request = event.get("request")
     if not isinstance(request, dict):
         return
-
+    if "data" in request:
+        request["data"] = _REDACTED
+    if settings.SENTRY_SEND_DEFAULT_PII:
+        return
     headers = request.get("headers")
     if isinstance(headers, dict):
-        for key in list(headers):
+        for key in headers:
             if str(key).lower() in _SENSITIVE_HEADERS:
                 headers[key] = _REDACTED
-
     if "cookies" in request:
         request["cookies"] = _REDACTED
     if request.get("query_string"):
         request["query_string"] = _REDACTED
 
 
-def _scrub_request_body(event: Event) -> None:
-    """Drop the request body unconditionally — on LLM routes it is the user's message."""
-    request = event.get("request")
-    if isinstance(request, dict) and "data" in request:
-        request["data"] = _REDACTED
-
-
-def _redact_llm_job_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Replace end-user text and identifying URLs in request_data; keep config/ids."""
-    request_data = kwargs.get("request_data")
-    if not isinstance(request_data, dict):
-        return kwargs
-
-    redacted_request_data = dict(request_data)
-    for key in _SENSITIVE_REQUEST_DATA_KEYS:
-        if key in redacted_request_data:
-            redacted_request_data[key] = _REDACTED
-
-    redacted_kwargs = dict(kwargs)
-    redacted_kwargs["request_data"] = redacted_request_data
-    return redacted_kwargs
-
-
 def _scrub_llm_job_kwargs(event: Event) -> None:
-    """Strip end-user query/response text from LLM job celery-job context."""
+    """Redact end-user text and callback URL in the celery-job kwargs of LLM tasks."""
     extra = event.get("extra")
-    if not isinstance(extra, dict):
-        return
-
-    celery_job = extra.get("celery-job")
+    celery_job = extra.get("celery-job") if isinstance(extra, dict) else None
     if not isinstance(celery_job, dict):
         return
-
     if celery_job.get("task_name") not in _LLM_JOB_TASK_NAMES:
         return
-
     kwargs = celery_job.get("kwargs")
-    if isinstance(kwargs, dict):
-        celery_job["kwargs"] = _redact_llm_job_kwargs(kwargs)
+    request_data = kwargs.get("request_data") if isinstance(kwargs, dict) else None
+    if not isinstance(request_data, dict):
+        return
+    for key in _SENSITIVE_REQUEST_DATA_KEYS:
+        if key in request_data:
+            request_data[key] = _REDACTED
+
+
+def before_send_transaction_filter(event: Event, _hint: Hint) -> Event | None:
+    """Drop probe transactions and scrub genai content before shipping."""
+    if _is_probe_event(event):
+        return None
+    scrub_genai_content(event)
+    return event
 
 
 def before_send_error_filter(event: Event, _hint: Hint) -> Event | None:
-    """Drop probe/scanner error events; scrub genai content, request body, and PII."""
+    """Drop probe events; scrub request body/PII, LLM job kwargs and genai content."""
     try:
-        if _should_drop_transaction(event):
+        if _is_probe_event(event):
             return None
-        _scrub_request_body(event)
+        _scrub_request(event)
         _scrub_llm_job_kwargs(event)
         scrub_genai_content(event)
-        if not settings.SENTRY_SEND_DEFAULT_PII:
-            _scrub_request_pii(event)
     except Exception:
         return event
     return event
