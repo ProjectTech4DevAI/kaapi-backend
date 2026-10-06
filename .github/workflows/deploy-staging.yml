@@ -18,7 +18,6 @@ jobs:
     # workflow_dispatch runs unconditionally; workflow_run only on a green CI.
     if: >-
       ${{ github.event_name == 'workflow_dispatch' ||
-          github.event_name == 'push' ||
           github.event.workflow_run.conclusion == 'success' }}
 
     permissions:
@@ -29,7 +28,7 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
-          role-to-assume: ${{ secrets.EC2_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ secrets.DEPLOY_ROLE_ARN }}
           aws-region: ap-south-1
 
       - name: Trigger deploy on EC2 via SSM
