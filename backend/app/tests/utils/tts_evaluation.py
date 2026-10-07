@@ -10,10 +10,11 @@ from sqlmodel import Session
 from app.core.util import now
 from app.crud.tts_evaluations import create_tts_run
 from app.models import EvaluationDataset, EvaluationRun
+from app.models.batch_job import BatchJob, BatchJobType
 from app.models.job import JobStatus
 from app.models.stt_evaluation import EvaluationType
 from app.models.tts_evaluation import TTSResult
-from app.services.tts_evaluations.constants import GEMINI_PRO_TTS_MODEL
+from app.services.tts_evaluations.constants import DEFAULT_TTS_MODEL
 from app.tests.utils.utils import random_lower_string
 
 TEST_DATASET_URL = "s3://test-bucket/tts_datasets/test.csv"
@@ -45,14 +46,9 @@ def use_test_session(module_path: str, db: Session) -> Iterator[Session]:
 
 
 class FakeGeminiBatchProvider:
-    """Stands in for the Gemini Batch API (the network boundary of a TTS batch).
+    """Stands in for the Gemini Batch API; records each submitted JSONL per model path."""
 
-    `failures` maps a model path ("models/<model>") to the exception its
-    create_batch raises; every call's JSONL is recorded per model path.
-    """
-
-    def __init__(self, failures: dict[str, Exception] | None = None) -> None:
-        self.failures = failures or {}
+    def __init__(self) -> None:
         self.submitted: dict[str, list[dict[str, Any]]] = {}
 
     def __call__(
@@ -64,8 +60,6 @@ class FakeGeminiBatchProvider:
     def create_batch(
         self, jsonl_data: list[dict[str, Any]], config: dict[str, Any]
     ) -> dict[str, Any]:
-        if self._model in self.failures:
-            raise self.failures[self._model]
         self.submitted[self._model] = jsonl_data
         return {
             "provider_batch_id": f"batches/{self._model.split('/')[-1]}",
@@ -76,10 +70,8 @@ class FakeGeminiBatchProvider:
 
 
 @contextmanager
-def fake_gemini_batch(
-    module_path: str, failures: dict[str, Exception] | None = None
-) -> Iterator[FakeGeminiBatchProvider]:
-    fake = FakeGeminiBatchProvider(failures)
+def fake_gemini_batch(module_path: str) -> Iterator[FakeGeminiBatchProvider]:
+    fake = FakeGeminiBatchProvider()
     with (
         patch(f"{module_path}.GeminiClient") as gemini_client,
         patch(f"{module_path}.GeminiBatchProvider", side_effect=fake),
@@ -137,7 +129,7 @@ def create_test_tts_run_with_dataset(
         dataset_name=dataset.name,
         org_id=organization_id,
         project_id=project_id,
-        models=models or [GEMINI_PRO_TTS_MODEL],
+        models=models or [DEFAULT_TTS_MODEL],
     )
 
 
@@ -145,7 +137,7 @@ def create_test_tts_result_row(
     db: Session,
     *,
     run: EvaluationRun,
-    provider: str = GEMINI_PRO_TTS_MODEL,
+    provider: str = DEFAULT_TTS_MODEL,
     status: JobStatus = JobStatus.PENDING,
     sample_text: str | None = None,
     object_store_url: str | None = None,
@@ -165,3 +157,29 @@ def create_test_tts_result_row(
     db.commit()
     db.refresh(result)
     return result
+
+
+def create_test_tts_batch_job(
+    db: Session,
+    *,
+    run: EvaluationRun,
+    model: str = DEFAULT_TTS_MODEL,
+    provider_status: str,
+    provider_batch_id: str | None = "batches/test",
+    error_message: str | None = None,
+) -> BatchJob:
+    batch_job = BatchJob(
+        provider="google-aistudio",
+        job_type=BatchJobType.TTS_EVALUATION.value,
+        config={"evaluation_run_id": run.id, "tts_provider": model},
+        provider_batch_id=provider_batch_id,
+        provider_status=provider_status,
+        error_message=error_message,
+        total_items=1,
+        organization_id=run.organization_id,
+        project_id=run.project_id,
+    )
+    db.add(batch_job)
+    db.commit()
+    db.refresh(batch_job)
+    return batch_job

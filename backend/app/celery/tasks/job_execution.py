@@ -6,8 +6,7 @@ ordered by the per-task `priority`:
     9  LLM call + LLM chain (run_llm_job, run_llm_chain_job, run_response_job)
     6  Fast evaluation (run_evaluation_fast_chunk, run_evaluation_fast_aggregate,
        run_prompt_improvement, run_evaluation_iteration_graph_step)
-    2  Everything else (doctransform, collections, STT/TTS evaluation incl.
-       run_tts_sync_chunk, assessment)
+    2  Everything else (doctransform, collections, STT/TTS evaluation, assessment)
     1  Notifications (send_eval_completion_notification)
 
 Higher priority drains first; within the same priority, delivery is FIFO.
@@ -27,6 +26,7 @@ from opentelemetry.propagate import extract
 from app.celery.celery_app import celery_app
 from app.celery.utils import gevent_timeout
 from app.core.config import settings
+from app.services.tts_evaluations.constants import TTS_SYNC_TASK_TIME_LIMIT_SECONDS
 
 if TYPE_CHECKING:
     from app.services.notifications.eval_completion import (
@@ -430,20 +430,28 @@ def run_tts_result_processing(
     )
 
 
-@celery_app.task(bind=True, queue="default", priority=2)
-@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_sync_chunk")
-def run_tts_sync_chunk(self, project_id: int, job_id: str, trace_id: str, **kwargs):
-    """Synthesize one chunk of a TTS run's sync-model results.
-
-    Idempotent: only results still PENDING are synthesized and written, so a
-    redelivered chunk skips rows an earlier attempt already finished.
-    """
-    from app.services.tts_evaluations.sync_generation import execute_tts_sync_chunk
+# Same hard-minus-soft grace as the global limits, on top of the longer per-model soft limit.
+@celery_app.task(
+    bind=True,
+    queue="default",
+    priority=2,
+    soft_time_limit=TTS_SYNC_TASK_TIME_LIMIT_SECONDS,
+    time_limit=TTS_SYNC_TASK_TIME_LIMIT_SECONDS
+    + settings.CELERY_TASK_TIME_LIMIT
+    - settings.CELERY_TASK_SOFT_TIME_LIMIT,
+)
+@gevent_timeout(TTS_SYNC_TASK_TIME_LIMIT_SECONDS, "run_tts_sync_generation")
+def run_tts_sync_generation(
+    self, project_id: int, job_id: str, trace_id: str, **kwargs
+):
+    from app.services.tts_evaluations.sync_generation import (
+        execute_tts_sync_generation,
+    )
 
     _set_trace(trace_id)
     return _run_with_otel_parent(
         self,
-        lambda: execute_tts_sync_chunk(
+        lambda: execute_tts_sync_generation(
             project_id=project_id,
             job_id=job_id,
             task_id=current_task.request.id,

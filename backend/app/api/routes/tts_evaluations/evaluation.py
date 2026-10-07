@@ -25,7 +25,10 @@ from app.models.tts_evaluation import (
 from app.services.tts_evaluations.constants import (
     DEFAULT_STYLE_PROMPT,
     DEFAULT_VOICE_NAME,
-    get_tts_model_spec,
+    ELEVENLABS_TTS_MODELS,
+    ELEVENLABS_VOICE_ID,
+    SARVAM_SPEAKER,
+    SARVAM_TTS_MODELS,
 )
 from app.utils import APIResponse, load_description
 
@@ -84,7 +87,7 @@ def start_tts_evaluation(
         total_items=sample_count * len(run_create.models),
     )
 
-    # Offload submission (result creation, Gemini batch, sync-model fan-out) to Celery worker
+    # Offload batch submission (result creation, JSONL, Gemini upload) to Celery worker
     trace_id = correlation_id.get() or "N/A"
     try:
         celery_task_id = start_tts_batch_submission(
@@ -117,7 +120,12 @@ def start_tts_evaluation(
 
     voices: dict[str, str] = {}
     for model in run_create.models:
-        voices[model] = get_tts_model_spec(model).default_voice
+        if model in SARVAM_TTS_MODELS:
+            voices[model] = SARVAM_SPEAKER
+        elif model in ELEVENLABS_TTS_MODELS:
+            voices[model] = ELEVENLABS_VOICE_ID
+        else:
+            voices[model] = DEFAULT_VOICE_NAME
 
     return APIResponse.success_response(
         data=TTSEvaluationRunPublic.from_model(

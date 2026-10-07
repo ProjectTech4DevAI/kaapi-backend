@@ -231,18 +231,8 @@ def finalize_tts_run_status(
 ) -> EvaluationRun | None:
     """Recompute a TTS run's status from its result rows and persist it.
 
-    The run row is locked first so concurrent finalizers (sync chunks, Gemini
-    result processing, cron) serialize: whichever commits last counts every
-    result the others already committed, so a run can't be stranded in
-    `processing` after its final result lands.
-
-    Args:
-        session: Database session
-        run_id: Run ID
-        error_message: Overrides the derived "N synthesis(es) failed" message
-
-    Returns:
-        EvaluationRun | None: Updated run, or None if it doesn't exist
+    `processing` while any row is PENDING, `failed` when no row succeeded (every
+    model failed), otherwise `completed`. Only the cron calls this.
     """
     statement = (
         select(EvaluationRun).where(EvaluationRun.id == run_id).with_for_update()
@@ -255,9 +245,15 @@ def finalize_tts_run_status(
 
     status_counts = count_results_by_status(session=session, run_id=run_id)
     pending = status_counts.get(JobStatus.PENDING.value, 0)
+    success = status_counts.get(JobStatus.SUCCESS.value, 0)
     failed = status_counts.get(JobStatus.FAILED.value, 0)
 
-    run.status = "completed" if pending == 0 else "processing"
+    if pending > 0:
+        run.status = "processing"
+    elif success == 0:
+        run.status = "failed"
+    else:
+        run.status = "completed"
 
     if error_message is None and failed > 0:
         error_message = f"{failed} synthesis(es) failed"
@@ -272,7 +268,8 @@ def finalize_tts_run_status(
 
     logger.info(
         f"[finalize_tts_run_status] Run finalized | run_id: {run_id}, "
-        f"status: {run.status}, pending: {pending}, failed: {failed}"
+        f"status: {run.status}, pending: {pending}, success: {success}, "
+        f"failed: {failed}"
     )
 
     return run

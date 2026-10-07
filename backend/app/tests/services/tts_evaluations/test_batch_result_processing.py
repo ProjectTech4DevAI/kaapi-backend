@@ -24,6 +24,7 @@ from app.tests.utils.tts_evaluation import (
 
 MODULE = "app.services.tts_evaluations.batch_result_processing"
 GEMINI = "gemini-2.5-pro-preview-tts"
+SARVAM = "bulbul:v3"
 # 24 kHz / 16-bit / mono: 48000 bytes is one second; the WAV adds a 44-byte header.
 ONE_SECOND_PCM_B64 = base64.b64encode(b"\x00\x01" * 24000).decode()
 
@@ -73,7 +74,7 @@ def run(db: Session, user_api_key: TestAuthContext) -> EvaluationRun:
         db,
         organization_id=user_api_key.organization_id,
         project_id=user_api_key.project_id,
-        models=[GEMINI, "bulbul:v3"],
+        models=[GEMINI, SARVAM],
     )
 
 
@@ -98,7 +99,7 @@ def _refresh(db: Session, *rows: TTSResult | EvaluationRun) -> None:
 @pytest.mark.usefixtures("boundaries")
 class TestExecuteTTSResultProcessing:
     @pytest.mark.parametrize("key", ["inlineData", "inline_data"])
-    def test_success_uploads_wav_and_completes_run(
+    def test_success_stores_wav_without_finalizing_run(
         self, db: Session, run: EvaluationRun, boundaries: Boundaries, key: str
     ) -> None:
         rows = [create_test_tts_result_row(db, run=run) for _ in range(2)]
@@ -106,22 +107,15 @@ class TestExecuteTTSResultProcessing:
 
         outcome = _execute(run)
 
-        assert outcome == {
-            "success": True,
-            "run_id": run.id,
-            "processed": 2,
-            "failed": 0,
-            "run_status": "completed",
-        }
+        assert (outcome["processed"], outcome["failed"]) == (2, 0)
         _refresh(db, run, *rows)
         for row in rows:
             assert row.status == JobStatus.SUCCESS.value
             assert row.object_store_url.startswith("s3://bucket/evaluations/tts/audio/")
             assert row.metadata_ == {"duration_seconds": 1.0, "size_bytes": 48044}
-        assert run.status == "completed"
-        boundaries.download.assert_called_once_with("batches/abc")
+        assert run.status == "pending"
 
-    def test_non_pending_and_unknown_results_are_skipped(
+    def test_only_this_models_pending_rows_are_processed(
         self, db: Session, run: EvaluationRun, boundaries: Boundaries
     ) -> None:
         done = create_test_tts_result_row(
@@ -130,7 +124,7 @@ class TestExecuteTTSResultProcessing:
             status=JobStatus.SUCCESS,
             object_store_url="s3://bucket/keep.wav",
         )
-        other_model = create_test_tts_result_row(db, run=run, provider="bulbul:v3")
+        other_model = create_test_tts_result_row(db, run=run, provider=SARVAM)
         pending = create_test_tts_result_row(db, run=run)
         boundaries.download.return_value = [
             _ok(done.id),
@@ -138,75 +132,50 @@ class TestExecuteTTSResultProcessing:
             _ok(pending.id),
         ]
 
-        outcome = _execute(run)
+        _execute(run)
 
-        assert (outcome["processed"], outcome["failed"]) == (1, 0)
-        assert outcome["run_status"] == "processing"
-        assert boundaries.upload.call_count == 1
         _refresh(db, done, other_model, pending)
         assert done.object_store_url == "s3://bucket/keep.wav"
         assert other_model.status == JobStatus.PENDING.value
         assert pending.status == JobStatus.SUCCESS.value
 
-    def test_invalid_custom_id_is_counted_failed(
+    def test_bad_results_fail_their_row_and_others_still_succeed(
         self, db: Session, run: EvaluationRun, boundaries: Boundaries
     ) -> None:
-        boundaries.download.return_value = [
-            _ok("not-a-number"),
-            {"custom_id": None, "response": {}},
-        ]
-
-        outcome = _execute(run)
-
-        assert (outcome["processed"], outcome["failed"]) == (0, 2)
-
-    def test_failure_shapes_mark_results_failed(
-        self, db: Session, run: EvaluationRun, boundaries: Boundaries
-    ) -> None:
-        errored, no_error_text, silent, bad_b64, odd_shape = (
-            create_test_tts_result_row(db, run=run) for _ in range(5)
+        errored, no_error_text, silent, bad_padding, not_base64, odd_shape, ok = (
+            create_test_tts_result_row(db, run=run) for _ in range(7)
         )
         boundaries.download.return_value = [
+            {"custom_id": "not-a-number", "response": _audio_response()},
             {"custom_id": str(errored.id), "response": None, "error": "SAFETY block"},
             {"custom_id": str(no_error_text.id)},
             {
                 "custom_id": str(silent.id),
                 "response": {"candidates": [{"content": {"parts": [{"text": "hi"}]}}]},
             },
-            _ok(bad_b64.id, data="abc"),  # incorrect padding -> binascii.Error
+            _ok(bad_padding.id, data="abc"),
+            # Without strict decoding this became b"" and was stored as a 0s success.
+            _ok(not_base64.id, data="###"),
             {"custom_id": str(odd_shape.id), "response": ["not", "a", "dict"]},
+            _ok(ok.id),
         ]
 
         outcome = _execute(run)
 
-        assert (outcome["processed"], outcome["failed"]) == (0, 5)
-        assert outcome["run_status"] == "completed"
-        _refresh(db, run, errored, no_error_text, silent, bad_b64, odd_shape)
+        assert (outcome["processed"], outcome["failed"]) == (1, 7)
+        _refresh(
+            db, errored, no_error_text, silent, bad_padding, not_base64, odd_shape, ok
+        )
+        assert ok.status == JobStatus.SUCCESS.value
         assert errored.error_message == "SAFETY block"
         assert no_error_text.error_message == "Unknown error"
         assert silent.error_message == "No audio data in response"
-        assert bad_b64.error_message.startswith("Audio processing failed:")
-        assert odd_shape.error_message.startswith("Audio processing failed:")
-        assert {
-            r.status for r in (errored, no_error_text, silent, bad_b64, odd_shape)
-        } == {JobStatus.FAILED.value}
-        assert run.error_message == "5 synthesis(es) failed"
+        for row in (bad_padding, not_base64, odd_shape):
+            assert row.error_message.startswith("Audio processing failed:")
+        for row in (errored, no_error_text, silent, bad_padding, not_base64, odd_shape):
+            assert (row.status, row.object_store_url) == (JobStatus.FAILED.value, None)
 
-    def test_non_base64_audio_is_not_stored_as_empty_success(
-        self, db: Session, run: EvaluationRun, boundaries: Boundaries
-    ) -> None:
-        row = create_test_tts_result_row(db, run=run)
-        boundaries.download.return_value = [_ok(row.id, data="###")]
-
-        outcome = _execute(run)
-
-        assert (outcome["processed"], outcome["failed"]) == (0, 1)
-        boundaries.upload.assert_not_called()
-        _refresh(db, row)
-        assert row.status == JobStatus.FAILED.value
-        assert row.error_message.startswith("Audio processing failed:")
-
-    def test_upload_failure_marks_result_failed(
+    def test_upload_failure_fails_row(
         self, db: Session, run: EvaluationRun, boundaries: Boundaries
     ) -> None:
         boundaries.upload.side_effect = None
@@ -214,76 +183,55 @@ class TestExecuteTTSResultProcessing:
         row = create_test_tts_result_row(db, run=run)
         boundaries.download.return_value = [_ok(row.id)]
 
-        outcome = _execute(run)
+        _execute(run)
 
-        assert outcome["failed"] == 1
         _refresh(db, row)
         assert (row.status, row.error_message) == (
             JobStatus.FAILED.value,
             "Audio upload to object store failed",
         )
 
-    def test_empty_batch_finalizes_run(
-        self, db: Session, run: EvaluationRun, boundaries: Boundaries
+    @pytest.mark.parametrize(
+        "timeout", [Timeout(), SoftTimeLimitExceeded()], ids=["gevent", "soft"]
+    )
+    def test_timeout_fails_only_this_models_pending_rows_and_reraises(
+        self,
+        db: Session,
+        run: EvaluationRun,
+        boundaries: Boundaries,
+        timeout: BaseException,
     ) -> None:
-        create_test_tts_result_row(db, run=run, status=JobStatus.SUCCESS)
+        boundaries.download.side_effect = timeout
+        gemini_row = create_test_tts_result_row(db, run=run)
+        sarvam_row = create_test_tts_result_row(db, run=run, provider=SARVAM)
 
-        outcome = _execute(run)
-
-        assert (outcome["processed"], outcome["run_status"]) == (0, "completed")
-
-    def test_timeout_keeps_already_written_chunks(
-        self, db: Session, run: EvaluationRun, boundaries: Boundaries
-    ) -> None:
-        rows = [create_test_tts_result_row(db, run=run) for _ in range(60)]
-        boundaries.download.return_value = [_ok(r.id) for r in rows]
-        uploads = 0
-
-        def upload_then_time_out(**kwargs: Any) -> str:
-            nonlocal uploads
-            uploads += 1
-            if uploads == 55:
-                raise Timeout()
-            return _fake_upload(**kwargs)
-
-        boundaries.upload.side_effect = upload_then_time_out
-
-        with pytest.raises(Timeout):
+        with pytest.raises(type(timeout)):
             _execute(run)
 
-        _refresh(db, run, *rows)
-        statuses = [r.status for r in rows]
-        # writes land in slices of 50, so results 51-54 were still buffered
-        assert statuses.count(JobStatus.SUCCESS.value) == 50
-        assert statuses.count(JobStatus.PENDING.value) == 10
-        assert (run.status, run.error_message) == (
-            "failed",
-            "Task exceeded soft time limit",
+        _refresh(db, run, gemini_row, sarvam_row)
+        assert (gemini_row.status, gemini_row.error_message) == (
+            JobStatus.FAILED.value,
+            "Result processing exceeded soft time limit",
         )
+        assert sarvam_row.status == JobStatus.PENDING.value
+        assert run.status == "pending"
 
-    def test_soft_time_limit_fails_run_and_reraises(
-        self, db: Session, run: EvaluationRun, boundaries: Boundaries
-    ) -> None:
-        boundaries.download.side_effect = SoftTimeLimitExceeded()
-
-        with pytest.raises(SoftTimeLimitExceeded):
-            _execute(run)
-
-        _refresh(db, run)
-        assert run.status == "failed"
-
-    def test_unexpected_error_fails_run(
+    def test_unexpected_error_fails_only_this_models_pending_rows(
         self, db: Session, run: EvaluationRun, boundaries: Boundaries
     ) -> None:
         boundaries.gemini_client.from_credentials.side_effect = ValueError(
             "no gemini key"
         )
+        gemini_row = create_test_tts_result_row(db, run=run)
+        sarvam_row = create_test_tts_result_row(db, run=run, provider=SARVAM)
 
         outcome = _execute(run)
 
         assert outcome == {"success": False, "error": "no gemini key"}
-        _refresh(db, run)
-        assert (run.status, run.error_message) == (
-            "failed",
+        _refresh(db, run, gemini_row, sarvam_row)
+        assert (gemini_row.status, gemini_row.error_message) == (
+            JobStatus.FAILED.value,
             "Result processing failed: no gemini key",
         )
+        assert sarvam_row.status == JobStatus.PENDING.value
+        assert run.status == "pending"

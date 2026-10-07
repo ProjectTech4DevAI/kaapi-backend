@@ -15,4 +15,4 @@ The evaluation will:
 Synthesis uses the dataset's language; datasets without a language are synthesized as `en-IN`.
 The response's `run_metadata.voices` lists the voice used per model.
 
-**Supported models:** `gemini-2.5-pro-preview-tts`, `bulbul:v3` (Sarvam), `eleven_v3`, `eleven_v4` (ElevenLabs)
+**Supported models:** `gemini-2.5-pro-preview-tts`, `gemini-3.1-flash-tts-preview`, `bulbul:v3` (Sarvam), `eleven_v3`, `eleven_v4` (ElevenLabs)
