@@ -1,9 +1,11 @@
 import logging
 import base64
 import json
+from datetime import datetime
 from uuid import UUID
 from typing import Any, Literal
 
+from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.core.util import now
@@ -343,6 +345,38 @@ def get_llm_call_by_id(
         statement = statement.where(LlmCall.project_id == project_id)
 
     return session.exec(statement).first()
+
+
+REDACTED_SENTINEL = "[redacted]"
+
+REDACT_LLM_CALLS_SQL = text(
+    """
+    UPDATE llm_call
+    SET input = :redacted_sentinel,
+        content = CASE
+            WHEN jsonb_typeof(content) = 'object'
+            THEN jsonb_set(content, '{content,value}', to_jsonb(CAST(:redacted_sentinel AS text)), false)
+            ELSE content
+        END
+    WHERE updated_at <= :cutoff
+      AND (input <> :redacted_sentinel OR content -> 'content' ->> 'value' IS DISTINCT FROM :redacted_sentinel)
+    """
+)
+
+
+def redact_llm_calls(*, session: Session, cutoff: datetime) -> int:
+    result = session.connection().execute(
+        REDACT_LLM_CALLS_SQL,
+        {"cutoff": cutoff, "redacted_sentinel": REDACTED_SENTINEL},
+    )
+    session.commit()
+
+    logger.info(
+        f"[redact_llm_calls] Redacted rows | rows: {result.rowcount} | "
+        f"cutoff: {cutoff.isoformat()}"
+    )
+
+    return result.rowcount
 
 
 def get_llm_calls_by_job_id(
