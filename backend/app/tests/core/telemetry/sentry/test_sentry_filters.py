@@ -261,7 +261,7 @@ class TestLlmJobKwargsRedaction:
 
         request_data = result["extra"]["celery-job"]["kwargs"]["request_data"]
         assert request_data["query"] == sentry_filters._REDACTED
-        assert request_data["callback_url"] == sentry_filters._REDACTED
+        assert request_data["callback_url"] == "https://webhooksite.net/some-id"
         assert request_data["config"] == {
             "blob": {"completion": {"provider": "openai"}}
         }

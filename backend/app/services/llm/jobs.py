@@ -98,7 +98,7 @@ def _set_traceability_attributes(
     task_id: str | None = None,
 ) -> None:
     if job_id is not None:
-        span.set_attribute("llm.job_id", str(job_id))
+        span.set_attribute("kaapi.job_id", str(job_id))
     if llm_call_id is not None:
         span.set_attribute("llm.call_id", str(llm_call_id))
     if chain_id is not None:
@@ -109,6 +109,8 @@ def _set_traceability_attributes(
         span.set_attribute("kaapi.project_id", project_id)
     if organization_id is not None:
         span.set_attribute("kaapi.organization_id", organization_id)
+    if task_id is not None:
+        span.set_attribute("kaapi.task_id", task_id)
     if task_id is not None:
         span.set_attribute("celery.task_id", task_id)
 

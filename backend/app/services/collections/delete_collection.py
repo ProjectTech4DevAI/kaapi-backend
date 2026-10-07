@@ -197,7 +197,7 @@ def execute_job(
         organization_id=organization_id,
     ), tracer.start_as_current_span("collections.delete.execute_job") as span:
         span.set_attribute("collection.id", str(collection_uuid))
-        span.set_attribute("collection.job_id", str(job_uuid))
+        span.set_attribute("kaapi.job_id", str(job_uuid))
         span.set_attribute("kaapi.project_id", project_id)
         span.set_attribute("kaapi.organization_id", organization_id)
 

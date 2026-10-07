@@ -133,7 +133,7 @@ def llm_call(
         )
 
         if span.is_recording():
-            span.set_attribute("llm.job_id", str(job_id))
+            span.set_attribute("kaapi.job_id", str(job_id))
 
         job_crud = JobCrud(session=session)
         job = job_crud.get(job_id=job_id, project_id=project_id)

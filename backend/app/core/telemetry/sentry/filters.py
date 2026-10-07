@@ -57,7 +57,7 @@ _LLM_JOB_TASK_NAMES = {
     "app.celery.tasks.job_execution.run_llm_job",
     "app.celery.tasks.job_execution.run_llm_chain_job",
 }
-_SENSITIVE_REQUEST_DATA_KEYS = ("query", "request_metadata", "callback_url")
+_SENSITIVE_REQUEST_DATA_KEYS = ("query",)
 
 
 _BARE_HTTP_METHOD = re.compile(

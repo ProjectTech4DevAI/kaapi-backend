@@ -18,6 +18,8 @@ import socket
 from typing import Any, Dict, Generic, Optional, TypeVar
 from urllib.parse import urlparse
 
+from opentelemetry import trace
+
 import emails
 from jinja2 import Template
 from fastapi import HTTPException
@@ -590,6 +592,9 @@ def send_callback(
             signature, timestamp_ms = sign_webhook_payload(webhook_secret, raw_body)
             headers["X-Webhook-Signature"] = signature
             headers["X-Webhook-Timestamp"] = str(timestamp_ms)
+        span = trace.get_current_span()
+        span.set_attribute("callback.request.body.size", len(raw_body))
+        started_at = time.perf_counter()
         with requests.Session() as session:
             session.trust_env = False  # Ignores environment proxies and other implicit settings for SSRF safety
 
@@ -603,6 +608,11 @@ def send_callback(
                 ),
                 allow_redirects=False,
             )
+            span.set_attribute(
+                "callback.duration_ms",
+                round((time.perf_counter() - started_at) * 1000, 2),
+            )
+            span.set_attribute("callback.response.status_code", response.status_code)
 
             response.raise_for_status()
 

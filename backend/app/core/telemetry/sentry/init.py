@@ -14,6 +14,8 @@ from app.core.telemetry.sentry.filters import (
     genai_privacy_integrations,
 )
 
+SENTRY_MAX_BREADCRUMBS = 30
+
 
 def init_sentry(
     *,
@@ -36,6 +38,7 @@ def init_sentry(
         enable_logs=True,
         include_local_variables=False,
         max_request_body_size="never",
+        max_breadcrumbs=SENTRY_MAX_BREADCRUMBS,
         before_send=before_send_error_filter,
         before_send_transaction=before_send_transaction_filter,
         before_send_log=before_send_log_filter,
