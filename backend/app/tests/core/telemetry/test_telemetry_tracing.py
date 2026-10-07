@@ -241,3 +241,91 @@ class TestInstrumentApp:
             telemetry.instrument_app(self._app())
 
         instrument.assert_not_called()
+
+
+class TestNoiseFilteringSpanProcessorPaths:
+    def _span(
+        self, *, parent, kind=SpanKind.INTERNAL, trace_id=0xABC, span_id=0x1
+    ) -> MagicMock:
+        span = MagicMock()
+        span.parent = parent
+        span.kind = kind
+        span.status.status_code = StatusCode.UNSET
+        span.attributes = {"http.route": "/x"}
+        span.get_span_context.return_value = SimpleNamespace(
+            trace_id=trace_id, span_id=span_id, is_valid=True
+        )
+        return span
+
+    def test_child_span_marks_trace_as_having_children(self) -> None:
+        processor = telemetry._NoiseFilteringSpanProcessor()
+        child = self._span(parent=SimpleNamespace(is_remote=False))
+        with patch.object(SentrySpanProcessor, "on_start") as base:
+            processor.on_start(child)
+        base.assert_called_once()
+        assert 0xABC in processor._traces_with_children
+
+    def test_root_span_with_children_ships(self) -> None:
+        processor = telemetry._NoiseFilteringSpanProcessor()
+        processor._traces_with_children.add(0xABC)
+        root = self._span(parent=None, kind=SpanKind.SERVER)
+        with patch.object(SentrySpanProcessor, "on_end") as base:
+            processor.on_end(root)
+        base.assert_called_once_with(root)
+        assert 0xABC not in processor._traces_with_children
+
+
+class TestSetupTelemetryWithSentry:
+    def test_registers_processor_and_propagator(self) -> None:
+        provider = MagicMock()
+        set_textmap = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(
+                telemetry.settings, "SENTRY_DSN", "https://k@o.ingest.sentry.io/1"
+            ),
+            patch.object(telemetry, "TracerProvider", return_value=provider),
+            patch.object(telemetry, "_NoiseFilteringSpanProcessor", MagicMock()),
+            patch.object(telemetry, "set_global_textmap", set_textmap),
+            patch.object(telemetry.trace, "set_tracer_provider", MagicMock()),
+            patch.object(telemetry, "LoggingInstrumentor", MagicMock()),
+            patch.object(telemetry, "HTTPXClientInstrumentor", MagicMock()),
+            patch.object(telemetry, "RequestsInstrumentor", MagicMock()),
+            patch(
+                "opentelemetry.instrumentation.celery.CeleryInstrumentor", MagicMock()
+            ),
+            patch("opentelemetry.instrumentation.redis.RedisInstrumentor", MagicMock()),
+            patch(
+                "opentelemetry.instrumentation.botocore.BotocoreInstrumentor",
+                MagicMock(),
+            ),
+        ):
+            telemetry.setup_telemetry()
+
+        provider.add_span_processor.assert_called_once()
+        set_textmap.assert_called_once()
+
+
+class TestFlushTelemetry:
+    def test_flushes_provider_and_sentry(self) -> None:
+        provider = MagicMock()
+        fake = MagicMock()
+        fake.get_client.return_value.is_active.return_value = True
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry.trace, "get_tracer_provider", return_value=provider),
+            patch.object(telemetry, "sentry_sdk", fake),
+        ):
+            telemetry.flush_telemetry(timeout_millis=2000)
+
+        provider.force_flush.assert_called_once_with(timeout_millis=2000)
+        fake.flush.assert_called_once_with(timeout=2.0)
+
+    def test_noop_when_otel_disabled(self) -> None:
+        provider = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", False),
+            patch.object(telemetry.trace, "get_tracer_provider", return_value=provider),
+        ):
+            telemetry.flush_telemetry()
+        provider.force_flush.assert_not_called()

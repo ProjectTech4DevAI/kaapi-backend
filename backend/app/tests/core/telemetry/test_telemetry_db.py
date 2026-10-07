@@ -401,3 +401,62 @@ class TestInstrumentDbEngineMetrics:
         outcomes = [c.args[0] for c in txn.call_args_list]
         assert "commit" in outcomes
         assert "rollback" in outcomes
+
+
+class TestRecordDbPoolStats:
+    def test_emits_four_gauges(self) -> None:
+        fake = _active_sentry()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(metrics, "sentry_sdk", fake),
+        ):
+            telemetry.record_db_pool_stats(active=1, idle=2, total=3, overflow=0)
+        names = [c.kwargs["name"] for c in fake.metrics.gauge.call_args_list]
+        assert names == [
+            "db.pool.active",
+            "db.pool.idle",
+            "db.pool.total",
+            "db.pool.overflow",
+        ]
+
+    def test_noop_when_otel_disabled(self) -> None:
+        fake = _active_sentry()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", False),
+            patch.object(metrics, "sentry_sdk", fake),
+        ):
+            telemetry.record_db_pool_stats(active=1, idle=2, total=3, overflow=0)
+            telemetry.record_db_transaction("commit")
+        fake.metrics.gauge.assert_not_called()
+        fake.metrics.count.assert_not_called()
+
+
+class TestInstrumentDbEngineEdgeCases:
+    def test_non_queue_pool_skips_pool_metrics(self) -> None:
+        engine = create_engine("sqlite://")
+        pool_stats = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry, "SQLAlchemyInstrumentor", MagicMock()),
+            patch.object(telemetry, "record_db_pool_stats", pool_stats),
+        ):
+            telemetry.instrument_db_engine(engine)
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+        pool_stats.assert_not_called()
+
+    def test_close_and_invalidate_emit_connection_events(self) -> None:
+        engine = create_engine("sqlite://", poolclass=QueuePool)
+        events = MagicMock()
+        with (
+            patch.object(telemetry.settings, "OTEL_ENABLED", True),
+            patch.object(telemetry, "SQLAlchemyInstrumentor", MagicMock()),
+            patch.object(telemetry, "record_db_pool_stats", MagicMock()),
+            patch.object(telemetry, "record_db_connection_event", events),
+        ):
+            telemetry.instrument_db_engine(engine)
+            with engine.connect() as conn:
+                conn.invalidate()
+            engine.dispose()
+        emitted = {c.args[0] for c in events.call_args_list}
+        assert {"opened", "invalidated", "closed"} <= emitted
