@@ -1,13 +1,10 @@
 name: Deploy Kaapi to Non-Prod EC2 (Staging)
 
 on:
-  # workflow_run:
-  #   workflows: ["Kaapi CI"]
-  #   branches: [main]
-  #   types: [completed]
-  push:
-    branches:
-      - feat/non-prod-script-updates
+  workflow_run:
+    workflows: ["Kaapi CI"]
+    branches: [main]
+    types: [completed]
   workflow_dispatch:
 
 concurrency:
@@ -20,7 +17,7 @@ jobs:
     environment: Staging
     # workflow_dispatch runs unconditionally; workflow_run only on a green CI.
     if: >-
-      ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+      ${{ github.event_name == 'workflow_dispatch' ||
           github.event.workflow_run.conclusion == 'success' }}
 
     permissions:
@@ -113,7 +110,7 @@ jobs:
       - uses: ./.github/actions/discord-notify
         with:
           webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          name: kaapi-non-prod
+          name: kaapi-backend-staging
           release: "#${{ github.run_number }}"
           sha: ${{ github.event.workflow_run.head_sha || github.sha }}
           run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
