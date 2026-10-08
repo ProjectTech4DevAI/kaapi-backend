@@ -429,6 +429,28 @@ def run_tts_result_processing(
     )
 
 
+@celery_app.task(bind=True, queue="default", priority=2)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_sync_generation")
+def run_tts_sync_generation(
+    self, project_id: int, job_id: str, trace_id: str, **kwargs
+):
+    from app.services.tts_evaluations.sync_generation import (
+        execute_tts_sync_generation,
+    )
+
+    _set_trace(trace_id)
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_tts_sync_generation(
+            project_id=project_id,
+            job_id=job_id,
+            task_id=current_task.request.id,
+            task_instance=self,
+            **kwargs,
+        ),
+    )
+
+
 @celery_app.task(bind=True, queue="default", priority=6)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_fast_chunk")
 def run_evaluation_fast_chunk(
