@@ -20,6 +20,7 @@ from app.models import (
     Credential,
     CredsCreate,
     EvaluationDataset,
+    EvaluationRun,
     FineTuning,
     FineTuningJobCreate,
     ModelEvaluation,
@@ -460,3 +461,43 @@ def create_test_evaluation_dataset(
     db.commit()
     db.refresh(dataset)
     return dataset
+
+
+def create_test_evaluation_run(
+    db: Session,
+    organization_id: int,
+    project_id: int,
+    run_name: str | None = None,
+    status: str = "completed",
+    score: dict | None = None,
+    object_store_url: str | None = None,
+    dataset: EvaluationDataset | None = None,
+) -> EvaluationRun:
+    """
+    Creates and returns a text evaluation run with its own config, over `dataset`
+    when given (so runs can be filtered together) or a fresh dataset otherwise.
+
+    Persists the run to the database.
+    """
+    if dataset is None:
+        dataset = create_test_evaluation_dataset(
+            db=db, organization_id=organization_id, project_id=project_id
+        )
+    config = create_test_config(db, project_id=project_id)
+    eval_run = EvaluationRun(
+        run_name=run_name or f"test_run_{random_lower_string()}",
+        dataset_name=dataset.name,
+        dataset_id=dataset.id,
+        config_id=config.id,
+        config_version=1,
+        status=status,
+        total_items=3,
+        score=score,
+        object_store_url=object_store_url,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    db.add(eval_run)
+    db.commit()
+    db.refresh(eval_run)
+    return eval_run

@@ -204,6 +204,17 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"
 
+    AGENT_MODEL: str = "claude-opus-5"
+    AGENT_EFFORT: str = "medium"
+    AGENT_MAX_TOKENS: int = 16000
+    # Tool rounds before tools are disabled and the model must answer.
+    AGENT_MAX_ITERATIONS: int = 8
+    # Per in-process tool request; bounds a slow route from stalling the whole turn.
+    AGENT_TOOL_TIMEOUT_SECONDS: float = 30.0
+    # Caps each tool_result fed back to the model so one large list can't blow the context.
+    AGENT_TOOL_RESULT_MAX_CHARS: int = 20000
+    AGENT_LLM_TIMEOUT_SECONDS: float = 120.0
+
     # Fast evaluation (run_mode="fast") configuration.
     # See "Fast Evaluation SRD.md" for the full design rationale.
     EVAL_FAST_MAX_UNIQUE_ROWS: int = 100
