@@ -15,7 +15,8 @@ from app.models import EvaluationRun
 from app.models.batch_job import BatchJob
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
-from app.services.tts_evaluations.constants import TTS_SYNC_STALE_AFTER_SECONDS
+from app.core.config import settings
+from app.services.tts_evaluations.constants import TTS_SYNC_STALE_GRACE_SECONDS
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.tts_evaluation import (
     create_test_tts_batch_job,
@@ -39,7 +40,9 @@ def _processing_run(
     )
     run.status = "processing"
     if stale:
-        run.inserted_at -= timedelta(seconds=TTS_SYNC_STALE_AFTER_SECONDS + 60)
+        run.inserted_at -= timedelta(
+            seconds=settings.CELERY_TASK_TIME_LIMIT + TTS_SYNC_STALE_GRACE_SECONDS + 60
+        )
     db.add(run)
     db.commit()
     return run

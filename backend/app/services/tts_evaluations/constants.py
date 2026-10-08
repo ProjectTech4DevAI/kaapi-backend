@@ -49,7 +49,6 @@ TTS_SYNC_MAX_WORKERS = 2
 
 TTS_AUDIO_SUBDIRECTORY = "evaluations/tts/audio"
 
-# One task synthesizes a whole model sequentially; the global 300s limit only fits ~30-60 rows.
-TTS_SYNC_TASK_TIME_LIMIT_SECONDS = 1800
-# Past this, the cron treats a sync model's leftover PENDING rows as abandoned by a dead worker.
-TTS_SYNC_STALE_AFTER_SECONDS = TTS_SYNC_TASK_TIME_LIMIT_SECONDS + 600
+# Once a run is older than the Celery hard time limit plus this grace, no sync worker can
+# still be writing its rows, so the cron fails any that are left PENDING.
+TTS_SYNC_STALE_GRACE_SECONDS = 600

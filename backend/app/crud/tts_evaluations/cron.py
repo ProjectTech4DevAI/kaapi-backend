@@ -14,6 +14,7 @@ from sqlmodel import Session, select
 
 from app.celery.utils import start_tts_result_processing
 from app.core.batch import BatchJobState, GeminiBatchProvider, GeminiClient
+from app.core.config import settings
 from app.core.util import now
 from app.crud.evaluations.cron_utils import (
     TERMINAL_STATES,
@@ -34,7 +35,7 @@ from app.models.stt_evaluation import EvaluationType
 from app.services.tts_evaluations.constants import (
     GEMINI_TTS_MODELS,
     SYNC_TTS_MODELS,
-    TTS_SYNC_STALE_AFTER_SECONDS,
+    TTS_SYNC_STALE_GRACE_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -181,7 +182,10 @@ async def poll_tts_run(
     batch_models = [model for model in models if model in GEMINI_TTS_MODELS]
     sync_models = [model for model in models if model in SYNC_TTS_MODELS]
     # Both timestamps are naive UTC (`now()` strips tzinfo before storing).
-    is_stale = now() - run.inserted_at > timedelta(seconds=TTS_SYNC_STALE_AFTER_SECONDS)
+    stale_after = timedelta(
+        seconds=settings.CELERY_TASK_TIME_LIMIT + TTS_SYNC_STALE_GRACE_SECONDS
+    )
+    is_stale = now() - run.inserted_at > stale_after
     any_dispatched = False
 
     batch_jobs: list[BatchJob] = []

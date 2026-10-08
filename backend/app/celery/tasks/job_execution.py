@@ -26,7 +26,6 @@ from opentelemetry.propagate import extract
 from app.celery.celery_app import celery_app
 from app.celery.utils import gevent_timeout
 from app.core.config import settings
-from app.services.tts_evaluations.constants import TTS_SYNC_TASK_TIME_LIMIT_SECONDS
 
 if TYPE_CHECKING:
     from app.services.notifications.eval_completion import (
@@ -430,17 +429,8 @@ def run_tts_result_processing(
     )
 
 
-# Same hard-minus-soft grace as the global limits, on top of the longer per-model soft limit.
-@celery_app.task(
-    bind=True,
-    queue="default",
-    priority=2,
-    soft_time_limit=TTS_SYNC_TASK_TIME_LIMIT_SECONDS,
-    time_limit=TTS_SYNC_TASK_TIME_LIMIT_SECONDS
-    + settings.CELERY_TASK_TIME_LIMIT
-    - settings.CELERY_TASK_SOFT_TIME_LIMIT,
-)
-@gevent_timeout(TTS_SYNC_TASK_TIME_LIMIT_SECONDS, "run_tts_sync_generation")
+@celery_app.task(bind=True, queue="default", priority=2)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_sync_generation")
 def run_tts_sync_generation(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
 ):
