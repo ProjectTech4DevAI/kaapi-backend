@@ -89,7 +89,7 @@ class TextLLMParams(ParamSerialization, SQLModel):
             "(e.g. {'type': 'enabled', 'budget_tokens': 4096})"
         ),
     )
-    thinking_level: Literal["low", "medium", "high"] | None = Field(
+    thinking_level: Literal["minimal", "low", "medium", "high"] | None = Field(
         default=None,
         description="Google thinking level for thinking-capable Gemini models",
     )

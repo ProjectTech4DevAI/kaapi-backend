@@ -318,7 +318,7 @@ class TestGoogleGCPProvider:
         assert resp.response.output.content.value == "generated answer"
         payload = mock_post.call_args.kwargs["json"]
         assert payload["contents"][0]["parts"] == [{"text": "hello"}]
-        assert payload["generationConfig"]["temperature"] == 0.2
+        assert "generationConfig" not in payload
 
     def test_raw_response_included_when_requested(
         self, provider, stt_config, query, audio_ref
@@ -334,7 +334,7 @@ class TestGoogleGCPProvider:
         assert resp.provider_raw_response == raw
 
     # ── text ─────────────────────────────────────────────────────────────────
-    def test_text_forwards_instructions_and_temperature(self, provider, query):
+    def test_text_forwards_instructions_and_drops_temperature(self, provider, query):
         config = NativeCompletionConfig(
             provider="google-native",
             type=CompletionType.TEXT,
@@ -351,7 +351,72 @@ class TestGoogleGCPProvider:
             provider.execute(config, query, "hello")
         payload = mock_post.call_args.kwargs["json"]
         assert payload["systemInstruction"] == {"parts": [{"text": "be concise"}]}
-        assert payload["generationConfig"]["temperature"] == 0.4
+        assert "generationConfig" not in payload
+
+    def test_text_thinking_config_takes_precedence_over_reasoning(
+        self, provider, query
+    ):
+        config = NativeCompletionConfig(
+            provider="google-native",
+            type=CompletionType.TEXT,
+            params={
+                "model": "gemini-2.5-flash",
+                "thinking_config": {"thinking_level": "high"},
+                "reasoning": "low",
+            },
+        )
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(_stt_response("hi there")),
+        ) as mock_post:
+            provider.execute(config, query, "hello")
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["generationConfig"] == {
+            "thinkingConfig": {"thinkingLevel": "high"}
+        }
+
+    def test_text_reasoning_used_as_thinking_level_fallback(self, provider, query):
+        config = NativeCompletionConfig(
+            provider="google-native",
+            type=CompletionType.TEXT,
+            params={"model": "gemini-2.5-flash", "reasoning": "minimal"},
+        )
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(_stt_response("hi there")),
+        ) as mock_post:
+            provider.execute(config, query, "hello")
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["generationConfig"] == {
+            "thinkingConfig": {"thinkingLevel": "minimal"}
+        }
+
+    def test_stt_defaults_thinking_level_to_low_and_drops_temperature(
+        self, provider, stt_config, query, audio_ref
+    ):
+        stt_config.params["temperature"] = 0.3
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(_stt_response("hi there")),
+        ) as mock_post:
+            resp, err = provider.execute(stt_config, query, audio_ref)
+        assert err is None
+        assert mock_post.call_args.kwargs["json"]["generationConfig"] == {
+            "maxOutputTokens": 2048,
+            "thinkingConfig": {"thinkingLevel": "low"},
+        }
+
+    def test_stt_explicit_thinking_level_overrides_default(
+        self, provider, stt_config, query, audio_ref
+    ):
+        stt_config.params["thinking_level"] = "high"
+        with patch(
+            "app.services.llm.providers.google_gcp.requests.post",
+            return_value=_mock_http_ok(_stt_response("hi there")),
+        ) as mock_post:
+            provider.execute(stt_config, query, audio_ref)
+        generation_config = mock_post.call_args.kwargs["json"]["generationConfig"]
+        assert generation_config["thinkingConfig"] == {"thinkingLevel": "high"}
 
     def test_text_accepts_multimodal_list_input(self, provider, query):
         config = NativeCompletionConfig(

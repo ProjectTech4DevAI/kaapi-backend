@@ -32,7 +32,6 @@ from app.models.llm.constants import (
     DEFAULT_TTS_VOICE,
     CompletionType,
 )
-from app.models.llm.request import ImageContent, PDFContent
 from app.models.llm.response import AudioContent, AudioOutput
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
 
@@ -313,106 +312,6 @@ class GoogleGCPProvider(BaseProvider):
             reasoning_tokens=reasoning_tokens,
         )
 
-    @staticmethod
-    def _format_content_parts(parts: list[ContentPart]) -> list[dict]:
-        """Render Kaapi content parts as GCP REST `parts` entries (camelCase
-        keys, matching the generateContent wire format used elsewhere in
-        this file — not the genai SDK's snake_case Python bindings)."""
-        items = []
-        for part in parts:
-            if isinstance(part, TextContent):
-                items.append({"text": part.value})
-            elif isinstance(part, (ImageContent, PDFContent)):
-                if part.format == "base64":
-                    items.append(
-                        {"inlineData": {"mimeType": part.mime_type, "data": part.value}}
-                    )
-                else:
-                    items.append(
-                        {
-                            "fileData": {
-                                "mimeType": part.mime_type,
-                                "fileUri": part.value,
-                            }
-                        }
-                    )
-        return items
-
-    def _execute_text(
-        self,
-        completion_config: NativeCompletionConfig,
-        resolved_input: str | list[ContentPart] | MultiModalInput,
-        include_provider_raw_response: bool = False,
-    ) -> tuple[LLMCallResponse | None, str | None]:
-        """Execute a text completion via Google GCP generateContent."""
-        provider = completion_config.provider
-        params = completion_config.params
-
-        if isinstance(resolved_input, MultiModalInput):
-            gemini_parts = self._format_content_parts(resolved_input.parts)
-        elif isinstance(resolved_input, list):
-            gemini_parts = self._format_content_parts(resolved_input)
-        else:
-            gemini_parts = [{"text": resolved_input}]
-
-        model = params.get("model") or DEFAULT_TEXT_MODELS["google"]
-        instructions = params.get("instructions")
-        temperature = params.get("temperature")
-
-        payload: dict[str, Any] = {
-            "contents": [{"role": "user", "parts": gemini_parts}],
-        }
-        if instructions:
-            payload["systemInstruction"] = {"parts": [{"text": instructions}]}
-
-        generation_config: dict[str, Any] = {}
-        if temperature is not None:
-            generation_config["temperature"] = temperature
-        if generation_config:
-            payload["generationConfig"] = generation_config
-
-        data, err = self._post(
-            model, payload, log_context=f"provider={provider}, type=text"
-        )
-        if err:
-            return None, err
-
-        try:
-            text = data["candidates"][0]["content"]["parts"][0]["text"]
-        except (KeyError, IndexError, TypeError):
-            error_message = (
-                "[GOOGLE_GCP] Text response is missing generated content. "
-                "Google GCP returned a 200 response but the expected "
-                "candidates[0].content.parts[0].text path is absent — this "
-                "typically means the response was blocked by safety filters "
-                "or truncated. Review the prompt and safety settings, then "
-                "retry."
-            )
-            logger.warning(
-                f"[GoogleGCPProvider._execute_text] {error_message} | "
-                f"provider={provider}, model={model}, response_id={data.get('responseId')}"
-            )
-            return None, error_message
-
-        llm_response = LLMCallResponse(
-            response=LLMResponse(
-                provider_response_id=data.get("responseId")
-                or f"google-gcp-{uuid.uuid4().hex}",
-                model=data.get("modelVersion") or model,
-                provider=provider,
-                output=TextOutput(content=TextContent(value=text)),
-            ),
-            usage=self._extract_usage(data),
-        )
-
-        if include_provider_raw_response:
-            llm_response.provider_raw_response = data
-
-        logger.info(
-            f"[GoogleGCPProvider._execute_text] Generated text response | provider={provider}, model={model}"
-        )
-        return llm_response, None
-
     def _execute_stt(
         self,
         completion_config: NativeCompletionConfig,
@@ -492,8 +391,8 @@ class GoogleGCPProvider(BaseProvider):
         instructions = params.get("instructions")
         input_language = params.get("input_language") or "auto"
         output_language = params.get("output_language")
-        temperature = params.get("temperature")
         max_output_tokens = params.get("max_output_tokens") or 2048
+        thinking_level = params.get("thinking_level") or "low"
 
         # Build transcription/translation instruction
         if input_language == "auto":
@@ -515,9 +414,10 @@ class GoogleGCPProvider(BaseProvider):
         else:
             prompt = f"{lang_instruction}. {forced}"
 
-        generation_config: dict[str, Any] = {"maxOutputTokens": max_output_tokens}
-        if temperature is not None:
-            generation_config["temperature"] = temperature
+        generation_config: dict[str, Any] = {
+            "maxOutputTokens": max_output_tokens,
+            "thinkingConfig": {"thinkingLevel": thinking_level},
+        }
 
         payload = {
             "contents": [
@@ -808,12 +708,14 @@ class GoogleGCPProvider(BaseProvider):
             parts = [{"text": resolved_input}]
 
         instructions = params.get("instructions")
-        temperature = params.get("temperature")
         max_output_tokens = params.get("max_output_tokens")
+        thinking_level = (params.get("thinking_config") or {}).get(
+            "thinking_level"
+        ) or params.get("reasoning")
 
         generation_config: dict[str, Any] = {}
-        if temperature is not None:
-            generation_config["temperature"] = temperature
+        if thinking_level:
+            generation_config["thinkingConfig"] = {"thinkingLevel": thinking_level}
         if max_output_tokens is not None:
             generation_config["maxOutputTokens"] = max_output_tokens
 

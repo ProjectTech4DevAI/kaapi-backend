@@ -1,29 +1,33 @@
-import logging
 import base64
-from typing import Any
+import io
+import logging
+import wave
+from typing import Any, cast
+
 from google import genai
 from google.genai import errors as genai_errors
-from google.genai.types import (
-    FileSearch,
-    GenerateContentResponse,
-    GenerateContentConfig,
-    ThinkingConfig,
-    SpeechConfig,
-    Tool,
-    VoiceConfig,
-    PrebuiltVoiceConfig,
-)
 
+# Interactions raises its own error hierarchy, not google.genai.errors; in
+# google-genai 2.29 this private module is the only path that exports it.
+from google.genai._gaos.lib import compat_errors as interactions_errors
+from google.genai.interactions import Interaction
+
+from app.core.audio_utils import (
+    AudioRef,
+    convert_pcm_to_mp3,
+    convert_pcm_to_ogg,
+    pcm_to_wav,
+)
 from app.models.llm import (
-    NativeCompletionConfig,
-    LLMCallResponse,
-    QueryParams,
-    LLMResponse,
-    Usage,
-    TextOutput,
-    TextContent,
     ImageContent,
+    LLMCallResponse,
+    LLMResponse,
+    NativeCompletionConfig,
     PDFContent,
+    QueryParams,
+    TextContent,
+    TextOutput,
+    Usage,
 )
 from app.models.llm.constants import (
     DEFAULT_STT_MODEL,
@@ -32,15 +36,8 @@ from app.models.llm.constants import (
     DEFAULT_TTS_VOICE,
     CompletionType,
 )
-from app.models.llm.response import AudioOutput, AudioContent
+from app.models.llm.response import AudioContent, AudioOutput
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
-from app.services.llm.mappers import BCP47_LOCALE_TO_GEMINI_LANG
-from app.core.audio_utils import (
-    AudioRef,
-    convert_pcm_to_mp3,
-    convert_pcm_to_ogg,
-    pcm_to_wav,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -64,53 +61,48 @@ class GoogleAIProvider(BaseProvider):
     @staticmethod
     def format_parts(
         parts: list[ContentPart],
-    ) -> list[dict]:
-        items = []
+    ) -> list[dict[str, Any]]:
+        """Render Kaapi content parts as Interactions content items."""
+        items: list[dict[str, Any]] = []
         for part in parts:
             if isinstance(part, TextContent):
-                items.append({"text": part.value})
+                items.append({"type": "text", "text": part.value})
+                continue
 
-            elif isinstance(part, ImageContent):
-                if part.format == "base64":
-                    items.append(
-                        {
-                            "inline_data": {
-                                "data": part.value,
-                                "mime_type": part.mime_type,
-                            }
-                        }
-                    )
-                else:
-                    items.append(
-                        {
-                            "file_data": {
-                                "file_uri": part.value,
-                                "mime_type": part.mime_type,
-                                "display_name": None,
-                            }
-                        }
-                    )
+            if isinstance(part, ImageContent):
+                item: dict[str, Any] = {"type": "image"}
             elif isinstance(part, PDFContent):
-                if part.format == "base64":
-                    items.append(
-                        {
-                            "inline_data": {
-                                "data": part.value,
-                                "mime_type": part.mime_type,
-                            }
-                        }
-                    )
-                else:
-                    items.append(
-                        {
-                            "file_data": {
-                                "file_uri": part.value,
-                                "mime_type": part.mime_type,
-                                "display_name": None,
-                            }
-                        }
-                    )
+                item = {"type": "document"}
+            else:
+                continue
+
+            if part.format == "base64":
+                item["data"] = part.value
+            else:
+                item["uri"] = part.value
+            if part.mime_type:
+                item["mime_type"] = part.mime_type
+            items.append(item)
         return items
+
+    @staticmethod
+    def _extract_usage(interaction: Interaction, provider: str) -> Usage:
+        usage = interaction.usage
+        if usage is None:
+            logger.warning(
+                f"[GoogleAIProvider._extract_usage] Interaction missing usage, using zeros | "
+                f"provider={provider}, interaction_id={interaction.id}"
+            )
+            return Usage(
+                input_tokens=0, output_tokens=0, total_tokens=0, reasoning_tokens=0
+            )
+
+        return Usage(
+            input_tokens=usage.total_input_tokens or 0,
+            output_tokens=usage.total_output_tokens or 0,
+            total_tokens=usage.total_tokens or 0,
+            reasoning_tokens=usage.total_thought_tokens or 0,
+        )
 
     def _execute_stt(
         self,
@@ -147,9 +139,8 @@ class GoogleAIProvider(BaseProvider):
         instructions = generation_params.get("instructions", "")
         input_language = generation_params.get("input_language") or "auto"
         output_language = generation_params.get("output_language", "")
-        temperature = generation_params.get("temperature") or 0.0
+        thinking_level = generation_params.get("thinking_level") or "low"
 
-        # Build transcription/translation instruction
         if input_language == "auto":
             lang_instruction = (
                 "Detect the spoken language automatically and transcribe the audio"
@@ -161,7 +152,6 @@ class GoogleAIProvider(BaseProvider):
             lang_instruction += f" and translate to {output_language} in the native script of {output_language} and only return transcribed script in {output_language}."
 
         forced_transcription_text = "Only return transcribed text and no other text."
-        # Merge user instructions with language instructions
         if instructions:
             merged_instruction = (
                 f"{instructions}. {lang_instruction}. {forced_transcription_text}"
@@ -170,43 +160,49 @@ class GoogleAIProvider(BaseProvider):
             merged_instruction = f"{lang_instruction}. {forced_transcription_text}"
 
         logger.info(
-            f"The merged instructions is {merged_instruction} and output language is {output_language} and input language is {input_language}"
+            f"[GoogleAIProvider._execute_stt] Built transcription prompt | "
+            f"provider={provider}, model={model}, input_language={input_language}, "
+            f"output_language={output_language}"
         )
 
-        # Materialize the AudioRef to a temp file so the genai SDK can upload it.
         with resolved_input.to_path() as audio_path:
             gemini_file = self.client.files.upload(file=audio_path)
 
-        contents = []
-        if merged_instruction:
-            contents.append(merged_instruction)
-        contents.append(gemini_file)
-
-        response: GenerateContentResponse = self.client.models.generate_content(
-            model=model,
-            contents=contents,
-            # TODO switch back default thinking configs for reasoning supported models in future
-            config=GenerateContentConfig(
-                thinking_config=ThinkingConfig(
-                    include_thoughts=True, thinking_budget=1000
-                ),
-                temperature=temperature,
+        interaction = cast(
+            Interaction,
+            self.client.interactions.create(
+                model=model,
+                input=[
+                    {
+                        "type": "user_input",
+                        "content": [
+                            {"type": "text", "text": merged_instruction},
+                            {
+                                "type": "audio",
+                                "uri": gemini_file.uri,
+                                "mime_type": gemini_file.mime_type,
+                            },
+                        ],
+                    }
+                ],
+                generation_config={"thinking_level": thinking_level},
             ),
         )
 
-        # Validate response has required fields
-        if not response.response_id:
+        response_id = interaction.id
+        if not response_id or interaction.status != "completed":
             error_message = (
-                "[GEMINI] STT response is missing a response_id. This indicates "
-                "an unexpected upstream payload from Gemini. Retry the request; "
-                "if the issue persists, contact Kaapi."
+                f"[GEMINI] STT interaction did not complete (status="
+                f"{interaction.status}, errors={interaction.errors}). Retry the "
+                f"request; if the issue persists, contact Kaapi."
             )
             logger.warning(
-                f"[GoogleAIProvider._execute_stt] {error_message} | provider={provider}, model={model}"
+                f"[GoogleAIProvider._execute_stt] {error_message} | "
+                f"provider={provider}, model={model}, response_id={response_id}"
             )
             return None, error_message
 
-        if not response.text:
+        if not interaction.output_text:
             error_message = (
                 "[GEMINI] STT response is missing transcribed text. Gemini "
                 "returned an empty result — verify the audio is audible and in "
@@ -215,51 +211,30 @@ class GoogleAIProvider(BaseProvider):
             )
             logger.warning(
                 f"[GoogleAIProvider._execute_stt] {error_message} | "
-                f"provider={provider}, model={model}, response_id={response.response_id}"
+                f"provider={provider}, model={model}, response_id={response_id}"
             )
             return None, error_message
 
-        # Extract usage metadata with null checks
-        if response.usage_metadata:
-            input_tokens = response.usage_metadata.prompt_token_count or 0
-            output_tokens = response.usage_metadata.candidates_token_count or 0
-            total_tokens = response.usage_metadata.total_token_count or 0
-            reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
-        else:
-            logger.warning(
-                f"[GoogleAIProvider._execute_stt] Response missing usage_metadata, using zeros | provider={provider}"
-            )
-            input_tokens = 0
-            output_tokens = 0
-            total_tokens = 0
-            reasoning_tokens = 0
-
-        # Build response
         llm_response = LLMCallResponse(
             response=LLMResponse(
-                provider_response_id=response.response_id,
-                model=response.model_version or model,
+                provider_response_id=response_id,
+                model=interaction.model or model,
                 provider=provider,
                 output=TextOutput(
                     content=TextContent(
-                        value=response.text, language_code=output_language
+                        value=interaction.output_text, language_code=output_language
                     )
                 ),
             ),
-            usage=Usage(
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=total_tokens,
-                reasoning_tokens=reasoning_tokens,
-            ),
+            usage=self._extract_usage(interaction, provider),
         )
 
         if include_provider_raw_response:
-            llm_response.provider_raw_response = response.model_dump()
+            llm_response.provider_raw_response = interaction.model_dump(mode="json")
 
         logger.info(
             f"[GoogleAIProvider._execute_stt] Successfully generated STT response | "
-            f"request_id={response.response_id}, provider={provider}, model={model}"
+            f"request_id={response_id}, provider={provider}, model={model}"
         )
 
         return llm_response, None
@@ -283,7 +258,6 @@ class GoogleAIProvider(BaseProvider):
         provider = completion_config.provider
         generation_params = completion_config.params
 
-        # Validate input is a text string
         if not isinstance(resolved_input, str):
             error_message = (
                 f"[KAAPI] TTS validation failed: {provider} TTS requires a text "
@@ -305,54 +279,53 @@ class GoogleAIProvider(BaseProvider):
             )
             return None, error_message
 
-        # Extract params with defaults (language is optional — Gemini auto-detects from script)
         model = generation_params.get("model") or DEFAULT_TTS_MODEL
         voice = generation_params.get("voice") or DEFAULT_TTS_VOICE
-
+        # Optional: Gemini auto-detects the language from the script when unset.
         language = generation_params.get("language")
-
-        # Extract optional params
         response_format = generation_params.get("response_format", "wav")
 
-        # Extract Gemini-specific params from provider_specific.gemini
         provider_specific = generation_params.get("provider_specific", {})
         gemini_params = provider_specific.get("gemini", {})
-
         director_notes = gemini_params.get("director_notes", "")
-        # Build Gemini TTS config
-        config_kwargs = {
-            "response_modalities": ["AUDIO"],
-            "speech_config": SpeechConfig(
-                voice_config=VoiceConfig(
-                    prebuilt_voice_config=PrebuiltVoiceConfig(voice_name=voice)
-                ),
-                language_code=language,
-            ),
+
+        transcript: dict[str, Any] = {
+            "type": "text",
+            "text": f"<transcript>{resolved_input}</transcript>",
         }
-
         if director_notes:
-            config_kwargs["system_instruction"] = director_notes
+            transcript["annotations"] = [
+                {"type": "speech_metadata", "style": director_notes}
+            ]
 
-        config = GenerateContentConfig(**config_kwargs)
-        decorated_resolved_input = f"<transcript>{resolved_input}</transcript>"
-        # Execute TTS
-        response: GenerateContentResponse = self.client.models.generate_content(
-            model=model, contents=decorated_resolved_input, config=config
+        speech_config: dict[str, Any] = {"voice": voice}
+        if language:
+            speech_config["language"] = language
+
+        interaction = cast(
+            Interaction,
+            self.client.interactions.create(
+                model=model,
+                input=[{"type": "user_input", "content": [transcript]}],
+                generation_config={"speech_config": [speech_config]},
+                response_format={"type": "audio"},
+            ),
         )
-        if not response.response_id:
+
+        response_id = interaction.id
+        if not response_id or interaction.status != "completed":
             error_message = (
-                "[GEMINI] TTS response is missing a response_id. This indicates "
-                "an unexpected upstream payload from Gemini. Retry the request; "
-                "if the issue persists, contact Kaapi."
+                f"[GEMINI] TTS interaction did not complete (status="
+                f"{interaction.status}, errors={interaction.errors}). Retry the "
+                f"request; if the issue persists, contact Kaapi."
             )
             logger.warning(
-                f"[GoogleAIProvider._execute_tts] {error_message} | provider={provider}, model={model}"
+                f"[GoogleAIProvider._execute_tts] {error_message} | "
+                f"provider={provider}, model={model}, response_id={response_id}"
             )
             return None, error_message
-        try:
-            raw_audio_bytes = response.candidates[0].content.parts[0].inline_data.data
 
-        except (IndexError, AttributeError) as e:
+        if interaction.output_audio is None:
             error_message = (
                 "[GEMINI] Failed to extract audio bytes from TTS response: "
                 "Gemini was unable to generate audio from the provided input. "
@@ -362,12 +335,11 @@ class GoogleAIProvider(BaseProvider):
             )
             logger.warning(
                 f"[GoogleAIProvider._execute_tts] {error_message} | "
-                f"provider={provider}, model={model}, response_id={response.response_id}, cause={type(e).__name__}",
-                exc_info=True,
+                f"provider={provider}, model={model}, response_id={response_id}"
             )
             return None, error_message
 
-        if not raw_audio_bytes:
+        if not interaction.output_audio.data:
             error_message = (
                 "[GEMINI] TTS response is missing generated audio data. This is "
                 "typically a Gemini server-side error. Wait a minute and retry; "
@@ -375,111 +347,82 @@ class GoogleAIProvider(BaseProvider):
             )
             logger.warning(
                 f"[GoogleAIProvider._execute_tts] {error_message} | "
-                f"provider={provider}, model={model}, response_id={response.response_id}"
+                f"provider={provider}, model={model}, response_id={response_id}"
             )
             return None, error_message
 
-        # Post-process audio format conversion if needed
-        # Gemini TTS natively outputs 24kHz 16-bit raw PCM — wrap in WAV container
+        raw_audio_bytes = base64.b64decode(interaction.output_audio.data)
+        # Preview TTS models return headerless 24 kHz PCM (and reject audio/l16),
+        # while 3.8+ return a full WAV; normalise to PCM for pcm_to_wav / convert_pcm_to_*.
+        if raw_audio_bytes.startswith(b"RIFF"):
+            with wave.open(io.BytesIO(raw_audio_bytes), "rb") as wav_file:
+                raw_audio_bytes = wav_file.readframes(wav_file.getnframes())
+
         actual_format = "wav"
-        wav_bytes = pcm_to_wav(raw_audio_bytes)
-        encoded_content = base64.b64encode(wav_bytes).decode("ascii")
-
-        if response_format and response_format != "wav":
-            # Need to convert from WAV to requested format
-            logger.info(
-                f"[GoogleAIProvider._execute_tts] Converting audio from WAV to {response_format} | provider={provider}"
-            )
-
-            if response_format == "mp3":
-                converted_bytes, convert_error = convert_pcm_to_mp3(raw_audio_bytes)
-                if convert_error:
-                    error_message = (
-                        f"[KAAPI] Post-processing failure: unable to convert "
-                        f"Gemini PCM audio to MP3 ({convert_error}). Falling "
-                        f"back to WAV is possible by setting response_format='wav'."
-                    )
-                    logger.error(
-                        f"[GoogleAIProvider._execute_tts] {error_message} | "
-                        f"provider={provider}, model={model}, pcm_bytes={len(raw_audio_bytes)}"
-                    )
-                    return None, error_message
-                encoded_content = base64.b64encode(converted_bytes or b"").decode(
-                    "ascii"
+        if response_format == "mp3":
+            converted_bytes, convert_error = convert_pcm_to_mp3(raw_audio_bytes)
+            if convert_error:
+                error_message = (
+                    f"[KAAPI] Post-processing failure: unable to convert "
+                    f"Gemini PCM audio to MP3 ({convert_error}). Falling "
+                    f"back to WAV is possible by setting response_format='wav'."
                 )
-                actual_format = "mp3"
-
-            elif response_format == "ogg":
-                converted_bytes, convert_error = convert_pcm_to_ogg(raw_audio_bytes)
-                if convert_error:
-                    error_message = (
-                        f"[KAAPI] Post-processing failure: unable to convert "
-                        f"Gemini PCM audio to OGG ({convert_error}). Falling "
-                        f"back to WAV is possible by setting response_format='wav'."
-                    )
-                    logger.error(
-                        f"[GoogleAIProvider._execute_tts] {error_message} | "
-                        f"provider={provider}, model={model}, pcm_bytes={len(raw_audio_bytes)}"
-                    )
-                    return None, error_message
-                encoded_content = base64.b64encode(converted_bytes or b"").decode(
-                    "ascii"
+                logger.error(
+                    f"[GoogleAIProvider._execute_tts] {error_message} | "
+                    f"provider={provider}, model={model}, pcm_bytes={len(raw_audio_bytes)}"
                 )
-                actual_format = "ogg"
-            else:
-                logger.warning(
-                    f"[GoogleAIProvider._execute_tts] Unsupported response_format '{response_format}', returning native WAV | provider={provider}"
-                )
-                response_format = "wav"
-            logger.info(
-                f"[GoogleAIProvider._execute_tts] Audio conversion successful: {actual_format.upper()} ({len(raw_audio_bytes)} bytes) | provider={provider}"
-            )
-        response_mime_type = f"audio/{response_format}"
+                return None, error_message
+            encoded_content = base64.b64encode(converted_bytes or b"").decode("ascii")
+            actual_format = "mp3"
 
-        # Extract usage metadata
-        if response.usage_metadata:
-            input_tokens = response.usage_metadata.prompt_token_count or 0
-            output_tokens = response.usage_metadata.candidates_token_count or 0
-            total_tokens = response.usage_metadata.total_token_count or 0
-            reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
+        elif response_format == "ogg":
+            converted_bytes, convert_error = convert_pcm_to_ogg(raw_audio_bytes)
+            if convert_error:
+                error_message = (
+                    f"[KAAPI] Post-processing failure: unable to convert "
+                    f"Gemini PCM audio to OGG ({convert_error}). Falling "
+                    f"back to WAV is possible by setting response_format='wav'."
+                )
+                logger.error(
+                    f"[GoogleAIProvider._execute_tts] {error_message} | "
+                    f"provider={provider}, model={model}, pcm_bytes={len(raw_audio_bytes)}"
+                )
+                return None, error_message
+            encoded_content = base64.b64encode(converted_bytes or b"").decode("ascii")
+            actual_format = "ogg"
+
         else:
-            logger.warning(
-                f"[GoogleAIProvider._execute_tts] Response missing usage_metadata, using zeros | provider={provider}"
+            if response_format and response_format != "wav":
+                logger.warning(
+                    f"[GoogleAIProvider._execute_tts] Unsupported response_format "
+                    f"'{response_format}', returning native WAV | provider={provider}"
+                )
+            encoded_content = base64.b64encode(pcm_to_wav(raw_audio_bytes)).decode(
+                "ascii"
             )
-            input_tokens = 0
-            output_tokens = 0
-            total_tokens = 0
-            reasoning_tokens = 0
 
-        # Build response
         llm_response = LLMCallResponse(
             response=LLMResponse(
-                provider_response_id=response.response_id,
-                model=response.model_version or model,
+                provider_response_id=response_id,
+                model=interaction.model or model,
                 provider=provider,
-                # output=LLMOutput(audio_bytes=audio_bytes, audio_format=actual_format),
                 output=AudioOutput(
                     content=AudioContent(
                         format="base64",
                         value=encoded_content,
-                        mime_type=response_mime_type,
+                        mime_type=f"audio/{actual_format}",
                     )
                 ),
             ),
-            usage=Usage(
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=total_tokens,
-                reasoning_tokens=reasoning_tokens,
-            ),
+            usage=self._extract_usage(interaction, provider),
         )
 
         if include_provider_raw_response:
-            llm_response.provider_raw_response = response.model_dump()
+            llm_response.provider_raw_response = interaction.model_dump(mode="json")
 
         logger.info(
             f"[GoogleAIProvider._execute_tts] Successfully generated TTS response | "
-            f"request_id={response.response_id}, provider={provider}, model={model}, audio_size={len(raw_audio_bytes)} bytes"
+            f"request_id={response_id}, provider={provider}, model={model}, audio_size={len(raw_audio_bytes)} bytes"
         )
 
         return llm_response, None
@@ -490,122 +433,91 @@ class GoogleAIProvider(BaseProvider):
         resolved_input: str | list[ContentPart] | MultiModalInput,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
-        model = completion_config.params.get("model") or DEFAULT_TEXT_MODELS["google"]
+        provider = completion_config.provider
+        params = completion_config.params
+        model = params.get("model") or DEFAULT_TEXT_MODELS["google"]
 
         if isinstance(resolved_input, MultiModalInput):
-            gemini_parts = self.format_parts(resolved_input.parts)
-            contents = [{"role": "user", "parts": gemini_parts}]
+            content = self.format_parts(resolved_input.parts)
         elif isinstance(resolved_input, list):
-            gemini_parts = self.format_parts(resolved_input)
-            contents = [{"role": "user", "parts": gemini_parts}]
+            content = self.format_parts(resolved_input)
         else:
-            contents = [{"role": "user", "parts": [{"text": resolved_input}]}]
+            content = [{"type": "text", "text": resolved_input}]
 
-        instructions = completion_config.params.get("instructions", "")
-        temperature = completion_config.params.get("temperature", None)
-        thinking_level = completion_config.params.get("reasoning", None)
-        knowledge_base_ids = completion_config.params.get("knowledge_base_ids", None)
+        instructions = params.get("instructions")
+        # Kaapi configs carry thinking_config.thinking_level; native configs use reasoning.
+        thinking_level = (params.get("thinking_config") or {}).get(
+            "thinking_level"
+        ) or params.get("reasoning")
+        max_output_tokens = params.get("max_output_tokens")
+        knowledge_base_ids = params.get("knowledge_base_ids")
 
-        generation_kwargs = {}
+        request: dict[str, Any] = {
+            "model": model,
+            "input": [{"type": "user_input", "content": content}],
+        }
         if instructions:
-            generation_kwargs["system_instruction"] = instructions
+            request["system_instruction"] = instructions
 
-        if temperature is not None:
-            generation_kwargs["temperature"] = temperature
-
-        if thinking_level is not None:
-            generation_kwargs["thinking_config"] = ThinkingConfig(
-                include_thoughts=False, thinking_level=thinking_level
-            )
+        generation_config: dict[str, Any] = {}
+        if thinking_level:
+            generation_config["thinking_level"] = thinking_level
+        if max_output_tokens is not None:
+            generation_config["max_output_tokens"] = max_output_tokens
+        if generation_config:
+            request["generation_config"] = generation_config
 
         if knowledge_base_ids:
-            generation_kwargs["tools"] = [
-                Tool(file_search=FileSearch(file_search_store_names=knowledge_base_ids))
+            request["tools"] = [
+                {"type": "file_search", "file_search_store_names": knowledge_base_ids}
             ]
 
-        response = self.client.models.generate_content(
-            model=model,
-            contents=contents,
-            config=GenerateContentConfig(**generation_kwargs),
-        )
+        # create() is typed Interaction | Stream; we never pass stream=True.
+        interaction = cast(Interaction, self.client.interactions.create(**request))
 
-        provider = completion_config.provider
-
-        if not response.response_id:
+        response_id = interaction.id
+        if not response_id or interaction.status != "completed":
             error_message = (
-                "[GEMINI] Text response is missing a response_id. This "
-                "indicates an unexpected upstream payload from Gemini. Retry "
-                "the request; if the issue persists, contact Kaapi."
-            )
-            logger.warning(
-                f"[GoogleAIProvider._execute_text] {error_message} | provider={provider}, model={model}"
-            )
-            return None, error_message
-
-        if not response.text:
-            # Gemini commonly returns no text when the response is blocked by
-            # safety filters or when the candidate finishes with a non-STOP
-            # reason. Surface the finish_reason / block_reason if available so
-            # the caller can act on it.
-            finish_reason = None
-            block_reason = None
-            try:
-                finish_reason = response.candidates[0].finish_reason
-            except (IndexError, AttributeError):
-                pass
-            try:
-                block_reason = response.prompt_feedback.block_reason
-            except AttributeError:
-                pass
-
-            error_message = (
-                f"[GEMINI] Text response is missing generated content "
-                f"(finish_reason={finish_reason}, block_reason={block_reason}). "
-                f"This typically means the response was blocked by Gemini's "
-                f"safety filters, truncated by token limits, or the model "
-                f"returned no candidates. Review the prompt and safety "
-                f"settings, then retry."
+                f"[GEMINI] Text interaction did not complete (status="
+                f"{interaction.status}, errors={interaction.errors}). This "
+                f"typically means the response was blocked by Gemini's safety "
+                f"filters or failed upstream. Review the prompt, then retry."
             )
             logger.warning(
                 f"[GoogleAIProvider._execute_text] {error_message} | "
-                f"provider={provider}, model={model}, response_id={response.response_id}"
+                f"provider={provider}, model={model}, response_id={response_id}"
             )
             return None, error_message
 
-        if response.usage_metadata:
-            input_tokens = response.usage_metadata.prompt_token_count or 0
-            output_tokens = response.usage_metadata.candidates_token_count or 0
-            total_tokens = response.usage_metadata.total_token_count or 0
-            reasoning_tokens = response.usage_metadata.thoughts_token_count or 0
-        else:
-            logger.warning(
-                f"[GoogleAIProvider._execute_text] Response missing usage_metadata, using zeros | provider={completion_config.provider}"
+        if not interaction.output_text:
+            error_message = (
+                f"[GEMINI] Text response is missing generated content "
+                f"(status={interaction.status}). This typically means the "
+                f"model returned no text output — e.g. the response was blocked "
+                f"by Gemini's safety filters or consumed by thinking tokens. "
+                f"Review the prompt and token limits, then retry."
             )
-            input_tokens = 0
-            output_tokens = 0
-            total_tokens = 0
-            reasoning_tokens = 0
+            logger.warning(
+                f"[GoogleAIProvider._execute_text] {error_message} | "
+                f"provider={provider}, model={model}, response_id={response_id}"
+            )
+            return None, error_message
 
         llm_response = LLMCallResponse(
             response=LLMResponse(
-                provider_response_id=response.response_id,
-                model=response.model_version or model,
-                provider=completion_config.provider,
-                output=TextOutput(content=TextContent(value=response.text)),
+                provider_response_id=response_id,
+                model=interaction.model or model,
+                provider=provider,
+                output=TextOutput(content=TextContent(value=interaction.output_text)),
             ),
-            usage=Usage(
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                total_tokens=total_tokens,
-                reasoning_tokens=reasoning_tokens,
-            ),
+            usage=self._extract_usage(interaction, provider),
         )
         if include_provider_raw_response:
-            llm_response.provider_raw_response = response.model_dump(mode="json")
+            llm_response.provider_raw_response = interaction.model_dump(mode="json")
 
         logger.info(
             f"[GoogleAIProvider._execute_text] Successfully generated text response | "
-            f"request_id={response.response_id}, provider={completion_config.provider}, model={model}"
+            f"request_id={response_id}, provider={provider}, model={model}"
         )
         return llm_response, None
 
@@ -616,8 +528,9 @@ class GoogleAIProvider(BaseProvider):
         resolved_input: str | list[ContentPart] | MultiModalInput,
         include_provider_raw_response: bool = False,
     ) -> tuple[LLMCallResponse | None, str | None]:
+        provider = completion_config.provider
+        completion_type = completion_config.type
         try:
-            completion_type = completion_config.type
             if completion_type == CompletionType.STT:
                 return self._execute_stt(
                     completion_config=completion_config,
@@ -647,7 +560,69 @@ class GoogleAIProvider(BaseProvider):
             )
             logger.warning(
                 f"[GoogleAIProvider.execute] {error_message} | "
-                f"provider={completion_config.provider}, type={completion_type}",
+                f"provider={provider}, type={completion_type}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except interactions_errors.APIStatusError as e:
+            code = e.status_code
+            if code == 429:
+                error_message = (
+                    f"[GEMINI] Rate limit / quota exceeded (code: 429): "
+                    f"{e.message}. You have hit Gemini's per-minute or per-day "
+                    f"quota for this model. Wait at least 1 minute and retry; "
+                    f"if the issue persists, request a quota increase from "
+                    f"Google or contact Kaapi."
+                )
+            elif code in (401, 403):
+                error_message = (
+                    f"[GEMINI] Authentication / permission denied (code: "
+                    f"{code}): {e.message}. Verify the Gemini API key is valid, "
+                    f"not expired, and has access to the requested model and "
+                    f"project."
+                )
+            elif code == 404:
+                error_message = (
+                    f"[GEMINI] Resource not found (code: 404): {e.message}. "
+                    f"Check that the model name and any referenced IDs in "
+                    f"your config are correct and available in your region."
+                )
+            elif code == 400:
+                error_message = (
+                    f"[GEMINI] Bad request (code: 400): {e.message}. Review "
+                    f"your config parameters and input payload — the request "
+                    f"shape, model, or content may be invalid for this Gemini "
+                    f"endpoint."
+                )
+            elif code is not None and code >= 500:
+                error_message = (
+                    f"[GEMINI] Server error (code: {code}): {e.message}. This "
+                    f"is typically transient (Gemini overloaded, internal "
+                    f"error, or deadline exceeded) — retry in a few seconds. "
+                    f"If the issue persists, contact Kaapi."
+                )
+            else:
+                error_message = (
+                    f"[GEMINI] Client error (code: {code}): {e.message}. "
+                    f"Review the request configuration; if the issue persists, "
+                    f"contact Kaapi."
+                )
+            logger.warning(
+                f"[GoogleAIProvider.execute] {error_message} | "
+                f"provider={provider}, type={completion_type}",
+                exc_info=True,
+            )
+            return None, error_message
+
+        except interactions_errors.APIConnectionError as e:
+            error_message = (
+                f"[KAAPI] Could not reach Gemini ({type(e).__name__}): {e}. "
+                f"Retry the request; if the issue persists, contact Kaapi."
+            )
+            logger.error(
+                f"[GoogleAIProvider.execute] {error_message} | "
+                f"provider={provider}, type={completion_type}",
                 exc_info=True,
             )
             return None, error_message
@@ -747,7 +722,16 @@ class GoogleAIProvider(BaseProvider):
                 f"failure. Contact Kaapi if the issue persists."
             )
             logger.error(
-                f"[GoogleAIProvider.execute] {error_message} | provider={completion_config.provider}",
+                f"[GoogleAIProvider.execute] {error_message} | provider={provider}",
                 exc_info=True,
             )
             return None, error_message
+
+        error_message = (
+            f"[KAAPI] Unsupported completion type '{completion_type}' for "
+            f"Gemini. Use one of: text, stt, tts."
+        )
+        logger.warning(
+            f"[GoogleAIProvider.execute] {error_message} | provider={provider}"
+        )
+        return None, error_message
