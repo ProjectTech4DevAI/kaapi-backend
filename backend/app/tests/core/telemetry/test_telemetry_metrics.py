@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 from app.core.telemetry import metrics
 
@@ -43,41 +43,3 @@ class TestRecordStalePendingJobs:
         attrs = names["jobs.pending.stale.by_dimension.count"]["attributes"]
         assert attrs["job.type"] == "llm"
         assert attrs["job.action_type"] == "call"
-
-
-class TestProcessRss:
-    def test_reads_statm_pages(self) -> None:
-        with (
-            patch("builtins.open", mock_open(read_data="100 50 10\n")),
-            patch.object(metrics.resource, "getpagesize", return_value=4096),
-        ):
-            assert metrics._current_rss_bytes() == 50 * 4096
-
-    def test_falls_back_to_rusage_without_statm(self) -> None:
-        rusage = MagicMock(ru_maxrss=7)
-        with (
-            patch("builtins.open", side_effect=OSError),
-            patch.object(metrics.resource, "getrusage", return_value=rusage),
-        ):
-            assert metrics._current_rss_bytes() == 7 * metrics._RSS_BYTES_PER_UNIT
-
-    def test_record_gauges_and_tags_span(self) -> None:
-        fake = _active_sentry()
-        span = MagicMock()
-        span.is_recording.return_value = True
-        with (
-            patch.object(metrics, "_current_rss_bytes", return_value=123),
-            patch.object(metrics, "sentry_sdk", fake),
-            patch.object(metrics.trace, "get_current_span", return_value=span),
-        ):
-            assert (
-                metrics.record_process_rss(role="task", task_name="run_llm_job") == 123
-            )
-
-        kwargs = fake.metrics.gauge.call_args.kwargs
-        assert kwargs["name"] == metrics.PROCESS_RSS_METRIC
-        assert kwargs["attributes"] == {
-            "process.role": "task",
-            "celery.task_name": "run_llm_job",
-        }
-        span.set_attribute.assert_called_once_with(metrics.PROCESS_RSS_ATTRIBUTE, 123)

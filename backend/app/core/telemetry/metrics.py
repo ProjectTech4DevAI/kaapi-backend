@@ -1,24 +1,15 @@
 """Sentry metrics emitter plus platform monitors: stale pending jobs, rate-threshold alerts."""
 
 import logging
-import resource
-import sys
-import threading
-import time
 from collections.abc import Mapping
 from typing import Literal
 
 import sentry_sdk
-from opentelemetry import trace
 
 logger = logging.getLogger(__name__)
 
 MetricType = Literal["count", "gauge", "distribution"]
 MetricAttributes = Mapping[str, str | int | float]
-PROCESS_RSS_ATTRIBUTE = "process.memory.rss"
-PROCESS_RSS_METRIC = "process.memory.rss"
-_RSS_BYTES_PER_UNIT = 1 if sys.platform == "darwin" else 1024
-_PROC_STATM = "/proc/self/statm"
 
 
 def emit_sentry_metric(
@@ -117,40 +108,3 @@ def record_rate_threshold(
             )
     except Exception as e:
         logger.exception("[record_rate_threshold] Failed to emit alert", exc_info=e)
-
-
-def _current_rss_bytes() -> int:
-    """Resident memory of this process right now; peak (ru_maxrss) is the fallback off Linux."""
-    try:
-        with open(_PROC_STATM) as statm:
-            return int(statm.read().split()[1]) * resource.getpagesize()
-    except OSError:
-        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * _RSS_BYTES_PER_UNIT
-
-
-def record_process_rss(*, role: str, task_name: str | None = None) -> int:
-    """Gauge `process.memory.rss` to Sentry and stamp it on the active span; returns bytes.
-
-    Called around each Celery task so memory growth can be attributed to a task
-    and tenant when a worker is recycled or killed for exceeding its memory limit.
-    """
-    rss = _current_rss_bytes()
-    attrs: dict[str, str | int | float] = {"process.role": role}
-    if task_name:
-        attrs["celery.task_name"] = task_name
-    emit_sentry_metric("gauge", PROCESS_RSS_METRIC, rss, unit="byte", attributes=attrs)
-    span = trace.get_current_span()
-    if span.is_recording():
-        span.set_attribute(PROCESS_RSS_ATTRIBUTE, rss)
-    return rss
-
-
-def start_process_rss_monitor(*, role: str, interval_seconds: int) -> None:
-    """Background thread gauging the worker parent process RSS every interval, since no task runs there."""
-
-    def _loop() -> None:
-        while True:
-            record_process_rss(role=role)
-            time.sleep(interval_seconds)
-
-    threading.Thread(target=_loop, name="kaapi-rss-monitor", daemon=True).start()
