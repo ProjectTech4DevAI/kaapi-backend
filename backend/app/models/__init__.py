@@ -35,6 +35,12 @@ from .batch_job import (
     BatchJobType,
     BatchJobUpdate,
 )
+from .chatbot import (
+    ChatbotMessage,
+    ChatbotMessageRoleEnum,
+    ChatbotTurnRequest,
+    ChatbotTurnResponse,
+)
 from .collection import (
     Collection,
     CollectionIDPublic,

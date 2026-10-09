@@ -36,6 +36,10 @@ tags_metadata = [
         "description": "Large Language Model inference and interaction endpoints",
     },
     {
+        "name": "Chatbot",
+        "description": "Prompt-driven conversational chatbot turns",
+    },
+    {
         "name": "Guardrails",
         "description": (
             "Text safety validation: applying guardrails to text, and managing "
@@ -104,6 +108,7 @@ tag_groups = [
             "Collections",
             "Config Management",
             "LLM",
+            "Chatbot",
             "Guardrails",
             "Evaluation",
             "Fine Tuning",

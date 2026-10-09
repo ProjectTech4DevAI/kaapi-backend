@@ -23,8 +23,8 @@ APIKey → Organization, Project, User  # programmatic access
 | User | user.py | — | UserProject, APIKey, Notification |
 | APIKey | api_key.py | Organization, Project, User | auth dependency on every API route (logical) |
 | Credential | credentials.py | Organization, Project | provider clients: OpenAI/Gemini/Anthropic calls (logical); bucket providers (`google-gcp` → GCS signing, logical) |
-| Config | config/config.py | Project | ConfigVersion; LLM call path; Assessment; EvaluationRun (`config_id`) |
-| ConfigVersion | config/version.py | Config | resolved by `LLMCallConfig` saved references (logical) |
+| Config | config/config.py | Project | ConfigVersion; LLM call path; Chatbot turn (`POST /chatbot/message`, logical); Assessment; EvaluationRun (`config_id`) |
+| ConfigVersion | config/version.py | Config | resolved by `LLMCallConfig` saved references and chatbot `config_id`/`config_version` (logical) |
 | LlmCall | llm/request.py | Job, LlmChain, Org, Project | Langfuse traces (logical); analytics |
 | LlmChain | llm/request.py | Org, Project | LlmCall |
 | Job | job.py | Project | LlmCall; Assessment (RESPONSE method); Celery job execution (logical); evaluation prompt improvement (`JobType.PROMPT_IMPROVEMENT`, logical) |
