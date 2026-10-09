@@ -28,6 +28,10 @@ tags_metadata = [
         "description": "Large Language Model inference and interaction endpoints",
     },
     {
+        "name": "Chatbot",
+        "description": "Prompt-driven conversational chatbot turns",
+    },
+    {
         "name": "Evaluation",
         "description": "Dataset upload, running evaluations, listing datasets as well as evaluations",
     },
@@ -89,6 +93,7 @@ tag_groups = [
             "Collections",
             "Config Management",
             "LLM",
+            "Chatbot",
             "Evaluation",
             "Fine Tuning",
             "Model Evaluation",

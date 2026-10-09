@@ -40,3 +40,16 @@ single source of truth:
 
 Adding a provider = add the enum member, the model, and its `PROVIDER_CONFIGS`
 entry; nothing else needs to know.
+
+## Model config catalog
+
+`global.model_config` rows are seeded by migrations (052 OpenAI, 063 STT/TTS,
+066 `google-aistudio` copies, 086 Anthropic `claude-sonnet-4-6` /
+`claude-opus-5-5`). `GET /models/providers` lists only providers that have an
+active row, so a provider with no rows is invisible to the config UI.
+
+A `config.effort` key marks a reasoning model (`is_reasoning_model`): the OpenAI
+mapper routes `effort` into `reasoning`, and config-version updates strip
+`temperature`. A missing (provider, model) row only logs a warning at config
+save — validation is liberal — but the model then gets no effort handling and
+no cost estimate (`pricing` NULL also means no estimate).

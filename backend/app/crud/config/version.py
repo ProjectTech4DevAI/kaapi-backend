@@ -213,6 +213,11 @@ class ConfigVersionCrud:
         )
         return self.session.exec(statement).one_or_none()
 
+    def read_latest(self) -> ConfigVersion | None:
+        """Read the highest non-deleted version of the configuration."""
+        self._config_exists_or_raise(self.config_id)
+        return self._get_latest_version()
+
     def read_all(self, skip: int = 0, limit: int = 100) -> list[ConfigVersionItems]:
         """
         Read all versions for a specific configuration with pagination.

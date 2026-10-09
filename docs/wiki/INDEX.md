@@ -21,6 +21,7 @@ Deep design narrative lives in `docs/architecture/*.md`; open those only for des
 - [modules/knowledge-base.md](modules/knowledge-base.md) — documents, collections, transforms, vector-store providers. Deep dive: `docs/architecture/kaapi-knowledge-base-ARCHITECTURE.md`
 - [modules/responses.md](modules/responses.md) — OpenAI Responses API integration, conversations, threads, assistants. No deep-dive doc yet.
 - [modules/assessment.md](modules/assessment.md) — assessments and assessment runs. No deep-dive doc yet.
+- [modules/chatbot.md](modules/chatbot.md) — v0 stateless prompt-driven chatbot (`POST /chatbot/message`, LangGraph + Anthropic, model driven by a saved config). No deep-dive doc yet.
 - [modules/tenancy.md](modules/tenancy.md) — users, orgs, projects, API keys, onboarding, login.
 - [modules/platform.md](modules/platform.md) — analytics, notifications, feature flags, languages, credentials, model config, cron.
 
