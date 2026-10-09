@@ -160,9 +160,7 @@ def _scrub_llm_job_kwargs(event: Event) -> None:
 
 
 def before_send_transaction_filter(event: Event, _hint: Hint) -> Event | None:
-    """Drop probe transactions and scrub genai content before shipping."""
-    if _is_probe_event(event):
-        return None
+    """Scrub genai content from transactions; probe/bot spans are dropped earlier in tracing."""
     scrub_genai_content(event)
     return event
 

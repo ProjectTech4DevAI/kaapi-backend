@@ -110,8 +110,6 @@ def _set_traceability_attributes(
     if organization_id is not None:
         span.set_attribute("kaapi.organization_id", organization_id)
     if task_id is not None:
-        span.set_attribute("kaapi.task_id", task_id)
-    if task_id is not None:
         span.set_attribute("celery.task_id", task_id)
 
 

@@ -18,14 +18,13 @@ import socket
 from typing import Any, Dict, Generic, Optional, TypeVar
 from urllib.parse import urlparse
 
-from opentelemetry import trace
-
 import emails
 from jinja2 import Template
 from fastapi import HTTPException
 from langfuse import Langfuse
 import openai
 from anthropic import Anthropic
+from opentelemetry import trace
 from openai import OpenAI
 from pydantic import BaseModel, JsonValue
 from sqlmodel import Session
