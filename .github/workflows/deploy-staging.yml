@@ -7,7 +7,7 @@ on:
   #   types: [completed]
   push:
     branches:
-      - main
+      - feat/non-prod-script-updates
   workflow_dispatch:
 
 concurrency:
