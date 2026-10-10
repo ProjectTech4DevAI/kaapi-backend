@@ -1,0 +1,292 @@
+import os
+import time
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from fastapi import FastAPI
+from opentelemetry.trace import SpanKind, StatusCode, format_span_id
+from opentelemetry.util.http import ExcludeList
+from sentry_sdk.integrations.opentelemetry import SentrySpanProcessor
+
+from app.core.telemetry import tracing as telemetry
+
+
+class TestSetupTelemetryInstrumentors:
+    def test_enabled_calls_instrument_on_both(self) -> None:
+        redis, botocore = MagicMock(), MagicMock()
+        with (
+            patch.object(telemetry.settings, "SENTRY_DSN", None),
+            patch.object(telemetry, "TracerProvider", MagicMock()),
+            patch.object(telemetry.trace, "set_tracer_provider", MagicMock()),
+            patch.object(telemetry, "LoggingInstrumentor", MagicMock()),
+            patch.object(telemetry, "HTTPXClientInstrumentor", MagicMock()),
+            patch.object(telemetry, "RequestsInstrumentor", MagicMock()),
+            patch(
+                "opentelemetry.instrumentation.celery.CeleryInstrumentor", MagicMock()
+            ),
+            patch("opentelemetry.instrumentation.redis.RedisInstrumentor", redis),
+            patch(
+                "opentelemetry.instrumentation.botocore.BotocoreInstrumentor", botocore
+            ),
+        ):
+            telemetry.setup_telemetry()
+
+        redis.return_value.instrument.assert_called_once()
+        botocore.return_value.instrument.assert_called_once()
+
+    def test_redis_failure_does_not_propagate_and_botocore_still_instruments(
+        self,
+    ) -> None:
+        redis = MagicMock()
+        redis.return_value.instrument.side_effect = RuntimeError("boom")
+        botocore = MagicMock()
+        with (
+            patch.object(telemetry.settings, "SENTRY_DSN", None),
+            patch.object(telemetry, "TracerProvider", MagicMock()),
+            patch.object(telemetry.trace, "set_tracer_provider", MagicMock()),
+            patch.object(telemetry, "LoggingInstrumentor", MagicMock()),
+            patch.object(telemetry, "HTTPXClientInstrumentor", MagicMock()),
+            patch.object(telemetry, "RequestsInstrumentor", MagicMock()),
+            patch(
+                "opentelemetry.instrumentation.celery.CeleryInstrumentor", MagicMock()
+            ),
+            patch("opentelemetry.instrumentation.redis.RedisInstrumentor", redis),
+            patch(
+                "opentelemetry.instrumentation.botocore.BotocoreInstrumentor", botocore
+            ),
+        ):
+            telemetry.setup_telemetry()
+
+        botocore.return_value.instrument.assert_called_once()
+
+
+class TestShouldDropBareHttpTrace:
+    def test_drops_root_http_span_with_no_children(self) -> None:
+        assert telemetry._should_drop_bare_http_trace(
+            is_root=True,
+            kind=SpanKind.SERVER,
+            status_code=StatusCode.UNSET,
+            had_children=False,
+        )
+
+    def test_keeps_when_trace_has_children(self) -> None:
+        assert not telemetry._should_drop_bare_http_trace(
+            is_root=True,
+            kind=SpanKind.SERVER,
+            status_code=StatusCode.UNSET,
+            had_children=True,
+        )
+
+    def test_keeps_error_trace_even_without_children(self) -> None:
+        assert not telemetry._should_drop_bare_http_trace(
+            is_root=True,
+            kind=SpanKind.SERVER,
+            status_code=StatusCode.ERROR,
+            had_children=False,
+        )
+
+    def test_keeps_non_root_span(self) -> None:
+        assert not telemetry._should_drop_bare_http_trace(
+            is_root=False,
+            kind=SpanKind.SERVER,
+            status_code=StatusCode.UNSET,
+            had_children=False,
+        )
+
+    def test_keeps_non_server_root(self) -> None:
+        assert not telemetry._should_drop_bare_http_trace(
+            is_root=True,
+            kind=SpanKind.INTERNAL,
+            status_code=StatusCode.UNSET,
+            had_children=False,
+        )
+
+
+class TestSemconvOptIn:
+    def test_defaults_to_dup_mode_for_http(self) -> None:
+        assert os.environ[telemetry.OTEL_SEMCONV_OPT_IN_ENV] == "http/dup"
+
+
+class TestShouldDropUnroutedServerSpan:
+    def test_drops_root_server_span_without_route(self) -> None:
+        assert telemetry._should_drop_unrouted_server_span(
+            is_root=True, kind=SpanKind.SERVER, attributes={"http.method": "PROPFIND"}
+        )
+
+    def test_keeps_root_server_span_with_route(self) -> None:
+        assert not telemetry._should_drop_unrouted_server_span(
+            is_root=True, kind=SpanKind.SERVER, attributes={"http.route": "/api/v1/x"}
+        )
+
+    def test_keeps_non_root_and_non_server_spans(self) -> None:
+        assert not telemetry._should_drop_unrouted_server_span(
+            is_root=False, kind=SpanKind.SERVER, attributes={}
+        )
+        assert not telemetry._should_drop_unrouted_server_span(
+            is_root=True, kind=SpanKind.CONSUMER, attributes={}
+        )
+
+
+class TestNoiseFilteringSpanProcessor:
+    @staticmethod
+    def _root_server_span(span_id: int, start_time_ns: int) -> MagicMock:
+        span = MagicMock()
+        span.parent = None
+        span.kind = SpanKind.SERVER
+        span.status.status_code = StatusCode.UNSET
+        span.start_time = start_time_ns
+        span.get_span_context.return_value = SimpleNamespace(
+            trace_id=0xABC, span_id=span_id, is_valid=True
+        )
+        return span
+
+    def test_root_span_attributes_forwarded_to_transaction_data(self) -> None:
+        processor = telemetry._NoiseFilteringSpanProcessor()
+        otel_span = MagicMock()
+        otel_span.attributes = {"http.request.body.size": 4096, "http.method": "POST"}
+        otel_span.kind = SpanKind.SERVER
+        transaction = MagicMock()
+
+        with patch.object(
+            SentrySpanProcessor, "_update_transaction_with_otel_data"
+        ) as base:
+            processor._update_transaction_with_otel_data(transaction, otel_span)
+
+        base.assert_called_once_with(transaction, otel_span)
+        transaction.set_data.assert_any_call("http.request.body.size", 4096)
+
+    def test_dropped_root_span_is_removed_from_open_spans(self) -> None:
+        processor = telemetry._NoiseFilteringSpanProcessor()
+        start_time_ns = int(time.time() * 1e9)
+        span = self._root_server_span(span_id=0x1, start_time_ns=start_time_ns)
+        span_id = format_span_id(0x1)
+        started_minute = int(start_time_ns / 1e9 / 60)
+        processor.otel_span_map[span_id] = MagicMock()
+        processor.open_spans[started_minute] = {span_id}
+
+        with patch.object(SentrySpanProcessor, "on_end") as base_on_end:
+            processor.on_end(span)
+
+        base_on_end.assert_not_called()
+        assert span_id not in processor.otel_span_map
+        assert all(span_id not in bucket for bucket in processor.open_spans.values())
+
+
+class TestInstrumentApp:
+    def _app(self) -> FastAPI:
+        return FastAPI(openapi_url="/api/v1/openapi.json")
+
+    def _excluded(self) -> ExcludeList:
+        instrument = MagicMock()
+        with (
+            patch.object(telemetry.FastAPIInstrumentor, "instrument_app", instrument),
+        ):
+            telemetry.instrument_app(self._app())
+
+        excluded_urls = instrument.call_args.kwargs["excluded_urls"]
+        return ExcludeList(excluded_urls.split(","))
+
+    def test_health_and_cron_paths_excluded_from_traces(self) -> None:
+        el = self._excluded()
+        assert el.url_disabled("/health")
+        assert el.url_disabled("/api/v1/utils/health")
+        assert el.url_disabled("/api/v1/cron/run_batches")
+
+    def test_framework_doc_paths_excluded_from_traces(self) -> None:
+        el = self._excluded()
+        assert el.url_disabled("/docs")
+        assert el.url_disabled("/redoc")
+        assert el.url_disabled("/api/v1/openapi.json")
+        assert el.url_disabled("/docs/oauth2-redirect")
+
+    def test_real_endpoints_still_traced(self) -> None:
+        el = self._excluded()
+        assert not el.url_disabled("/api/v1/llm/generate")
+        assert not el.url_disabled("/api/v1/cronies")
+        assert not el.url_disabled("/api/v1/documents")
+
+    def test_asgi_send_receive_spans_excluded_at_source(self) -> None:
+        instrument = MagicMock()
+        with (
+            patch.object(telemetry.FastAPIInstrumentor, "instrument_app", instrument),
+        ):
+            telemetry.instrument_app(self._app())
+
+        assert instrument.call_args.kwargs["exclude_spans"] == ["receive", "send"]
+
+
+class TestNoiseFilteringSpanProcessorPaths:
+    def _span(
+        self, *, parent, kind=SpanKind.INTERNAL, trace_id=0xABC, span_id=0x1
+    ) -> MagicMock:
+        span = MagicMock()
+        span.parent = parent
+        span.kind = kind
+        span.status.status_code = StatusCode.UNSET
+        span.attributes = {"http.route": "/x"}
+        span.get_span_context.return_value = SimpleNamespace(
+            trace_id=trace_id, span_id=span_id, is_valid=True
+        )
+        return span
+
+    def test_child_span_marks_trace_as_having_children(self) -> None:
+        processor = telemetry._NoiseFilteringSpanProcessor()
+        child = self._span(parent=SimpleNamespace(is_remote=False))
+        with patch.object(SentrySpanProcessor, "on_start") as base:
+            processor.on_start(child)
+        base.assert_called_once()
+        assert 0xABC in processor._traces_with_children
+
+    def test_root_span_with_children_ships(self) -> None:
+        processor = telemetry._NoiseFilteringSpanProcessor()
+        processor._traces_with_children.add(0xABC)
+        root = self._span(parent=None, kind=SpanKind.SERVER)
+        with patch.object(SentrySpanProcessor, "on_end") as base:
+            processor.on_end(root)
+        base.assert_called_once_with(root)
+        assert 0xABC not in processor._traces_with_children
+
+
+class TestSetupTelemetryWithSentry:
+    def test_registers_processor_and_propagator(self) -> None:
+        provider = MagicMock()
+        set_textmap = MagicMock()
+        with (
+            patch.object(
+                telemetry.settings, "SENTRY_DSN", "https://k@o.ingest.sentry.io/1"
+            ),
+            patch.object(telemetry, "TracerProvider", return_value=provider),
+            patch.object(telemetry, "_NoiseFilteringSpanProcessor", MagicMock()),
+            patch.object(telemetry, "set_global_textmap", set_textmap),
+            patch.object(telemetry.trace, "set_tracer_provider", MagicMock()),
+            patch.object(telemetry, "LoggingInstrumentor", MagicMock()),
+            patch.object(telemetry, "HTTPXClientInstrumentor", MagicMock()),
+            patch.object(telemetry, "RequestsInstrumentor", MagicMock()),
+            patch(
+                "opentelemetry.instrumentation.celery.CeleryInstrumentor", MagicMock()
+            ),
+            patch("opentelemetry.instrumentation.redis.RedisInstrumentor", MagicMock()),
+            patch(
+                "opentelemetry.instrumentation.botocore.BotocoreInstrumentor",
+                MagicMock(),
+            ),
+        ):
+            telemetry.setup_telemetry()
+
+        provider.add_span_processor.assert_called_once()
+        set_textmap.assert_called_once()
+
+
+class TestFlushTelemetry:
+    def test_flushes_provider_and_sentry(self) -> None:
+        provider = MagicMock()
+        fake = MagicMock()
+        fake.get_client.return_value.is_active.return_value = True
+        with (
+            patch.object(telemetry.trace, "get_tracer_provider", return_value=provider),
+            patch.object(telemetry, "sentry_sdk", fake),
+        ):
+            telemetry.flush_telemetry(timeout_millis=2000)
+
+        provider.force_flush.assert_called_once_with(timeout_millis=2000)
+        fake.flush.assert_called_once_with(timeout=2.0)

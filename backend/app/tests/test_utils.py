@@ -419,6 +419,59 @@ class TestSendCallbackWithSigning:
         assert result is False
 
 
+class TestSendCallbackLogging:
+    _payload = {
+        "success": True,
+        "data": {"output": "model answer for the user"},
+        "error": None,
+        "metadata": {"job_id": "j1", "request_metadata": {"ref": "abc"}},
+    }
+
+    @patch("app.utils.validate_callback_url")
+    @patch("requests.Session")
+    def test_success_logs_everything_except_user_data(
+        self, mock_session_cls, mock_validate, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_session = MagicMock()
+        mock_session.post.return_value = MagicMock(status_code=200)
+        mock_session_cls.return_value.__enter__.return_value = mock_session
+
+        with caplog.at_level("INFO", logger="app.utils"):
+            assert send_callback("https://api.example.com/hook", self._payload)
+
+        line = next(
+            r.getMessage() for r in caplog.records if "Callback sent" in r.getMessage()
+        )
+        assert "url=https://api.example.com/hook" in line
+        assert "status=200" in line
+        assert "'request_metadata': {'ref': 'abc'}" in line
+        assert "model answer for the user" not in line
+
+    @patch("app.utils.validate_callback_url")
+    @patch("requests.Session")
+    def test_failure_logs_status_and_payload_without_user_data(
+        self, mock_session_cls, mock_validate, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_session = MagicMock()
+        error_response = MagicMock(status_code=502)
+        mock_session.post.return_value.raise_for_status.side_effect = (
+            requests.HTTPError("502 Bad Gateway", response=error_response)
+        )
+        mock_session_cls.return_value.__enter__.return_value = mock_session
+
+        with caplog.at_level("ERROR", logger="app.utils"):
+            assert not send_callback("https://api.example.com/hook", self._payload)
+
+        line = next(
+            r.getMessage()
+            for r in caplog.records
+            if "Callback failed" in r.getMessage()
+        )
+        assert "status=502" in line
+        assert "'job_id': 'j1'" in line
+        assert "model answer for the user" not in line
+
+
 class TestGenerateEvalCompletionEmail:
     def test_completed_renders_expected_fields(self) -> None:
         data = generate_eval_completion_email(

@@ -41,6 +41,8 @@ T = TypeVar("T")
 # app/core/logger.py and app/celery/utils.py).
 DEFAULT_TRACE_ID = "N/A"
 
+SENTRY_NO_PROPAGATE_HEADERS: dict[str, bool] = {"sentry-propagate-traces": False}
+
 
 def _set_trace(trace_id: str) -> None:
     correlation_id.set(trace_id)
@@ -403,6 +405,7 @@ def run_assessment_api_batch(
                 "trace_id": trace_id,
             },
             countdown=POLL_COUNTDOWN_SECONDS,
+            headers=SENTRY_NO_PROPAGATE_HEADERS.copy(),
         )
     return result
 

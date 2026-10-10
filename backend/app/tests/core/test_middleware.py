@@ -1,12 +1,136 @@
 import logging
 import re
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import Response
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+from app.core import middleware
 from app.core.middleware import _resolve_request_body_size
+from app.core.telemetry import metrics
+
+
+def _active_sentry() -> MagicMock:
+    fake = MagicMock()
+    fake.get_client.return_value.is_active.return_value = True
+    return fake
+
+
+def _request(
+    path: str,
+    method: str = "GET",
+    route: str | None = None,
+    content_length: str | None = None,
+) -> MagicMock:
+    req = MagicMock()
+    req.url.path = path
+    req.method = method
+    req.scope = {"route": SimpleNamespace(path=route)} if route else {}
+    req.headers = {"content-length": content_length} if content_length else {}
+    return req
+
+
+def _metric_names(fake: MagicMock) -> list[str]:
+    calls = list(fake.metrics.count.call_args_list) + list(
+        fake.metrics.distribution.call_args_list
+    )
+    return [c.kwargs["name"] for c in calls]
+
+
+@pytest.fixture
+def non_recording_span():
+    span = MagicMock()
+    span.is_recording.return_value = False
+    with patch.object(middleware.trace, "get_current_span", return_value=span):
+        yield span
+
+
+class TestHttpRequestMetrics:
+    async def _run(self, request, call_next, fake):
+        with (
+            patch.object(middleware, "sentry_sdk", fake),
+            patch.object(metrics, "sentry_sdk", fake),
+        ):
+            return await middleware._log_http_request(request, call_next)
+
+    @pytest.mark.asyncio
+    async def test_success_emits_traffic_and_latency(self, non_recording_span):
+        fake = _active_sentry()
+        request = _request("/api/v1/items", route="/api/v1/items")
+        call_next = AsyncMock(return_value=SimpleNamespace(status_code=200))
+
+        await self._run(request, call_next, fake)
+
+        names = _metric_names(fake)
+        assert "http.server.request.count" in names
+        assert "http.server.request.duration" in names
+        assert "http.server.request.error" not in names
+
+    @pytest.mark.asyncio
+    async def test_client_error_status_emits_error_metric(self, non_recording_span):
+        fake = _active_sentry()
+        request = _request("/api/v1/items", route="/api/v1/items")
+        call_next = AsyncMock(return_value=SimpleNamespace(status_code=404))
+
+        await self._run(request, call_next, fake)
+
+        error_calls = [
+            c
+            for c in fake.metrics.count.call_args_list
+            if c.kwargs["name"] == "http.server.request.error"
+        ]
+        assert len(error_calls) == 1
+        assert error_calls[0].kwargs["attributes"]["http.status_code"] == "404"
+
+    @pytest.mark.asyncio
+    async def test_unhandled_exception_counts_500_and_reraises(
+        self, non_recording_span
+    ):
+        fake = _active_sentry()
+        request = _request("/api/v1/items", route="/api/v1/items")
+        call_next = AsyncMock(side_effect=ValueError("boom"))
+
+        with pytest.raises(ValueError):
+            await self._run(request, call_next, fake)
+
+        error_calls = [
+            c
+            for c in fake.metrics.count.call_args_list
+            if c.kwargs["name"] == "http.server.request.error"
+        ]
+        assert len(error_calls) == 1
+        assert error_calls[0].kwargs["attributes"]["http.status_code"] == "500"
+
+    @pytest.mark.asyncio
+    async def test_health_path_excluded_from_metrics(self, non_recording_span):
+        fake = _active_sentry()
+        request = _request("/health", route="/health")
+        call_next = AsyncMock(return_value=SimpleNamespace(status_code=200))
+
+        await self._run(request, call_next, fake)
+
+        fake.metrics.count.assert_not_called()
+        fake.metrics.distribution.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_route_template_used_as_metric_tag(self, non_recording_span):
+        fake = _active_sentry()
+        request = _request("/api/v1/items/42", route="/api/v1/items/{item_id}")
+        call_next = AsyncMock(return_value=SimpleNamespace(status_code=200))
+
+        await self._run(request, call_next, fake)
+
+        count_call = next(
+            c
+            for c in fake.metrics.count.call_args_list
+            if c.kwargs["name"] == "http.server.request.count"
+        )
+        assert (
+            count_call.kwargs["attributes"]["http.route"] == "/api/v1/items/{item_id}"
+        )
 
 
 def _build_request(headers: dict[str, str] | None = None) -> Request:
@@ -25,8 +149,32 @@ def _build_request(headers: dict[str, str] | None = None) -> Request:
             "query_string": b"",
             "root_path": "",
             "headers": raw_headers,
+            "route": SimpleNamespace(path="/api/v1/probe"),
         }
     )
+
+
+class TestUnmatchedRoute:
+    @pytest.mark.asyncio
+    async def test_unrouted_request_emits_only_unmatched_counter(
+        self, non_recording_span: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        fake = _active_sentry()
+        request = _request("/wp-admin/setup.php", route=None)
+        call_next = AsyncMock(return_value=SimpleNamespace(status_code=404))
+
+        with (
+            patch.object(middleware, "sentry_sdk", fake),
+            patch.object(metrics, "sentry_sdk", fake),
+            caplog.at_level(logging.INFO, logger="http_request_logger"),
+        ):
+            await middleware._log_http_request(request, call_next)
+
+        assert _metric_names(fake) == ["http.server.request.unmatched"]
+        assert fake.metrics.count.call_args.kwargs["attributes"] == {
+            "http.method": "GET"
+        }
+        assert not [r for r in caplog.records if "_log_http_request" in r.message]
 
 
 class TestResolveRequestBodySize:
@@ -54,15 +202,15 @@ class TestAccessLogLine:
         payload = b"0123456789abcdef"
 
         with caplog.at_level(logging.INFO, logger="http_request_logger"):
-            response = client.post("/api/v1/no-such-route", content=payload)
+            response = client.patch("/api/v1/users/me", content=payload)
 
-        assert response.status_code == 404
+        assert response.status_code == 401
         line = next(
             record.getMessage()
             for record in caplog.records
             if record.name == "http_request_logger"
         )
-        assert "POST /api/v1/no-such-route - 404" in line
+        assert "PATCH /api/v1/users/me - 401" in line
         assert "| request_body_size: 16B |" in line
         assert re.search(r"correlation_id: [0-9a-f]{32}$", line)
 
@@ -70,7 +218,7 @@ class TestAccessLogLine:
         self, client: TestClient, caplog: pytest.LogCaptureFixture
     ) -> None:
         with caplog.at_level(logging.INFO, logger="http_request_logger"):
-            client.get("/api/v1/no-such-route")
+            client.get("/api/v1/users/me")
 
         line = next(
             record.getMessage()
