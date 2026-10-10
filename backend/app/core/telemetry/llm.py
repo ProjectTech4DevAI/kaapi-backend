@@ -1,16 +1,15 @@
 """LLM call telemetry: gen_ai span attributes, call/token metrics, HTTP span suppression around provider calls."""
 
 import json
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from opentelemetry import trace
 from opentelemetry.instrumentation.utils import (
     suppress_http_instrumentation as otel_suppress_http_instrumentation,
 )
 
-from app.core.config import settings
 from app.core.telemetry.metrics import emit_sentry_metric
 
 if TYPE_CHECKING:
@@ -44,8 +43,6 @@ def record_llm_call_started(
     project_id: int | None = None,
 ) -> None:
     """Emit LLM call-start metric to Sentry."""
-    if not settings.OTEL_ENABLED:
-        return
     attrs = _llm_call_attrs(provider, model, operation, organization_id, project_id)
     emit_sentry_metric("count", "llm.call.total", 1, attributes=attrs)
 
@@ -63,8 +60,6 @@ def record_llm_call_finished(
     project_id: int | None = None,
 ) -> None:
     """Emit LLM call-completion metrics (latency, tokens, errors) to Sentry."""
-    if not settings.OTEL_ENABLED:
-        return
     attrs = _llm_call_attrs(provider, model, operation, organization_id, project_id)
 
     emit_sentry_metric(
@@ -94,7 +89,7 @@ def set_gen_ai_request_attributes(
     operation: str,
     organization_id: int | None,
     project_id: int | None,
-    params: dict[str, Any] | None = None,
+    params: Mapping[str, object] | None = None,
 ) -> None:
     """Set OTel GenAI request attributes on `span` (semantic-convention keys + kaapi ids)."""
     span.set_attribute("gen_ai.system", provider)
@@ -118,7 +113,7 @@ def set_gen_ai_request_attributes(
         ("gen_ai.request.frequency_penalty", "frequency_penalty"),
     ):
         value = params.get(param_key)
-        if value is not None:
+        if isinstance(value, str | bool | int | float):
             span.set_attribute(attr_key, value)
 
     tools = params.get("tools")

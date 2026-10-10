@@ -159,9 +159,9 @@ class Settings(BaseSettings):
     BACKEND_SERVICE_NAME: str = "kaapi-backend"
     CRON_SERVICE_NAME: str = "kaapi-cron"
 
-    SENTRY_TRACES_SAMPLE_RATE: float = 1.0
+    SENTRY_TRACES_SAMPLE_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
     SENTRY_SEND_DEFAULT_PII: bool = False
-    SENTRY_ERROR_SAMPLE_RATE: float = 1.0
+    SENTRY_ERROR_SAMPLE_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
     SENTRY_PROFILE_SESSION_SAMPLE_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
     SENTRY_PROFILE_LIFECYCLE: Literal["manual", "trace"] = "trace"
 

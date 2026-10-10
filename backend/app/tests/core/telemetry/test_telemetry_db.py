@@ -35,10 +35,7 @@ class TestNotableSqlstates:
 class TestRecordDbQueryFailed:
     def test_emits_count_with_operation_and_sqlstate(self) -> None:
         fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
+        with (patch.object(metrics, "sentry_sdk", fake),):
             telemetry.record_db_query_failed(operation="SELECT", sqlstate="40P01")
 
         fake.metrics.count.assert_called_once()
@@ -50,30 +47,14 @@ class TestRecordDbQueryFailed:
 
     def test_omits_missing_attributes(self) -> None:
         fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
+        with (patch.object(metrics, "sentry_sdk", fake),):
             telemetry.record_db_query_failed()
 
         assert fake.metrics.count.call_args.kwargs["attributes"] == {}
 
-    def test_noop_when_otel_disabled(self) -> None:
-        fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", False),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
-            telemetry.record_db_query_failed(operation="SELECT", sqlstate="40P01")
-
-        fake.metrics.count.assert_not_called()
-
     def test_noop_when_sentry_inactive(self) -> None:
         fake = _inactive_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
+        with (patch.object(metrics, "sentry_sdk", fake),):
             telemetry.record_db_query_failed(operation="SELECT", sqlstate="40P01")
 
         fake.metrics.count.assert_not_called()
@@ -82,10 +63,7 @@ class TestRecordDbQueryFailed:
 class TestRecordDbSlowQuery:
     def test_emits_count_with_operation(self) -> None:
         fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
+        with (patch.object(metrics, "sentry_sdk", fake),):
             telemetry.record_db_slow_query("SELECT")
 
         fake.metrics.count.assert_called_once()
@@ -94,24 +72,11 @@ class TestRecordDbSlowQuery:
         assert kwargs["value"] == 1
         assert kwargs["attributes"]["db.operation"] == "SELECT"
 
-    def test_noop_when_otel_disabled(self) -> None:
-        fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", False),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
-            telemetry.record_db_slow_query("SELECT")
-
-        fake.metrics.count.assert_not_called()
-
 
 class TestRecordDbConnectionEvent:
     def test_known_event_emits_named_metric(self) -> None:
         fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
+        with (patch.object(metrics, "sentry_sdk", fake),):
             telemetry.record_db_connection_event("invalidated")
 
         assert (
@@ -120,21 +85,8 @@ class TestRecordDbConnectionEvent:
 
     def test_unknown_event_is_noop(self) -> None:
         fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
+        with (patch.object(metrics, "sentry_sdk", fake),):
             telemetry.record_db_connection_event("teleported")
-
-        fake.metrics.count.assert_not_called()
-
-    def test_noop_when_otel_disabled(self) -> None:
-        fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", False),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
-            telemetry.record_db_connection_event("opened")
 
         fake.metrics.count.assert_not_called()
 
@@ -149,20 +101,14 @@ class TestRecordDbTransaction:
     )
     def test_known_outcome_emits_named_metric(self, outcome, metric):
         fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
+        with (patch.object(metrics, "sentry_sdk", fake),):
             telemetry.record_db_transaction(outcome)
 
         assert fake.metrics.count.call_args.kwargs["name"] == metric
 
     def test_unknown_outcome_is_noop(self) -> None:
         fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
+        with (patch.object(metrics, "sentry_sdk", fake),):
             telemetry.record_db_transaction("savepoint")
 
         fake.metrics.count.assert_not_called()
@@ -233,7 +179,6 @@ class TestInstrumentDbEngine:
         engine = self._engine()
         pool_stats = MagicMock()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", pool_stats),
         ):
@@ -250,7 +195,6 @@ class TestInstrumentDbEngine:
         query_failed = MagicMock()
         tag_error = MagicMock()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
             patch.object(telemetry, "record_db_query_failed", query_failed),
@@ -271,7 +215,6 @@ class TestInstrumentDbEngine:
     def test_second_call_is_idempotent(self) -> None:
         engine = self._engine()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry, "SQLAlchemyInstrumentor") as instrumentor,
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
         ):
@@ -282,17 +225,6 @@ class TestInstrumentDbEngine:
             telemetry.instrument_db_engine(engine)
             instrumentor.return_value.instrument.assert_called_once()
 
-    def test_noop_when_otel_disabled(self) -> None:
-        engine = self._engine()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", False),
-            patch.object(telemetry, "SQLAlchemyInstrumentor") as instrumentor,
-        ):
-            telemetry.instrument_db_engine(engine)
-
-        instrumentor.assert_not_called()
-        assert not getattr(engine, "_kaapi_db_telemetry_instrumented", False)
-
     def test_rowcount_attribute_set_on_query_span(self) -> None:
         from sqlalchemy import event
 
@@ -300,7 +232,6 @@ class TestInstrumentDbEngine:
         span = MagicMock()
         span.is_recording.return_value = True
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
         ):
@@ -337,7 +268,6 @@ class TestInstrumentDbEngineMetrics:
         engine = self._engine()
         slow = MagicMock()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry, "DB_SLOW_QUERY_MS", 0),
             patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
@@ -354,7 +284,6 @@ class TestInstrumentDbEngineMetrics:
         engine = self._engine()
         slow = MagicMock()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry, "DB_SLOW_QUERY_MS", 10_000),
             patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
@@ -370,7 +299,6 @@ class TestInstrumentDbEngineMetrics:
         engine = self._engine()
         conn_event = MagicMock()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
             patch.object(telemetry, "record_db_connection_event", conn_event),
@@ -385,7 +313,6 @@ class TestInstrumentDbEngineMetrics:
         engine = self._engine()
         txn = MagicMock()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry, "SQLAlchemyInstrumentor"),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
             patch.object(telemetry, "record_db_transaction", txn),
@@ -406,10 +333,7 @@ class TestInstrumentDbEngineMetrics:
 class TestRecordDbPoolStats:
     def test_emits_four_gauges(self) -> None:
         fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
+        with (patch.object(metrics, "sentry_sdk", fake),):
             telemetry.record_db_pool_stats(active=1, idle=2, total=3, overflow=0)
         names = [c.kwargs["name"] for c in fake.metrics.gauge.call_args_list]
         assert names == [
@@ -419,24 +343,12 @@ class TestRecordDbPoolStats:
             "db.pool.overflow",
         ]
 
-    def test_noop_when_otel_disabled(self) -> None:
-        fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", False),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
-            telemetry.record_db_pool_stats(active=1, idle=2, total=3, overflow=0)
-            telemetry.record_db_transaction("commit")
-        fake.metrics.gauge.assert_not_called()
-        fake.metrics.count.assert_not_called()
-
 
 class TestInstrumentDbEngineEdgeCases:
     def test_non_queue_pool_skips_pool_metrics(self) -> None:
         engine = create_engine("sqlite://")
         pool_stats = MagicMock()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry, "SQLAlchemyInstrumentor", MagicMock()),
             patch.object(telemetry, "record_db_pool_stats", pool_stats),
         ):
@@ -449,7 +361,6 @@ class TestInstrumentDbEngineEdgeCases:
         engine = create_engine("sqlite://", poolclass=QueuePool)
         events = MagicMock()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry, "SQLAlchemyInstrumentor", MagicMock()),
             patch.object(telemetry, "record_db_pool_stats", MagicMock()),
             patch.object(telemetry, "record_db_connection_event", events),

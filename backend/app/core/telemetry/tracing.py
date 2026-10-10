@@ -22,7 +22,6 @@ from sentry_sdk.integrations.opentelemetry import SentryPropagator, SentrySpanPr
 from sentry_sdk.tracing import Span as SentrySpan
 
 from app.core.config import settings
-from app.core.telemetry.context import LogContextFilter
 
 logger = logging.getLogger(__name__)
 
@@ -130,18 +129,6 @@ class _NoiseFilteringSpanProcessor(SentrySpanProcessor):
 
 def setup_telemetry(service_name: str | None = None) -> None:
     """Initialize OTel tracing and bridge spans into Sentry; logs/metrics go via the SDK directly."""
-    root_logger = logging.getLogger()
-    log_context_filter = LogContextFilter()
-    if not any(isinstance(f, LogContextFilter) for f in root_logger.filters):
-        root_logger.addFilter(log_context_filter)
-    for handler in root_logger.handlers:
-        if not any(isinstance(f, LogContextFilter) for f in handler.filters):
-            handler.addFilter(log_context_filter)
-
-    if not settings.OTEL_ENABLED:
-        logger.info("[setup_telemetry] OTEL_ENABLED is False, skipping")
-        return
-
     resource = _build_resource(service_name)
     tracer_provider = TracerProvider(resource=resource)
 
@@ -190,8 +177,6 @@ def flush_telemetry(timeout_millis: int = 10000) -> None:
     before the SentrySpanProcessor's internal queue drains, otherwise dropping
     closing spans and ERROR breadcrumbs from the just-finished task.
     """
-    if not settings.OTEL_ENABLED:
-        return
     try:
         tp = trace.get_tracer_provider()
         if hasattr(tp, "force_flush"):
@@ -208,8 +193,6 @@ def flush_telemetry(timeout_millis: int = 10000) -> None:
 
 def instrument_app(app: FastAPI) -> None:
     """Instrument the FastAPI app. Call after the app is created."""
-    if not settings.OTEL_ENABLED:
-        return
     from app.core.middleware import SILENT_LOG_PATHS, TRACE_EXCLUDED_PATH_PREFIXES
 
     # Doc/schema paths are read off the app so they follow config.

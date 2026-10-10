@@ -15,7 +15,6 @@ class TestSetupTelemetryInstrumentors:
     def test_enabled_calls_instrument_on_both(self) -> None:
         redis, botocore = MagicMock(), MagicMock()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry.settings, "SENTRY_DSN", None),
             patch.object(telemetry, "TracerProvider", MagicMock()),
             patch.object(telemetry.trace, "set_tracer_provider", MagicMock()),
@@ -42,7 +41,6 @@ class TestSetupTelemetryInstrumentors:
         redis.return_value.instrument.side_effect = RuntimeError("boom")
         botocore = MagicMock()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry.settings, "SENTRY_DSN", None),
             patch.object(telemetry, "TracerProvider", MagicMock()),
             patch.object(telemetry.trace, "set_tracer_provider", MagicMock()),
@@ -60,20 +58,6 @@ class TestSetupTelemetryInstrumentors:
             telemetry.setup_telemetry()
 
         botocore.return_value.instrument.assert_called_once()
-
-    def test_noop_when_otel_disabled(self) -> None:
-        redis, botocore = MagicMock(), MagicMock()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", False),
-            patch("opentelemetry.instrumentation.redis.RedisInstrumentor", redis),
-            patch(
-                "opentelemetry.instrumentation.botocore.BotocoreInstrumentor", botocore
-            ),
-        ):
-            telemetry.setup_telemetry()
-
-        redis.assert_not_called()
-        botocore.assert_not_called()
 
 
 class TestShouldDropBareHttpTrace:
@@ -195,7 +179,6 @@ class TestInstrumentApp:
     def _excluded(self) -> ExcludeList:
         instrument = MagicMock()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry.FastAPIInstrumentor, "instrument_app", instrument),
         ):
             telemetry.instrument_app(self._app())
@@ -225,22 +208,11 @@ class TestInstrumentApp:
     def test_asgi_send_receive_spans_excluded_at_source(self) -> None:
         instrument = MagicMock()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry.FastAPIInstrumentor, "instrument_app", instrument),
         ):
             telemetry.instrument_app(self._app())
 
         assert instrument.call_args.kwargs["exclude_spans"] == ["receive", "send"]
-
-    def test_noop_when_otel_disabled(self) -> None:
-        instrument = MagicMock()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", False),
-            patch.object(telemetry.FastAPIInstrumentor, "instrument_app", instrument),
-        ):
-            telemetry.instrument_app(self._app())
-
-        instrument.assert_not_called()
 
 
 class TestNoiseFilteringSpanProcessorPaths:
@@ -280,7 +252,6 @@ class TestSetupTelemetryWithSentry:
         provider = MagicMock()
         set_textmap = MagicMock()
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(
                 telemetry.settings, "SENTRY_DSN", "https://k@o.ingest.sentry.io/1"
             ),
@@ -312,7 +283,6 @@ class TestFlushTelemetry:
         fake = MagicMock()
         fake.get_client.return_value.is_active.return_value = True
         with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
             patch.object(telemetry.trace, "get_tracer_provider", return_value=provider),
             patch.object(telemetry, "sentry_sdk", fake),
         ):
@@ -320,12 +290,3 @@ class TestFlushTelemetry:
 
         provider.force_flush.assert_called_once_with(timeout_millis=2000)
         fake.flush.assert_called_once_with(timeout=2.0)
-
-    def test_noop_when_otel_disabled(self) -> None:
-        provider = MagicMock()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", False),
-            patch.object(telemetry.trace, "get_tracer_provider", return_value=provider),
-        ):
-            telemetry.flush_telemetry()
-        provider.force_flush.assert_not_called()

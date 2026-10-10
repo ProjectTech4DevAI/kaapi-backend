@@ -21,10 +21,7 @@ def _metric_calls(fake: MagicMock) -> dict[str, dict]:
 class TestRecordLlmCallMetrics:
     def test_started_emits_count_with_tenant_attrs(self) -> None:
         fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
+        with (patch.object(metrics, "sentry_sdk", fake),):
             telemetry.record_llm_call_started(
                 "openai", "gpt-4o", "chat", organization_id=1, project_id=2
             )
@@ -36,10 +33,7 @@ class TestRecordLlmCallMetrics:
 
     def test_finished_emits_duration_tokens_and_error(self) -> None:
         fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", True),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
+        with (patch.object(metrics, "sentry_sdk", fake),):
             telemetry.record_llm_call_finished(
                 "openai",
                 "gpt-4o",
@@ -58,18 +52,6 @@ class TestRecordLlmCallMetrics:
         assert names["llm.tokens.output"]["value"] == 20
         assert names["llm.tokens.total"]["value"] == 30
         assert "kaapi.organization_id" not in names["llm.call.duration"]["attributes"]
-
-    def test_noop_when_otel_disabled(self) -> None:
-        fake = _active_sentry()
-        with (
-            patch.object(telemetry.settings, "OTEL_ENABLED", False),
-            patch.object(metrics, "sentry_sdk", fake),
-        ):
-            telemetry.record_llm_call_started("openai", "gpt-4o", "chat")
-            telemetry.record_llm_call_finished("openai", "gpt-4o", "chat", 1.0)
-
-        fake.metrics.count.assert_not_called()
-        fake.metrics.distribution.assert_not_called()
 
 
 class TestGenAiSpanAttributes:

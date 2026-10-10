@@ -95,7 +95,7 @@ def record_rate_threshold(
     try:
         if not sentry_sdk.get_client().is_active():
             return
-        with sentry_sdk.push_scope() as scope:
+        with sentry_sdk.new_scope() as scope:
             scope.set_tag("alert.type", "threshold_rate_monitor")
             scope.set_tag("kaapi.project_id", project_id)
             scope.set_tag("route_category", category)
@@ -106,5 +106,5 @@ def record_rate_threshold(
                 f"(limit {threshold}/min)",
                 level="warning",
             )
-    except Exception as e:
-        logger.exception("[record_rate_threshold] Failed to emit alert", exc_info=e)
+    except Exception:
+        logger.exception("[record_rate_threshold] Failed to emit alert")

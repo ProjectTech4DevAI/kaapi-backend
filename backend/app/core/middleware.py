@@ -93,7 +93,6 @@ async def _log_http_request(
 
     if sentry_sdk.get_client().is_active():
         sentry_sdk.set_tag("http.method", method)
-        sentry_sdk.set_tag("http.request.method", method)
         if request_id := correlation_id.get():
             sentry_sdk.set_tag("correlation_id", request_id)
 
@@ -106,7 +105,6 @@ async def _log_http_request(
         if sentry_sdk.get_client().is_active():
             sentry_sdk.set_tag("http.route", http_route)
             sentry_sdk.set_tag("http.status_code", str(status))
-            sentry_sdk.set_tag("http.response.status_code", str(status))
         if http_route == UNMATCHED_ROUTE:
             record_unmatched_request(method=method)
         elif metrics_enabled:
@@ -127,7 +125,6 @@ async def _log_http_request(
     if sentry_sdk.get_client().is_active():
         sentry_sdk.set_tag("http.route", http_route)
         sentry_sdk.set_tag("http.status_code", str(status))
-        sentry_sdk.set_tag("http.response.status_code", str(status))
 
     if http_route == UNMATCHED_ROUTE:
         record_unmatched_request(method=method)

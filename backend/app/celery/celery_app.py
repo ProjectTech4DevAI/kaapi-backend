@@ -45,7 +45,7 @@ def _initialize_worker_observability() -> None:
         )
         _sentry_initialized = True
 
-    if not _telemetry_initialized:
+    if settings.OTEL_ENABLED and not _telemetry_initialized:
         from app.core.telemetry import flush_telemetry, setup_telemetry
 
         setup_telemetry(service_name="kaapi-celery")

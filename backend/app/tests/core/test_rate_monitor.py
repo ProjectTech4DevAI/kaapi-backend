@@ -165,7 +165,7 @@ class TestRecordRateThreshold:
 
         with (
             patch.object(telemetry.sentry_sdk, "get_client", return_value=client),
-            patch.object(telemetry.sentry_sdk, "push_scope", return_value=scope_cm),
+            patch.object(telemetry.sentry_sdk, "new_scope", return_value=scope_cm),
             patch.object(telemetry.sentry_sdk, "capture_message") as capture,
         ):
             telemetry.record_rate_threshold(

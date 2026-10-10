@@ -32,7 +32,8 @@ init_sentry(
         HttpxIntegration(),
     ],
 )
-setup_telemetry(service_name=settings.BACKEND_SERVICE_NAME)
+if settings.OTEL_ENABLED:
+    setup_telemetry(service_name=settings.BACKEND_SERVICE_NAME)
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -82,7 +83,8 @@ app.include_router(api_v2_router, prefix=settings.API_V2_STR)
 
 register_exception_handlers(app)
 
-instrument_app(app)
+if settings.OTEL_ENABLED:
+    instrument_app(app)
 
 
 # health check endpoint for uptime monitoring

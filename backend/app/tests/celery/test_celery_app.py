@@ -50,6 +50,7 @@ class TestWorkerObservabilityInit:
             patch.object(celery_app, "_sentry_initialized", False),
             patch.object(celery_app, "_telemetry_initialized", False),
             patch.object(celery_app, "_flush_hook_registered", False),
+            patch.object(celery_app.settings, "OTEL_ENABLED", True),
             patch.object(
                 celery_app.settings, "SENTRY_DSN", "https://k@o.ingest.sentry.io/1"
             ),

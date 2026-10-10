@@ -11,7 +11,6 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor, ExecutionContext
 from sqlalchemy.pool import ConnectionPoolEntry, Pool, PoolProxiedConnection, QueuePool
 
-from app.core.config import settings
 from app.core.telemetry.metrics import emit_sentry_metric
 
 logger = logging.getLogger(__name__)
@@ -52,8 +51,6 @@ def record_db_query_failed(
     sqlstate: str | None = None,
 ) -> None:
     """Emit a DB query-failure counter to Sentry. Per-query duration/throughput come from spans."""
-    if not settings.OTEL_ENABLED:
-        return
 
     attrs: dict[str, str | int | float] = {}
     if operation:
@@ -66,8 +63,6 @@ def record_db_query_failed(
 
 def record_db_slow_query(operation: str | None = None) -> None:
     """Emit a slow-query counter to Sentry (queries at/above DB_SLOW_QUERY_MS)."""
-    if not settings.OTEL_ENABLED:
-        return
 
     attrs: dict[str, str | int | float] = {}
     if operation:
@@ -78,8 +73,6 @@ def record_db_slow_query(operation: str | None = None) -> None:
 
 def record_db_connection_event(event: str) -> None:
     """Emit a connection-lifecycle counter (opened/closed/invalidated) to Sentry."""
-    if not settings.OTEL_ENABLED:
-        return
 
     metric = _DB_CONNECTION_EVENT_METRICS.get(event)
     if metric is None:
@@ -89,8 +82,6 @@ def record_db_connection_event(event: str) -> None:
 
 def record_db_transaction(outcome: str) -> None:
     """Emit a transaction-outcome counter (commit/rollback) to Sentry for ratio tracking."""
-    if not settings.OTEL_ENABLED:
-        return
 
     metric = _DB_TRANSACTION_METRICS.get(outcome)
     if metric is None:
@@ -124,8 +115,6 @@ def record_db_pool_stats(
     overflow: int,
 ) -> None:
     """Emit SQLAlchemy pool stats as Sentry gauges."""
-    if not settings.OTEL_ENABLED:
-        return
 
     emit_sentry_metric("gauge", "db.pool.active", active)
     emit_sentry_metric("gauge", "db.pool.idle", idle)
@@ -135,8 +124,6 @@ def record_db_pool_stats(
 
 def instrument_db_engine(engine: Engine) -> None:
     """Instrument a SQLAlchemy engine: query spans, slow-query/pool/connection/transaction metrics."""
-    if not settings.OTEL_ENABLED:
-        return
     if getattr(engine, _INSTRUMENTED_ATTR, False):
         return
 
