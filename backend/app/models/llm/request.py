@@ -5,7 +5,10 @@ from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from pydantic import (
+    ConfigDict,
+    Discriminator,
     HttpUrl,
+    Tag,
     SerializerFunctionWrapHandler,
     model_serializer,
     model_validator,
@@ -464,7 +467,46 @@ CompletionConfig = Annotated[
 
 
 class Validator(SQLModel):
+    """Reference to a validator config saved in the guardrails service."""
+
     validator_config_id: UUID
+    is_enabled: bool = Field(
+        default=True,
+        description="When false, the reference is neither fetched nor run.",
+    )
+
+
+class InlineValidator(SQLModel):
+    """Validator spec stored directly in the config blob.
+
+    Per-type params (languages, ban_list_id, ...) are extras validated by the
+    guardrails service, so they are allowed through untouched here.
+    """
+
+    model_config = ConfigDict(extra="allow")  # pyright: ignore[reportAssignmentType]
+
+    type: str = Field(..., description="Guardrails validator type, e.g. ban_list")
+    on_fail: str | None = Field(default=None, description="Action on failure")
+    is_enabled: bool = Field(
+        default=True,
+        description="When false, the spec is kept in the blob but not run.",
+    )
+
+
+def _guardrail_entry_tag(value: Any) -> str:
+    if isinstance(value, dict):
+        has_ref = "validator_config_id" in value
+    else:
+        has_ref = hasattr(value, "validator_config_id")
+    return "ref" if has_ref else "inline"
+
+
+# Explicit tag: InlineValidator allows extras, so a smart union could also
+# swallow a reference dict that happens to carry a `type`.
+GuardrailEntry = Annotated[
+    Annotated[Validator, Tag("ref")] | Annotated[InlineValidator, Tag("inline")],
+    Discriminator(_guardrail_entry_tag),
+]
 
 
 class PromptTemplate(SQLModel):
@@ -500,12 +542,12 @@ class ConfigBlob(SQLModel):
         description="Prompt template with {{input}} placeholder to wrap around the user input",
     )
 
-    input_guardrails: list[Validator] | None = Field(
+    input_guardrails: list[GuardrailEntry] | None = Field(
         default=None,
         description="Guardrails applied to validate/sanitize the input before the LLM call",
     )
 
-    output_guardrails: list[Validator] | None = Field(
+    output_guardrails: list[GuardrailEntry] | None = Field(
         default=None,
         description="Guardrails applied to validate/sanitize the output after the LLM call",
     )

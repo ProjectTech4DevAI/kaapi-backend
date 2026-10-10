@@ -11,13 +11,17 @@ from fastapi import HTTPException
 from opentelemetry import trace
 
 from app.core.config import settings
-from app.models.llm.request import Validator
+from app.models.llm.request import InlineValidator, Validator
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
 GUARDRAILS_PROXY_TIMEOUT_SECONDS = 30.0
+
+# The service logs validator_log.stage from the spec and defaults to input.
+GUARDRAIL_STAGE_INPUT = "input"
+GUARDRAIL_STAGE_OUTPUT = "output"
 
 
 def _guardrails_headers(
@@ -148,7 +152,7 @@ class GuardrailsOutcome:
 def apply_guardrails(
     *,
     text: str,
-    validators: list[Validator] | None,
+    validators: Sequence[Validator | InlineValidator] | None,
     job_id: UUID,
     project_id: int | None,
     organization_id: int | None,
@@ -164,30 +168,45 @@ def apply_guardrails(
 
     Args:
         text: Primary text to validate. Sent as `input` to the service.
-        validators: Validator references (config IDs). When None/empty the
-            function short-circuits with a no-op outcome.
+        validators: Config-ID references and/or inline specs, in run order.
+            Entries with is_enabled=False are skipped; when nothing enabled
+            remains the function short-circuits with a no-op outcome.
         output_text: When provided, sent as `output` to the service for
             output-guardrail validators that compare input/output pairs.
             Also routes the IDs through the output-config fetch path.
     """
-    if not validators:
+    enabled: list[Validator | InlineValidator] = []
+    for entry in validators or []:
+        if entry.is_enabled:
+            enabled.append(entry)
+    if not enabled:
         return GuardrailsOutcome(
             safe_text=text, error=None, bypassed=False, rephrase_needed=False, raw={}
         )
 
     is_output = output_text is not None
-    input_cfgs, output_cfgs = list_validators_config(
-        organization_id=organization_id,
-        project_id=project_id,
-        input_validator_configs=None if is_output else validators,
-        output_validator_configs=validators if is_output else None,
-    )
-    resolved = output_cfgs if is_output else input_cfgs
+    references: list[Validator] = []
+    for entry in enabled:
+        if isinstance(entry, Validator):
+            references.append(entry)
+
+    fetched: list[dict[str, Any]] = []
+    if references:
+        input_cfgs, output_cfgs = list_validators_config(
+            organization_id=organization_id,
+            project_id=project_id,
+            input_validator_configs=None if is_output else references,
+            output_validator_configs=references if is_output else None,
+        )
+        fetched = output_cfgs if is_output else input_cfgs
+
+    stage = GUARDRAIL_STAGE_OUTPUT if is_output else GUARDRAIL_STAGE_INPUT
+    resolved = _prepare_validators(enabled, fetched, stage, job_id)
     if not resolved:
         logger.info(
             f"[apply_guardrails] No validator configs resolved upstream; skipping "
             f"POST /guardrails. job_id={job_id}, requested_ids="
-            f"{[str(v.validator_config_id) for v in validators]}, "
+            f"{[str(v.validator_config_id) for v in references]}, "
             f"is_output={is_output}"
         )
         return GuardrailsOutcome(
@@ -237,6 +256,40 @@ def apply_guardrails(
     )
 
 
+def _prepare_validators(
+    entries: Sequence[Validator | InlineValidator],
+    fetched_rows: list[dict[str, Any]],
+    stage: str,
+    job_id: UUID,
+) -> list[dict[str, Any]]:
+    """Build the POST `validators` list in blob order, since the service runs
+    them in the order received while the fetch returns rows by created_at."""
+    rows_by_id = {str(row.get("id")): row for row in fetched_rows}
+
+    prepared: list[dict[str, Any]] = []
+    for entry in entries:
+        if isinstance(entry, InlineValidator):
+            # The service's validator configs are extra="forbid", so is_enabled must go.
+            spec = entry.model_dump(mode="json", exclude={"is_enabled"})
+            # Service's on_fail is non-nullable; omitting it applies its default.
+            if spec.get("on_fail") is None:
+                spec.pop("on_fail", None)
+            spec["stage"] = stage
+            prepared.append(spec)
+            continue
+
+        config_id = str(entry.validator_config_id)
+        row = rows_by_id.get(config_id)
+        if row is None:
+            logger.warning(
+                f"[_prepare_validators] Validator config not returned upstream; "
+                f"dropping it | job_id={job_id}, validator_config_id={config_id}"
+            )
+            continue
+        prepared.append(row)
+    return prepared
+
+
 def summarize_validator_results(outcome: GuardrailsOutcome) -> list[dict[str, Any]]:
     """Per-validator name/outcome/text summary, extracted from the raw
     guardrails service response, for use in llm_call metadata."""
@@ -259,7 +312,7 @@ def summarize_validator_results(outcome: GuardrailsOutcome) -> list[dict[str, An
 
 def run_guardrails_validation(
     input_text: str,
-    guardrail_config: Sequence[Validator | dict[str, Any]],
+    guardrail_config: Sequence[Validator | InlineValidator | dict[str, Any]],
     job_id: UUID,
     project_id: int | None,
     organization_id: int | None,
@@ -282,12 +335,13 @@ def run_guardrails_validation(
     Returns:
         JSON response from the guardrails service with validation results.
     """
-    validators = [
-        validator.model_dump(mode="json")
-        if isinstance(validator, Validator)
-        else validator
-        for validator in guardrail_config
-    ]
+    validators: list[dict[str, Any]] = []
+    for validator in guardrail_config:
+        if isinstance(validator, dict):
+            validators.append(validator)
+        else:
+            # Unknown to the service's extra="forbid" validator schemas.
+            validators.append(validator.model_dump(mode="json", exclude={"is_enabled"}))
 
     payload = {
         "request_id": str(job_id),

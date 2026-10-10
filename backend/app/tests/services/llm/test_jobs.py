@@ -907,7 +907,13 @@ class TestExecuteJob:
         ):
             mock_fetch_configs.return_value = (
                 [],
-                [{"type": "pii_remover", "stage": "output"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_2,
+                        "type": "pii_remover",
+                        "stage": "output",
+                    }
+                ],
             )
             mock_guardrails.return_value = {
                 "success": False,
@@ -981,7 +987,13 @@ class TestExecuteJob:
         ):
             mock_fetch_configs.return_value = (
                 [],
-                [{"type": "pii_remover", "stage": "output"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_2,
+                        "type": "pii_remover",
+                        "stage": "output",
+                    }
+                ],
             )
             mock_guardrails.return_value = {
                 "success": True,
@@ -1407,7 +1419,13 @@ class TestExecuteJob:
                 },
             }
             mock_fetch_configs.return_value = (
-                [{"type": "pii_remover", "stage": "input"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_1,
+                        "type": "pii_remover",
+                        "stage": "input",
+                    }
+                ],
                 [],
             )
 
@@ -1479,7 +1497,13 @@ class TestExecuteJob:
                 },
             }
             mock_fetch_configs.return_value = (
-                [{"type": "pii_remover", "stage": "input"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_1,
+                        "type": "pii_remover",
+                        "stage": "input",
+                    }
+                ],
                 [],
             )
 
@@ -1557,7 +1581,13 @@ class TestExecuteJob:
                 },
             }
             mock_fetch_configs.return_value = (
-                [{"type": "pii_remover", "stage": "input"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_1,
+                        "type": "pii_remover",
+                        "stage": "input",
+                    }
+                ],
                 [],
             )
 
@@ -1599,7 +1629,13 @@ class TestExecuteJob:
             ) as mock_fetch_configs,
         ):
             mock_fetch_configs.return_value = (
-                [{"type": "pii_remover", "stage": "input"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_1,
+                        "type": "pii_remover",
+                        "stage": "input",
+                    }
+                ],
                 [],
             )
 
@@ -1660,7 +1696,13 @@ class TestExecuteJob:
             }
             mock_fetch_configs.return_value = (
                 [],
-                [{"type": "pii_remover", "stage": "output"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_2,
+                        "type": "pii_remover",
+                        "stage": "output",
+                    }
+                ],
             )
 
             request_data = {
@@ -1728,7 +1770,13 @@ class TestExecuteJob:
             }
             mock_fetch_configs.return_value = (
                 [],
-                [{"type": "pii_remover", "stage": "output"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_2,
+                        "type": "pii_remover",
+                        "stage": "output",
+                    }
+                ],
             )
 
             request_data = {
@@ -1791,7 +1839,13 @@ class TestExecuteJob:
             }
             mock_fetch_configs.return_value = (
                 [],
-                [{"type": "pii_remover", "stage": "output"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_2,
+                        "type": "pii_remover",
+                        "stage": "output",
+                    }
+                ],
             )
 
             request_data = {
@@ -1845,7 +1899,13 @@ class TestExecuteJob:
             }
             mock_fetch_configs.return_value = (
                 [],
-                [{"type": "pii_remover", "stage": "output"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_2,
+                        "type": "pii_remover",
+                        "stage": "output",
+                    }
+                ],
             )
 
             request_data = {
@@ -1900,7 +1960,13 @@ class TestExecuteJob:
             }
             mock_fetch_configs.return_value = (
                 [],
-                [{"type": "pii_remover", "stage": "output"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_2,
+                        "type": "pii_remover",
+                        "stage": "output",
+                    }
+                ],
             )
 
             request_data = {
@@ -1950,7 +2016,13 @@ class TestExecuteJob:
         ):
             mock_fetch_configs.return_value = (
                 [],
-                [{"type": "safety_filter", "stage": "output"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_2,
+                        "type": "safety_filter",
+                        "stage": "output",
+                    }
+                ],
             )
 
             request_data = {
@@ -2002,7 +2074,13 @@ class TestExecuteJob:
                 },
             }
             mock_fetch_configs.return_value = (
-                [{"type": "pii_remover", "stage": "input"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_1,
+                        "type": "pii_remover",
+                        "stage": "input",
+                    }
+                ],
                 [],
             )
 
@@ -2045,7 +2123,13 @@ class TestExecuteJob:
                 "error": "Unsafe content detected",
             }
             mock_fetch_configs.return_value = (
-                [{"type": "uli_slur_match", "stage": "input"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_1,
+                        "type": "uli_slur_match",
+                        "stage": "input",
+                    }
+                ],
                 [],
             )
 
@@ -2094,7 +2178,13 @@ class TestExecuteJob:
                 },
             }
             mock_fetch_configs.return_value = (
-                [{"type": "topic_relevance", "stage": "input"}],
+                [
+                    {
+                        "id": VALIDATOR_CONFIG_ID_1,
+                        "type": "topic_relevance",
+                        "stage": "input",
+                    }
+                ],
                 [],
             )
 
@@ -2148,7 +2238,7 @@ class TestExecuteJob:
                 },
             }
             mock_fetch_configs.return_value = (
-                [{"type": "policy", "stage": "input"}],
+                [{"id": VALIDATOR_CONFIG_ID_1, "type": "policy", "stage": "input"}],
                 [],
             )
 
@@ -2200,7 +2290,7 @@ class TestExecuteJob:
                 },
             }
             mock_fetch_configs.return_value = (
-                [{"type": "policy", "stage": "input"}],
+                [{"id": VALIDATOR_CONFIG_ID_1, "type": "policy", "stage": "input"}],
                 [],
             )
 
@@ -2780,10 +2870,10 @@ class TestResolveConfigBlob:
         assert error is None
         assert resolved_blob is not None
         assert [v.model_dump() for v in (resolved_blob.input_guardrails or [])] == [
-            {"validator_config_id": UUID(VALIDATOR_CONFIG_ID_1)}
+            {"validator_config_id": UUID(VALIDATOR_CONFIG_ID_1), "is_enabled": True}
         ]
         assert [v.model_dump() for v in (resolved_blob.output_guardrails or [])] == [
-            {"validator_config_id": UUID(VALIDATOR_CONFIG_ID_2)}
+            {"validator_config_id": UUID(VALIDATOR_CONFIG_ID_2), "is_enabled": True}
         ]
 
     def test_resolve_config_blob_version_not_found(self, db: Session):
