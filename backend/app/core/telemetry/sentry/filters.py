@@ -58,6 +58,7 @@ _LLM_JOB_TASK_NAMES = {
     "app.celery.tasks.job_execution.run_llm_chain_job",
 }
 _SENSITIVE_REQUEST_DATA_KEYS = ("query",)
+_INSTRUCTIONS_KEY = "instructions"
 
 
 _BARE_HTTP_METHOD = re.compile(
@@ -143,7 +144,7 @@ def _scrub_request(event: Event) -> None:
 
 
 def _scrub_llm_job_kwargs(event: Event) -> None:
-    """Redact end-user text and callback URL in the celery-job kwargs of LLM tasks."""
+    """Redact the user query and every config `instructions` in LLM task kwargs; keep other params."""
     extra = event.get("extra")
     celery_job = extra.get("celery-job") if isinstance(extra, dict) else None
     if not isinstance(celery_job, dict):
@@ -157,6 +158,22 @@ def _scrub_llm_job_kwargs(event: Event) -> None:
     for key in _SENSITIVE_REQUEST_DATA_KEYS:
         if key in request_data:
             request_data[key] = _REDACTED
+    _redact_instructions(request_data)
+
+
+def _redact_instructions(payload: object, depth: int = 0) -> None:
+    """Replace every `instructions` value in a nested config (call or chain blocks) with a placeholder."""
+    if depth > _GENAI_SCRUB_MAX_DEPTH:
+        return
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key == _INSTRUCTIONS_KEY and value is not None:
+                payload[key] = _REDACTED
+            else:
+                _redact_instructions(value, depth + 1)
+    elif isinstance(payload, list):
+        for item in payload:
+            _redact_instructions(item, depth + 1)
 
 
 def before_send_transaction_filter(event: Event, _hint: Hint) -> Event | None:

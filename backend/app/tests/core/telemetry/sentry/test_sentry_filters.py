@@ -266,6 +266,39 @@ class TestLlmJobKwargsRedaction:
             "blob": {"completion": {"provider": "openai"}}
         }
 
+    def test_redacts_only_instructions_in_call_and_chain_configs(self) -> None:
+        params = {
+            "model": "gpt-4o",
+            "temperature": 0.2,
+            "instructions": "secret prompt",
+        }
+        event = self._event_with_celery_job(
+            "app.celery.tasks.job_execution.run_llm_chain_job",
+            {
+                "request_data": {
+                    "config": {
+                        "blob": {
+                            "completion": {"provider": "openai", "params": dict(params)}
+                        }
+                    },
+                    "blocks": [
+                        {"config": {"blob": {"completion": {"params": dict(params)}}}}
+                    ],
+                }
+            },
+        )
+
+        result = sentry_filters.before_send_error_filter(event, {})
+
+        request_data = result["extra"]["celery-job"]["kwargs"]["request_data"]
+        expected = {**params, "instructions": sentry_filters._REDACTED}
+        assert request_data["config"]["blob"]["completion"]["params"] == expected
+        assert request_data["config"]["blob"]["completion"]["provider"] == "openai"
+        assert (
+            request_data["blocks"][0]["config"]["blob"]["completion"]["params"]
+            == expected
+        )
+
     def test_redacts_query_for_chain_job(self) -> None:
         event = self._event_with_celery_job(
             "app.celery.tasks.job_execution.run_llm_chain_job",

@@ -551,6 +551,9 @@ def get_webhook_secret(
     return creds.get("webhook_secret") if isinstance(creds, dict) else None
 
 
+CALLBACK_USER_DATA_KEY = "data"
+
+
 def send_callback(
     callback_url: str,
     data: dict[str, Any],
@@ -583,8 +586,10 @@ def send_callback(
     except ValueError as ve:
         logger.warning(f"[send_callback] Invalid callback URL: {ve}", exc_info=True)
         return False
+    log_payload = {k: v for k, v in data.items() if k != CALLBACK_USER_DATA_KEY}
+    raw_body = json.dumps(data, separators=(",", ":")).encode()
+    started_at = time.perf_counter()
     try:
-        raw_body = json.dumps(data, separators=(",", ":")).encode()
         headers = {"Content-Type": "application/json"}
 
         if webhook_secret:
@@ -593,7 +598,6 @@ def send_callback(
             headers["X-Webhook-Timestamp"] = str(timestamp_ms)
         span = trace.get_current_span()
         span.set_attribute("callback.request.body.size", len(raw_body))
-        started_at = time.perf_counter()
         with requests.Session() as session:
             session.trust_env = False  # Ignores environment proxies and other implicit settings for SSRF safety
 
@@ -615,11 +619,21 @@ def send_callback(
 
             response.raise_for_status()
 
-            logger.info(f"[send_callback] Callback sent successfully to {callback_url}")
+            logger.info(
+                f"[send_callback] Callback sent | url={callback_url} | status={response.status_code} "
+                f"| duration_ms={(time.perf_counter() - started_at) * 1000:.2f} "
+                f"| bytes={len(raw_body)} | payload={log_payload}"
+            )
             return True
 
     except requests.RequestException as e:
-        logger.error(f"[send_callback] Callback failed: {str(e)}", exc_info=True)
+        status = e.response.status_code if e.response is not None else None
+        logger.error(
+            f"[send_callback] Callback failed | url={callback_url} | status={status} "
+            f"| duration_ms={(time.perf_counter() - started_at) * 1000:.2f} "
+            f"| bytes={len(raw_body)} | payload={log_payload} | error={e}",
+            exc_info=True,
+        )
         return False
 
 
