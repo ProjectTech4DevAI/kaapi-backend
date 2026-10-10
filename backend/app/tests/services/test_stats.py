@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import MagicMock, patch
 
 import requests
@@ -93,6 +93,24 @@ def test_post_to_discord_sets_title_description_and_border_color():
     assert embed["description"] == "Daily platform feature stats"
     assert embed["color"] == stats_mod.DISCORD_EMBED_BORDER_COLOR
     assert embed["fields"] == [{"name": "LLM Calls", "value": "```\nx\n```"}]
+
+
+def test_post_to_discord_default_date_uses_ist():
+    posted: list[dict] = []
+
+    def fake_post(url, json, timeout):
+        posted.append(json["embeds"][0])
+        return MagicMock()
+
+    with patch.object(
+        stats_mod.settings, "DISCORD_STATS_WEBHOOK_URL", "https://x/hook"
+    ), patch("app.services.stats.requests.post", side_effect=fake_post):
+        post_to_discord([{"name": "X", "value": "y"}])
+
+    expected = datetime.now(stats_mod.STATS_TIMEZONE).date()
+    assert posted[0]["title"] == (
+        f"Date: {expected.day}/{expected.month}/{expected.year}"
+    )
 
 
 def test_post_to_discord_splits_fields_across_embeds_under_size_limit():
