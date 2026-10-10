@@ -97,7 +97,7 @@ def record_rate_threshold(
             return
         with sentry_sdk.new_scope() as scope:
             scope.set_tag("alert.type", "threshold_rate_monitor")
-            scope.set_tag("kaapi.project_id", project_id)
+            scope.set_tag("tenant.project_id", project_id)
             scope.set_tag("route_category", category)
             scope.set_extra("request_count", request_count)
             scope.set_extra("threshold", threshold)

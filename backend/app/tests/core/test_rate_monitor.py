@@ -179,7 +179,7 @@ class TestRecordRateThreshold:
         capture.assert_called_once()
         assert capture.call_args.kwargs["level"] == "warning"
         scope.set_tag.assert_any_call("alert.type", "threshold_rate_monitor")
-        scope.set_tag.assert_any_call("kaapi.project_id", 616)
+        scope.set_tag.assert_any_call("tenant.project_id", 616)
         scope.set_extra.assert_any_call("request_count", 16)
         scope.set_extra.assert_any_call("threshold", 15)
 

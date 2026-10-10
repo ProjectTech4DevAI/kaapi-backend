@@ -48,11 +48,11 @@ def _set_tenant_span_attributes(auth_context: AuthContext) -> None:
     """Stamp org/project on the span, log context and Sentry scope after auth."""
     span = trace.get_current_span()
     if span.is_recording():
-        span.set_attribute("kaapi.user_id", str(auth_context.user.id))
+        span.set_attribute("user.id", str(auth_context.user.id))
         if auth_context.organization:
-            span.set_attribute("kaapi.organization_id", auth_context.organization.id)
+            span.set_attribute("tenant.org_id", auth_context.organization.id)
         if auth_context.project:
-            span.set_attribute("kaapi.project_id", auth_context.project.id)
+            span.set_attribute("tenant.project_id", auth_context.project.id)
 
     org_id = auth_context.organization.id if auth_context.organization else None
     project_id = auth_context.project.id if auth_context.project else None

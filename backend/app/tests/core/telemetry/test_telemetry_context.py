@@ -38,8 +38,8 @@ class TestSetRequestLogContext:
         with patch.object(telemetry, "sentry_sdk", fake):
             telemetry.set_request_log_context(org_id=3, project_id=5)
 
-        fake.set_tag.assert_any_call("kaapi.organization_id", "3")
-        fake.set_tag.assert_any_call("kaapi.project_id", "5")
+        fake.set_tag.assert_any_call("tenant.org_id", "3")
+        fake.set_tag.assert_any_call("tenant.project_id", "5")
 
     def test_never_binds_a_sentry_user(self) -> None:
         fake = _active_sentry()

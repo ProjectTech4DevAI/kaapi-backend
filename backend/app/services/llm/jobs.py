@@ -98,7 +98,7 @@ def _set_traceability_attributes(
     task_id: str | None = None,
 ) -> None:
     if job_id is not None:
-        span.set_attribute("kaapi.job_id", str(job_id))
+        span.set_attribute("llm.job_id", str(job_id))
     if llm_call_id is not None:
         span.set_attribute("llm.call_id", str(llm_call_id))
     if chain_id is not None:

@@ -200,7 +200,7 @@ def execute_setup_job(
         project_id=project_id,
         organization_id=organization_id,
     ), tracer.start_as_current_span("collections.create.execute_setup_job") as span:
-        span.set_attribute("kaapi.job_id", str(job_id))
+        span.set_attribute("collection.job_id", str(job_id))
         span.set_attribute("kaapi.project_id", project_id)
         span.set_attribute("kaapi.organization_id", organization_id)
 
@@ -359,7 +359,7 @@ def execute_batch_job(
         project_id=project_id,
         organization_id=organization_id,
     ), tracer.start_as_current_span("collections.create.execute_batch_job") as span:
-        span.set_attribute("kaapi.job_id", str(job_id))
+        span.set_attribute("collection.job_id", str(job_id))
         span.set_attribute("kaapi.project_id", project_id)
         span.set_attribute("kaapi.organization_id", organization_id)
 

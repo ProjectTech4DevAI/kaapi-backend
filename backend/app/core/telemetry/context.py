@@ -31,9 +31,9 @@ def set_request_log_context(
     try:
         if sentry_sdk.get_client().is_active():
             if org_id is not None:
-                sentry_sdk.set_tag("kaapi.organization_id", str(org_id))
+                sentry_sdk.set_tag("tenant.org_id", str(org_id))
             if project_id is not None:
-                sentry_sdk.set_tag("kaapi.project_id", str(project_id))
+                sentry_sdk.set_tag("tenant.project_id", str(project_id))
     except Exception:
         logger.debug("[set_request_log_context] Failed to tag Sentry scope")
 
