@@ -17,6 +17,7 @@ Deep design narrative lives in `docs/architecture/*.md`; open those only for des
 
 ### Modules
 - [modules/llm-call.md](modules/llm-call.md) — `POST /llm/call` pipeline, configs (`Config`/`ConfigVersion`, `LLMCallConfig`), guardrails, chains. Deep dive: `docs/architecture/kaapi-llm-call-ARCHITECTURE.md`
+- [modules/guardrails.md](modules/guardrails.md) — `POST /guardrails` job path, the `kaapi-guardrails` proxy CRUD (validator configs, ban lists, LLM prompts), fail-open vs fail-closed. No deep-dive doc yet.
 - [modules/evaluations.md](modules/evaluations.md) — text/STT/TTS evals, datasets, runs, batch + cron scoring, fast evals. Deep dive: `docs/architecture/kaapi-evaluations-ARCHITECTURE.md`
 - [modules/knowledge-base.md](modules/knowledge-base.md) — documents, collections, transforms, vector-store providers. Deep dive: `docs/architecture/kaapi-knowledge-base-ARCHITECTURE.md`
 - [modules/responses.md](modules/responses.md) — OpenAI Responses API integration, conversations, threads, assistants. No deep-dive doc yet.
