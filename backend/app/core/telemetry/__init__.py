@@ -1,6 +1,7 @@
 """Observability package: public API for OTel tracing, Sentry init, log context, HTTP/DB/LLM metrics."""
 
 from app.core.telemetry.context import (
+    LogModuleEnum,
     bind_sentry_user,
     log_context,
     set_request_log_context,
@@ -19,6 +20,7 @@ from app.core.telemetry.sentry import init_sentry
 from app.core.telemetry.tracing import flush_telemetry, instrument_app, setup_telemetry
 
 __all__ = [
+    "LogModuleEnum",
     "bind_sentry_user",
     "flush_telemetry",
     "init_sentry",

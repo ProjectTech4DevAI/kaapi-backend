@@ -4,6 +4,7 @@ import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
+from enum import StrEnum
 
 import sentry_sdk
 from opentelemetry import trace
@@ -13,6 +14,94 @@ logger = logging.getLogger(__name__)
 _log_context_var: ContextVar[dict[str, str] | None] = ContextVar(
     "kaapi_log_context", default=None
 )
+
+MODULE_NAME_FIELD = "module_name"
+
+
+class LogModuleEnum(StrEnum):
+    KNOWLEDGEBASE = "knowledgebase"
+    LLM_CALL = "llm-call"
+    LLM_CHAIN = "llm-chain"
+    CONFIG_VERSION = "config-version"
+    ASSESSMENT = "assessment"
+    EVALS = "evals"
+    FASTEVALS = "fastevals"
+
+
+# Exact logger name (the module's __name__) -> owning module. A new logging file joins here.
+_LOGGER_MODULES: dict[str, LogModuleEnum] = {
+    # -------- KNOWLEDGEBASE --------
+    "app.api.routes.collection_job": LogModuleEnum.KNOWLEDGEBASE,
+    "app.api.routes.collections": LogModuleEnum.KNOWLEDGEBASE,
+    "app.api.routes.doc_transformation_job": LogModuleEnum.KNOWLEDGEBASE,
+    "app.api.routes.documents": LogModuleEnum.KNOWLEDGEBASE,
+    "app.crud.collection.collection": LogModuleEnum.KNOWLEDGEBASE,
+    "app.crud.collection.collection_job": LogModuleEnum.KNOWLEDGEBASE,
+    "app.crud.document.doc_transformation_job": LogModuleEnum.KNOWLEDGEBASE,
+    "app.crud.document.document": LogModuleEnum.KNOWLEDGEBASE,
+    "app.crud.document_collection": LogModuleEnum.KNOWLEDGEBASE,
+    "app.crud.rag.gemini": LogModuleEnum.KNOWLEDGEBASE,
+    "app.crud.rag.open_ai": LogModuleEnum.KNOWLEDGEBASE,
+    "app.services.collections.create_collection": LogModuleEnum.KNOWLEDGEBASE,
+    "app.services.collections.delete_collection": LogModuleEnum.KNOWLEDGEBASE,
+    "app.services.collections.helpers": LogModuleEnum.KNOWLEDGEBASE,
+    "app.services.collections.providers.gemini": LogModuleEnum.KNOWLEDGEBASE,
+    "app.services.collections.providers.openai": LogModuleEnum.KNOWLEDGEBASE,
+    "app.services.collections.providers.registry": LogModuleEnum.KNOWLEDGEBASE,
+    "app.services.doctransform.job": LogModuleEnum.KNOWLEDGEBASE,
+    "app.services.doctransform.zerox_transformer": LogModuleEnum.KNOWLEDGEBASE,
+    "app.services.documents.helpers": LogModuleEnum.KNOWLEDGEBASE,
+    "app.services.documents.validator": LogModuleEnum.KNOWLEDGEBASE,
+    # -------- LLM_CALL --------
+    "app.api.routes.llm": LogModuleEnum.LLM_CALL,
+    "app.crud.llm": LogModuleEnum.LLM_CALL,
+    "app.services.llm.guardrails": LogModuleEnum.LLM_CALL,
+    "app.services.llm.jobs": LogModuleEnum.LLM_CALL,
+    "app.services.llm.mappers": LogModuleEnum.LLM_CALL,
+    "app.services.llm.providers.claude": LogModuleEnum.LLM_CALL,
+    "app.services.llm.providers.eleven_ai": LogModuleEnum.LLM_CALL,
+    "app.services.llm.providers.google_aistudio": LogModuleEnum.LLM_CALL,
+    "app.services.llm.providers.google_gcp": LogModuleEnum.LLM_CALL,
+    "app.services.llm.providers.open_ai": LogModuleEnum.LLM_CALL,
+    "app.services.llm.providers.registry": LogModuleEnum.LLM_CALL,
+    "app.services.llm.providers.sarvam_ai": LogModuleEnum.LLM_CALL,
+    # -------- LLM_CHAIN --------
+    "app.api.routes.llm_chain": LogModuleEnum.LLM_CHAIN,
+    "app.crud.llm_chain": LogModuleEnum.LLM_CHAIN,
+    "app.services.llm.chain.chain": LogModuleEnum.LLM_CHAIN,
+    "app.services.llm.chain.executor": LogModuleEnum.LLM_CHAIN,
+    # -------- CONFIG_VERSION --------
+    "app.crud.config.config": LogModuleEnum.CONFIG_VERSION,
+    "app.crud.config.version": LogModuleEnum.CONFIG_VERSION,
+    # -------- ASSESSMENT --------
+    "app.api.routes.assessment.api": LogModuleEnum.ASSESSMENT,
+    "app.crud.assessment.api": LogModuleEnum.ASSESSMENT,
+    "app.crud.assessment.submission": LogModuleEnum.ASSESSMENT,
+    "app.services.assessment.api.batch": LogModuleEnum.ASSESSMENT,
+    "app.services.assessment.api.callbacks": LogModuleEnum.ASSESSMENT,
+    "app.services.assessment.api.result_files": LogModuleEnum.ASSESSMENT,
+    "app.services.assessment.api.results": LogModuleEnum.ASSESSMENT,
+    "app.services.assessment.api.submission": LogModuleEnum.ASSESSMENT,
+    "app.services.assessment.api.submission_store": LogModuleEnum.ASSESSMENT,
+    "app.services.assessment.submission": LogModuleEnum.ASSESSMENT,
+    # -------- EVALS --------
+    "app.api.routes.evaluations.v2.dataset": LogModuleEnum.EVALS,
+    "app.api.routes.evaluations.v2.evaluation": LogModuleEnum.EVALS,
+    "app.api.routes.evaluations.v2.iteration": LogModuleEnum.EVALS,
+    "app.api.routes.evaluations.v2.prompt_improvement": LogModuleEnum.EVALS,
+    "app.crud.evaluations.iteration": LogModuleEnum.EVALS,
+    "app.crud.evaluations.judge": LogModuleEnum.EVALS,
+    "app.crud.evaluations.judge_stage": LogModuleEnum.EVALS,
+    "app.crud.evaluations.summary": LogModuleEnum.EVALS,
+    "app.services.evaluations.iteration": LogModuleEnum.EVALS,
+    "app.services.evaluations.iteration_checkpointer": LogModuleEnum.EVALS,
+    "app.services.evaluations.iteration_graph": LogModuleEnum.EVALS,
+    "app.services.evaluations.prompt_improvement": LogModuleEnum.EVALS,
+    # -------- FASTEVALS --------
+    "app.crud.evaluations.fast": LogModuleEnum.FASTEVALS,
+    "app.crud.evaluations.fast_chunks": LogModuleEnum.FASTEVALS,
+    "app.services.evaluations.fast": LogModuleEnum.FASTEVALS,
+}
 
 
 def set_request_log_context(
@@ -62,19 +151,23 @@ def bind_sentry_user(
 
 @contextmanager
 def log_context(
-    *, tag: str | None = None, **fields: str | int | float | bool | None
+    *,
+    tag: str | None = None,
+    module: LogModuleEnum | None = None,
+    **fields: str | int | float | bool | None,
 ) -> Generator[None]:
     """Attach structured log context for the current execution scope.
 
-    Example:
-        with log_context(tag="llm-call", job_id=job_id):
-            logger.info("...")
+    `module` overrides the logger-path module for every log in the block, for flows
+    that run another flow's code (e.g. an LLM chain calling LLM-call helpers).
     """
     current = _log_context_var.get() or {}
     payload = dict(current)
     if tag:
         payload["tag"] = tag
         payload.setdefault("system", tag)
+    if module:
+        payload[MODULE_NAME_FIELD] = module.value
     for key, value in fields.items():
         if value is None:
             continue
@@ -118,6 +211,16 @@ class LogContextFilter(logging.Filter):
                 record.tag = "collection"
                 if not hasattr(record, "system"):
                     record.system = "collection"
+
+        module = (context_payload or {}).get(MODULE_NAME_FIELD) or _LOGGER_MODULES.get(
+            record.name
+        )
+        location = f"{record.name}.{record.funcName}"
+        setattr(
+            record,
+            MODULE_NAME_FIELD,
+            f"[{module}] {location}" if module else location,
+        )
 
         if not hasattr(record, "lifecycle"):
             span = trace.get_current_span()

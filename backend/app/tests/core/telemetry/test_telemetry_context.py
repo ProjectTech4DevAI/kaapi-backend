@@ -164,3 +164,70 @@ class TestLogContextFilter:
         with patch.object(telemetry.trace, "get_current_span", return_value=span):
             telemetry.LogContextFilter().filter(record)
         assert record.lifecycle == "run/app.task"
+
+
+class TestModuleName:
+    @pytest.fixture(autouse=True)
+    def _clean_log_context(self):
+        token = telemetry._log_context_var.set(None)
+        yield
+        telemetry._log_context_var.reset(token)
+
+    def _module_name(self, logger_name: str, func: str = "execute_job") -> str | None:
+        record = logging.LogRecord(
+            logger_name, logging.INFO, __file__, 1, "msg", None, None, func
+        )
+        telemetry.LogContextFilter().filter(record)
+        return getattr(record, telemetry.MODULE_NAME_FIELD, None)
+
+    @pytest.mark.parametrize(
+        ("logger_name", "expected"),
+        [
+            ("app.services.llm.jobs", "[llm-call] app.services.llm.jobs.execute_job"),
+            (
+                "app.services.llm.chain.executor",
+                "[llm-chain] app.services.llm.chain.executor.execute_job",
+            ),
+            (
+                "app.api.routes.llm_chain",
+                "[llm-chain] app.api.routes.llm_chain.execute_job",
+            ),
+            (
+                "app.crud.config.version",
+                "[config-version] app.crud.config.version.execute_job",
+            ),
+            (
+                "app.services.collections.create_collection",
+                "[knowledgebase] app.services.collections.create_collection.execute_job",
+            ),
+            (
+                "app.services.assessment.api.batch",
+                "[assessment] app.services.assessment.api.batch.execute_job",
+            ),
+            (
+                "app.crud.evaluations.judge_stage",
+                "[evals] app.crud.evaluations.judge_stage.execute_job",
+            ),
+            (
+                "app.crud.evaluations.fast_chunks",
+                "[fastevals] app.crud.evaluations.fast_chunks.execute_job",
+            ),
+        ],
+    )
+    def test_resolves_module_from_logger_path(
+        self, logger_name: str, expected: str
+    ) -> None:
+        assert self._module_name(logger_name) == expected
+
+    def test_unmapped_logger_falls_back_to_logger_path(self) -> None:
+        assert (
+            self._module_name("app.crud.assessment.cron")
+            == "app.crud.assessment.cron.execute_job"
+        )
+
+    def test_log_context_module_overrides_logger_path(self) -> None:
+        with telemetry.log_context(module=telemetry.LogModuleEnum.LLM_CHAIN):
+            assert (
+                self._module_name("app.services.llm.jobs")
+                == "[llm-chain] app.services.llm.jobs.execute_job"
+            )

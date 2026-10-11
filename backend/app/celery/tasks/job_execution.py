@@ -26,6 +26,7 @@ from opentelemetry.propagate import extract
 from app.celery.celery_app import celery_app
 from app.celery.utils import gevent_timeout
 from app.core.config import settings
+from app.core.telemetry import LogModuleEnum, log_context
 
 if TYPE_CHECKING:
     from app.services.notifications.eval_completion import (
@@ -454,12 +455,13 @@ def run_evaluation_fast_chunk(
         f"task_id={current_task.request.id}"
     )
 
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_fast_evaluation_chunk(
-            eval_run_id=eval_run_id, chunk_index=chunk_index
-        ),
-    )
+    with log_context(module=LogModuleEnum.FASTEVALS):
+        return _run_with_otel_parent(
+            self,
+            lambda: execute_fast_evaluation_chunk(
+                eval_run_id=eval_run_id, chunk_index=chunk_index
+            ),
+        )
 
 
 @celery_app.task(bind=True, queue="default", priority=6)
@@ -481,10 +483,11 @@ def run_evaluation_fast_aggregate(
         f"eval_run_id={eval_run_id} | task_id={current_task.request.id}"
     )
 
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_fast_evaluation_aggregate(eval_run_id=eval_run_id),
-    )
+    with log_context(module=LogModuleEnum.FASTEVALS):
+        return _run_with_otel_parent(
+            self,
+            lambda: execute_fast_evaluation_aggregate(eval_run_id=eval_run_id),
+        )
 
 
 # Priority 6 (fast-eval tier): same band as run_prompt_improvement — one graph
