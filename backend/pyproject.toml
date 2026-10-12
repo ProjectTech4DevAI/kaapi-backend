@@ -3,6 +3,7 @@ name = "app"
 version = "0.1.0"
 description = ""
 requires-python = ">=3.12,<4.0"
+license = "AGPL-3.0-or-later"
 dependencies = [
     "fastapi[standard]>=0.116.0",
     "python-multipart>=0.0.31,<1.0.0",
@@ -76,6 +77,9 @@ dev-dependencies = [
     "types-passlib<2.0.0.0,>=1.7.7.20240106",
     "coverage<8.0.0,>=7.4.3",
     "pytest-asyncio>=1.0.0",
+    "pytest-xdist>=3.8.0",
+    "filelock>=3.25.2",
+    "pytest-cov>=7.1.0",
 ]
 
 [build-system]
@@ -84,6 +88,11 @@ build-backend = "hatchling.build"
 
 [project.scripts]
 ai-cli = "app.cli.main:cli"
+
+# Keeps coverage.xml paths as "app/..." (relative to backend/) so Codecov
+# can map them to repo files for the per-file view.
+[tool.coverage.run]
+relative_files = true
 
 [tool.mypy]
 strict = true

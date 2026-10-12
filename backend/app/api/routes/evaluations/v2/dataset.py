@@ -23,7 +23,7 @@ router = APIRouter(prefix="/evaluations/datasets", tags=["Evaluation v2"])
 
 @router.post(
     "",
-    description=load_description("evaluation/create_evaluation_dataset_v2.md"),
+    description=load_description("evaluation/v2/create_evaluation_dataset.md"),
     response_model=APIResponse[DatasetUploadResponse],
     dependencies=[
         Depends(require_permission(Permission.REQUIRE_PROJECT)),

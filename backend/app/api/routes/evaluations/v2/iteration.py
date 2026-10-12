@@ -22,7 +22,7 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation v2"])
 
 @router.post(
     "/iterations",
-    description=load_description("evaluation/create_evaluation_iteration_v2.md"),
+    description=load_description("evaluation/v2/create_evaluation_iteration.md"),
     response_model=APIResponse[EvaluationIterationRunImmediatePublic],
     status_code=202,
     dependencies=[
@@ -30,7 +30,7 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation v2"])
         Depends(monitor_rate("evaluations")),
     ],
 )
-def create_evaluation_iteration_v2(
+def create_evaluation_iteration(
     session: SessionDep,
     auth_context: AuthContextDep,
     request: EvaluationIterationCreateRequest,
