@@ -8,6 +8,7 @@ from app.crud.model_config import is_reasoning_model
 from app.models.llm import KaapiCompletionConfig, NativeCompletionConfig
 from app.models.llm.request import STTLLMParams, TextLLMParams, TTSLLMParams
 from app.models.llm.constants import (
+    BCP47_LOCALE_TO_GEMINI_LANG,
     BCP47_TO_ELEVENLABS_LANG,
     DEFAULT_ELEVENLABS_STT_MODEL,
     DEFAULT_ELEVENLABS_TTS_MODEL,
@@ -268,7 +269,7 @@ def map_kaapi_to_google_params(
         - instructions → instructions (for STT prompts, if available)
         - temperature / top_p → not sent (deprecated by Gemini)
         - max_output_tokens → same name (text only)
-        - language → full BCP-47 locale passed through (TTS only)
+        - language → full Gemini locale via BCP47_LOCALE_TO_GEMINI_LANG; unsupported → auto-detect (TTS only)
         - thinking_level → thinking_config.thinking_level (text only)
         - output_schema → output_schema, converted to Gemini's shape (text only)
         - knowledge_base_ids → FileSearch tool store names (text only)
@@ -342,10 +343,16 @@ def map_kaapi_to_google_params(
         response_format = params.get("response_format") or "wav"
         google_params["response_format"] = response_format
 
-        # Full BCP-47 locale, not the bare ISO code: collapsing en-IN to en loses the accent.
+        # Language: Only set if explicitly provided (None/missing = auto-detect)
         language = params.get("language")
         if language:
-            google_params["language"] = language
+            google_lang = BCP47_LOCALE_TO_GEMINI_LANG.get(language)
+            if not google_lang:
+                warnings.append(
+                    f"Unsupported language '{language}' for Gemini TTS, using auto-detect"
+                )
+            else:
+                google_params["language"] = google_lang
 
     elif completion_type == CompletionType.STT:
         # STT mode - instructions, input_language, output_language, response_format

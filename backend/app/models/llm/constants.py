@@ -199,6 +199,26 @@ DEFAULT_SARVAM_TTS_MODEL = "bulbul:v3"
 DEFAULT_ELEVENLABS_STT_MODEL = "scribe_v2"
 DEFAULT_ELEVENLABS_TTS_MODEL = "eleven_v3"
 
+# Kaapi BCP-47 tag -> Gemini TTS language. Full locales, not bare ISO codes:
+# en-IN keeps the Indian accent where "en" does not. Unlisted tags fall back
+# to auto-detect.
+BCP47_LOCALE_TO_GEMINI_LANG: dict[str, str] = {
+    "en-IN": "en-IN",
+    "hi-IN": "hi-IN",
+    "bn-IN": "bn-IN",
+    "ta-IN": "ta-IN",
+    "te-IN": "te-IN",
+    "mr-IN": "mr-IN",
+    "gu-IN": "gu-IN",
+    "kn-IN": "kn-IN",
+    "ml-IN": "ml-IN",
+    "pa-IN": "pa-IN",
+    # Kaapi uses the non-standard "od-IN" for Odia; the real tag is "or-IN".
+    "od-IN": "or-IN",
+    # "as-IN": not supported by Gemini
+    "sd-IN": "sd-IN",
+}
+
 # BCP-47 language tag → ElevenLabs ISO 639-1 code (Indic + English)
 BCP47_TO_ELEVENLABS_LANG: dict[str, str] = {
     "en-IN": "en",

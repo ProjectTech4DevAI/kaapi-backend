@@ -408,11 +408,12 @@ class TestMapKaapiToGoogleParams:
         assert "language" not in result  # Not set = auto-detect
         assert warnings == []
 
-    def test_tts_non_indic_language_passes_through(self):
+    @pytest.mark.parametrize("language", ["fr-FR", "as-IN"])
+    def test_tts_unsupported_language_falls_back_to_auto_detect(self, language):
         kaapi_params = TTSLLMParams(
             model="gemini-2.5-pro",
             voice="Kore",
-            language="fr-FR",
+            language=language,
         )
 
         result, warnings = map_kaapi_to_google_params(
@@ -422,7 +423,22 @@ class TestMapKaapiToGoogleParams:
         assert result["model"] == "gemini-2.5-pro"
         assert result["voice"] == "Kore"
         assert result["response_format"] == "wav"
-        assert result["language"] == "fr-FR"
+        assert "language" not in result
+        assert warnings == [
+            f"Unsupported language '{language}' for Gemini TTS, using auto-detect"
+        ]
+
+    def test_tts_odia_maps_to_standard_locale(self):
+        # Kaapi's canonical Odia tag is the non-standard od-IN.
+        kaapi_params = TTSLLMParams(
+            model="gemini-2.5-pro", voice="Kore", language="odia"
+        )
+
+        result, warnings = map_kaapi_to_google_params(
+            kaapi_params.model_dump(exclude_none=True), completion_type="tts"
+        )
+
+        assert result["language"] == "or-IN"
         assert warnings == []
 
     def test_tts_without_language_leaves_it_unset(self):
@@ -1198,7 +1214,7 @@ class TestTransformGoogleVertexRouting:
         assert native_config.provider == "google-native"
         assert native_config.params["model"] == "gemini-2.5-pro"
 
-    def test_unlisted_language_passes_through_without_warning(self, db: Session):
+    def test_unlisted_language_falls_back_to_auto_detect(self, db: Session):
         kaapi_config = build_kaapi_completion_config(
             provider="google",
             type="tts",
@@ -1213,8 +1229,10 @@ class TestTransformGoogleVertexRouting:
         )
 
         assert native_config.provider == "google-native"
-        assert native_config.params["language"] == "xx-YY"
-        assert warnings == []
+        assert "language" not in native_config.params
+        assert warnings == [
+            "Unsupported language 'xx-YY' for Gemini TTS, using auto-detect"
+        ]
 
 
 class TestTransformGoogleGCPRouting:
