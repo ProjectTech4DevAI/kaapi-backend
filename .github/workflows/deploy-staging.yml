@@ -41,7 +41,6 @@ jobs:
         run: |
           SECRET_IDs=$(echo "$SECRET_IDs" | tr -d '[:space:]')
           : "${APP_DIR:?APP_DIR repo/environment variable is not set}"
-          echo "Deploying commit: $DEPLOY_SHA to $APP_DIR"
 
           DEPLOY_CMD="cd $APP_DIR \
             && git fetch --all \
