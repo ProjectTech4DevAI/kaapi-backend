@@ -31,6 +31,7 @@ def _initialize_worker_observability() -> None:
     configure_logging(service_name="kaapi-celery")
 
     if settings.SENTRY_DSN and not _sentry_initialized:
+        import sentry_sdk
         from sentry_sdk.integrations.celery import CeleryIntegration
         from sentry_sdk.integrations.httpx import HttpxIntegration
         from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
@@ -43,6 +44,12 @@ def _initialize_worker_observability() -> None:
             ],
             disabled_integrations=[SqlalchemyIntegration(), HttpxIntegration()],
         )
+
+        @task_prerun.connect(weak=False)
+        def _tag_sentry_task(task: "celery.Task", **_: object) -> None:  # type: ignore[name-defined]
+            """Tag the task's Sentry scope with its name so Issues can be filtered by task."""
+            sentry_sdk.set_tag("celery.task_name", task.name)
+
         _sentry_initialized = True
 
     if settings.OTEL_ENABLED and not _telemetry_initialized:
