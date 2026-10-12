@@ -618,12 +618,6 @@ def send_callback(
             span.set_attribute("callback.response.status_code", response.status_code)
 
             response.raise_for_status()
-
-            logger.info(
-                f"[send_callback] Callback sent | url={callback_url} | status={response.status_code} "
-                f"| duration_ms={(time.perf_counter() - started_at) * 1000:.2f} "
-                f"| bytes={len(raw_body)} | payload={log_payload}"
-            )
             return True
 
     except requests.RequestException as e:

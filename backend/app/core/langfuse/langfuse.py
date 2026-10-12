@@ -321,7 +321,6 @@ def observe_llm_execution(
             completion_config: NativeCompletionConfig, query: QueryParams, **kwargs
         ):
             if not credentials:
-                logger.info("[observe_llm_execution] No credentials - skipping tracing")
                 return func(completion_config, query, **kwargs)
 
             try:

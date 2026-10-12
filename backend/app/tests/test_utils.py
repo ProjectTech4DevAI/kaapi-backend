@@ -429,26 +429,6 @@ class TestSendCallbackLogging:
 
     @patch("app.utils.validate_callback_url")
     @patch("requests.Session")
-    def test_success_logs_everything_except_user_data(
-        self, mock_session_cls, mock_validate, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        mock_session = MagicMock()
-        mock_session.post.return_value = MagicMock(status_code=200)
-        mock_session_cls.return_value.__enter__.return_value = mock_session
-
-        with caplog.at_level("INFO", logger="app.utils"):
-            assert send_callback("https://api.example.com/hook", self._payload)
-
-        line = next(
-            r.getMessage() for r in caplog.records if "Callback sent" in r.getMessage()
-        )
-        assert "url=https://api.example.com/hook" in line
-        assert "status=200" in line
-        assert "'request_metadata': {'ref': 'abc'}" in line
-        assert "model answer for the user" not in line
-
-    @patch("app.utils.validate_callback_url")
-    @patch("requests.Session")
     def test_failure_logs_status_and_payload_without_user_data(
         self, mock_session_cls, mock_validate, caplog: pytest.LogCaptureFixture
     ) -> None:

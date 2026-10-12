@@ -164,11 +164,6 @@ def setup_telemetry(service_name: str | None = None) -> None:
     except Exception:
         logger.exception("[setup_telemetry] Failed to instrument botocore")
 
-    logger.debug(
-        "[setup_telemetry] OpenTelemetry initialized (service=%s, sink=Sentry)",
-        service_name or settings.OTEL_SERVICE_NAME,
-    )
-
 
 def flush_telemetry(timeout_millis: int = 10000) -> None:
     """Force-flush OTel spans into Sentry, then flush Sentry's transport.
@@ -215,4 +210,3 @@ def instrument_app(app: FastAPI) -> None:
         excluded_urls=excluded_urls,
         exclude_spans=FASTAPI_EXCLUDED_SPANS,
     )
-    logger.debug("[instrument_app] FastAPI instrumented with OpenTelemetry")
