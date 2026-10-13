@@ -1,12 +1,11 @@
 """Durable result dumps for the BATCH API-client path.
 
-Records every provider dump on ``assessment.result_files`` as ``{kind: {object_store_url}}``,
-builds ``errors.jsonl`` at terminal time, and presigns both into the callback envelope.
-Nothing here raises into the terminal path: a missing dump degrades to a missing key.
+Records every provider dump on ``assessment.result_files`` as ``{stage: {object_store_url}}``,
+builds ``errors.jsonl`` only when there is something to report, and presigns both into the
+callback envelope. Nothing here raises: a missing dump degrades to a missing key.
 """
 
 import logging
-from datetime import timedelta
 from enum import StrEnum
 from typing import Any
 
@@ -15,17 +14,16 @@ from sqlmodel import Session
 from app.core.cloud import get_cloud_storage
 from app.core.config import settings
 from app.core.storage_utils import upload_jsonl_to_object_store
-from app.core.util import now
 from app.crud.assessment import api
 from app.crud.job import get_batch_job
 from app.models.assessment import (
     Assessment,
+    AssessmentResultFiles,
     AssessmentRun,
     BatchRunState,
 )
 from app.models.batch_job import BatchJob
 from app.services.assessment.api.batch import (
-    ApiStage,
     _build_batch_provider,
     error_file_entries,
 )
@@ -36,7 +34,6 @@ from app.services.assessment.validators import (
 
 logger = logging.getLogger(__name__)
 
-RESULTS_FILE_KIND = "results"
 ERRORS_FILE_KIND = "errors"
 
 # 86400 is the storage layer's own ceiling, so the presigned urls live exactly one day.
@@ -50,13 +47,6 @@ class ErrorRecordEnum(StrEnum):
     ROW_ERROR = "row_error"
     PROVIDER_ERROR_FILE = "provider_error_file"
     PROVIDER_ERROR_FILE_UNAVAILABLE = "provider_error_file_unavailable"
-
-
-def stage_file_kind(stage: str) -> str:
-    """Result-file kind for a stage's dump; the assessment dump is the run's ``results``."""
-    if stage == ApiStage.ASSESSMENT.value:
-        return RESULTS_FILE_KIND
-    return f"{stage}_results"
 
 
 def record_stage_dump(
@@ -81,7 +71,7 @@ def record_stage_dump(
     api.set_result_files(
         session=session,
         assessment=assessment,
-        files={stage_file_kind(stage): {"object_store_url": url}},
+        files={stage: {"object_store_url": url}},
     )
 
 
@@ -162,11 +152,8 @@ def build_and_upload_errors(
     bag: BatchRunState,
     failure_message: str | None,
 ) -> str | None:
-    """Assemble and upload the run's ``errors.jsonl``. Returns its object-store url.
-
-    Uploaded even when there are no rows, so the "both a results and an errors url"
-    promise holds on the clean-success path too.
-    """
+    """Assemble and upload the run's ``errors.jsonl``; ``None`` when there is nothing
+    to report, so a clean run leaves no empty object behind."""
     rows: list[dict[str, Any]] = []
     if failure_message:
         rows.append(
@@ -192,6 +179,9 @@ def build_and_upload_errors(
                     batch_job=batch_job,
                 )
             )
+
+    if not rows:
+        return None
 
     try:
         storage = get_cloud_storage(session=session, project_id=assessment.project_id)
@@ -239,7 +229,7 @@ def finalize_result_files(
         for stage, url in (bag.get("stage_output_urls") or {}).items():
             if not url:
                 continue
-            files[stage_file_kind(stage)] = {"object_store_url": url}
+            files[stage] = {"object_store_url": url}
 
         errors_url = build_and_upload_errors(
             session=session,
@@ -263,27 +253,25 @@ def finalize_result_files(
         )
 
 
-def build_callback_metadata(
+def presign_result_files(
     *, session: Session, assessment: Assessment
-) -> dict[str, Any]:
+) -> AssessmentResultFiles:
     """Presign every recorded result file for the callback envelope's ``metadata``.
 
-    Always returns ``{"result_files": ..., "expires_at": ...}``; a per-key presign
-    failure drops that entry rather than the whole envelope key.
+    An unset field means no such dump; a presign failure leaves just that field null.
     """
-    expires_at = (now() + timedelta(seconds=SIGNED_URL_EXPIRY_SECONDS)).isoformat()
-    signed: dict[str, dict[str, Any]] = {}
+    files: dict[str, str] = {}
 
     try:
         storage = get_cloud_storage(session=session, project_id=assessment.project_id)
     except Exception:
         logger.error(
-            "[build_callback_metadata] Storage unavailable, sending empty result_files | "
+            "[presign_result_files] Storage unavailable, sending empty files | "
             "assessment_id=%s",
             assessment.id,
             exc_info=True,
         )
-        return {"result_files": signed, "expires_at": expires_at}
+        return AssessmentResultFiles()
 
     for kind, record in assessment.result_files.items():
         entry: dict[str, Any] = record or {}
@@ -296,13 +284,13 @@ def build_callback_metadata(
             )
         except Exception:
             logger.error(
-                "[build_callback_metadata] Presign failed, dropping kind | "
+                "[presign_result_files] Presign failed, dropping kind | "
                 "assessment_id=%s | kind=%s",
                 assessment.id,
                 kind,
                 exc_info=True,
             )
             continue
-        signed[kind] = {"signed_url": signed_url}
+        files[kind] = signed_url
 
-    return {"result_files": signed, "expires_at": expires_at}
+    return AssessmentResultFiles.model_validate(files)

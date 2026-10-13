@@ -61,6 +61,7 @@ from app.models.assessment import (
 )
 from app.models.batch_job import BatchJob, BatchJobType
 from app.models.config.assessment_blob import (
+    ATTACHMENT_COLUMN_TYPES,
     AssessmentConfigBlob,
     AssessmentPreFilters,
     TopicRelevanceFilter,
@@ -206,14 +207,14 @@ def column_kinds(
 ) -> tuple[list[str], list[AssessmentAttachment]]:
     """Split columns into text names and attachment specs per the config's ``input_schema``.
 
-    A column typed image/pdf is an attachment (url-format only); anything else is text.
+    A column typed image/pdf/video is an attachment (url-format only); anything else is text.
     """
     text_columns: list[str] = []
     attachments: list[AssessmentAttachment] = []
     for column in columns:
         spec = input_columns.get(column) or {}
         col_type = spec.get("type", "text")
-        if col_type in ("image", "pdf"):
+        if col_type in ATTACHMENT_COLUMN_TYPES:
             if (spec.get("format") or "url") != "url":
                 raise ValueError(
                     f"BATCH attachment column '{column}' must be url-format; base64 is "
@@ -570,8 +571,8 @@ def _parse_verdict(output: str | None) -> Verdict:
         }
     except (json.JSONDecodeError, TypeError, AttributeError):
         logger.warning(
-            "[_parse_verdict] Unparseable verdict, failing open | output=%s",
-            output[:200],
+            "[_parse_verdict] Unparseable verdict, failing open | output_len=%s",
+            len(output),
         )
         return {"verdict": True, "reasoning": ""}
 

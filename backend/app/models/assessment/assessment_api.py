@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Annotated, Any, NotRequired, TypedDict
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, JsonValue, model_validator
 from sqlmodel import SQLModel
 
 from app.models.assessment.assessment import (
@@ -140,7 +140,7 @@ class AssessmentCreate(BaseModel):
             "GET /assessments/{assessment_id} instead"
         ),
     )
-    request_metadata: dict[str, Any] | None = Field(
+    request_metadata: dict[str, JsonValue] | None = Field(
         default=None,
         description="Passed through unchanged in the callback for correlation",
     )
@@ -260,4 +260,12 @@ class AssessmentCallback(BaseModel):
     assessment_id: UUID
     status: AssessmentStatus
     data: AssessmentResultData | None = None
-    request_metadata: dict[str, Any] | None = None
+    request_metadata: dict[str, JsonValue] | None = None
+
+
+class AssessmentResultFiles(BaseModel):
+    """URLs of the provider dumps for each stage, if any."""
+
+    topic_relevance: str | None = None
+    assessment: str | None = None
+    errors: str | None = None

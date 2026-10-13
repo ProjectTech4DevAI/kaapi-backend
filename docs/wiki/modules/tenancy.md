@@ -10,7 +10,6 @@ All paths relative to `backend/app/`.
 - `api/routes/organization.py`, `api/routes/project.py`
 - `api/routes/api_keys.py`
 - `api/routes/onboarding.py`
-- `api/routes/private.py` — internal endpoints
 
 ## Tables (SQLModel)
 | Table | Model |

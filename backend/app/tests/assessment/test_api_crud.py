@@ -495,3 +495,11 @@ class TestInputColumn:
         col = InputColumn.model_validate({"type": "image", "format": "url"})
         assert col.type == "image"
         assert col.format == "url"
+
+    def test_video_base64_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            InputColumn.model_validate({"type": "video", "format": "base64"})
+
+    def test_video_url_accepted(self) -> None:
+        col = InputColumn.model_validate({"type": "video", "format": "url"})
+        assert col.type == "video"

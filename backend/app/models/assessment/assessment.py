@@ -17,6 +17,7 @@ from sqlmodel import Field as SQLField
 from sqlmodel import Relationship, SQLModel
 
 from app.core.util import now
+from app.models.config.assessment_blob import AttachmentColumnType
 
 if TYPE_CHECKING:
     from app.models.batch_job import BatchJob
@@ -83,16 +84,19 @@ class AssessmentAttachment(BaseModel):
     """External-dataset attachment column config (RUN / BATCH-by-ref)."""
 
     column: str = Field(..., description="Dataset column holding the attachment")
-    type: Literal["image", "pdf", "mixed"] = Field(
+    type: AttachmentColumnType | Literal["mixed"] = Field(
         ...,
-        description="'image'/'pdf' fix the type; 'mixed' resolves per-row via type_column",
+        description=(
+            "'image'/'pdf'/'video' fix the type; 'mixed' resolves per-row via type_column"
+        ),
     )
     format: Literal["url", "base64"] = Field(..., description="Data format")
     type_column: str | None = Field(
         None, description="'mixed' only: column whose value decides each row's type"
     )
-    type_value_map: dict[str, Literal["image", "pdf"]] | None = Field(
-        None, description="'mixed' only: maps a type_column value to 'image' or 'pdf'"
+    type_value_map: dict[str, AttachmentColumnType] | None = Field(
+        None,
+        description="'mixed' only: maps a type_column value to 'image', 'pdf' or 'video'",
     )
 
     @model_validator(mode="after")

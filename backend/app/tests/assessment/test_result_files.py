@@ -5,10 +5,8 @@ and the provider client are the only seams stubbed.
 """
 
 import json
-from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
-from app.core.util import now
 from app.crud.assessment import api
 from app.models.assessment import AssessmentMethod, BatchRunState
 from app.models.batch_job import BatchJob, BatchJobType
@@ -17,10 +15,9 @@ from app.models.config.config import ConfigTag
 from app.services.assessment.api.batch import ApiStage
 from app.services.assessment.api.result_files import (
     build_and_upload_errors,
-    build_callback_metadata,
     finalize_result_files,
+    presign_result_files,
     record_stage_dump,
-    stage_file_kind,
 )
 from app.tests.utils.auth import get_user_test_auth_context
 from app.tests.utils.test_data import create_test_config
@@ -136,16 +133,6 @@ def _upload_patch(uploads: _Uploads):
     )
 
 
-class TestStageFileKind:
-    def test_assessment_stage_is_the_runs_results(self) -> None:
-        assert stage_file_kind(ApiStage.ASSESSMENT.value) == "results"
-
-    def test_prefilter_stage_is_suffixed(self) -> None:
-        assert stage_file_kind(ApiStage.TOPIC_RELEVANCE.value) == (
-            "topic_relevance_results"
-        )
-
-
 class TestRecordStageDump:
     def test_dump_is_on_the_parent_row_before_any_terminal_state(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -160,7 +147,7 @@ class TestRecordStageDump:
 
         db.refresh(assessment)
         assert assessment.result_files == {
-            "topic_relevance_results": {
+            "topic_relevance": {
                 "object_store_url": "s3://bucket/batch-1170/output.jsonl",
             }
         }
@@ -181,7 +168,7 @@ class TestRecordStageDump:
 
 
 class TestBuildAndUploadErrors:
-    def test_clean_success_still_uploads_an_empty_file(self, db) -> None:
+    def test_clean_success_uploads_nothing(self, db) -> None:
         auth = get_user_test_auth_context(db)
         assessment, execution = _seed(db, auth)
         uploads = _Uploads()
@@ -195,10 +182,8 @@ class TestBuildAndUploadErrors:
                 failure_message=None,
             )
 
-        assert url == "s3://bucket/errors.jsonl"
-        assert uploads.rows == []
-        assert uploads.calls[0]["filename"] == "errors.jsonl"
-        assert uploads.calls[0]["subdirectory"] == f"assessment/{assessment.id}"
+        assert url is None
+        assert uploads.calls == []
 
     def test_row_errors_are_flattened_per_stage(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -357,7 +342,7 @@ class TestFinalizeResultFiles:
             }
         ]
 
-    def test_completed_run_carries_both_a_results_and_an_errors_record(
+    def test_completed_run_with_no_errors_carries_only_the_results_record(
         self, db
     ) -> None:
         auth = get_user_test_auth_context(db)
@@ -384,8 +369,7 @@ class TestFinalizeResultFiles:
 
         db.refresh(assessment)
         assert assessment.result_files == {
-            "results": {"object_store_url": "s3://bucket/batch-1173/output.jsonl"},
-            "errors": {"object_store_url": "s3://bucket/errors.jsonl"},
+            "assessment": {"object_store_url": "s3://bucket/batch-1173/output.jsonl"},
         }
 
     def test_prefilter_and_assessment_dumps_coexist(self, db) -> None:
@@ -414,11 +398,9 @@ class TestFinalizeResultFiles:
 
         db.refresh(assessment)
         assert set(assessment.result_files) == {
-            "topic_relevance_results",
-            "results",
-            "errors",
+            "topic_relevance",
+            "assessment",
         }
-        assert "topic_relevance_results" in assessment.result_files
 
     def test_a_second_tick_does_not_duplicate_or_lose_records(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -439,7 +421,7 @@ class TestFinalizeResultFiles:
             )
 
         db.refresh(assessment)
-        assert set(assessment.result_files) == {"results", "errors"}
+        assert set(assessment.result_files) == {"assessment"}
 
     def test_upload_failure_does_not_raise_into_the_terminal_path(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -462,13 +444,14 @@ class TestFinalizeResultFiles:
                         ApiStage.ASSESSMENT.value: "s3://bucket/out.jsonl"
                     }
                 ),
+                failure_message="kaboom",
             )
 
         db.refresh(assessment)
         assert assessment.result_files == {}
 
 
-class TestBuildCallbackMetadata:
+class TestPresignResultFiles:
     def _signing_storage(self, failing_url: str | None = None) -> MagicMock:
         storage = MagicMock()
 
@@ -487,27 +470,18 @@ class TestBuildCallbackMetadata:
             session=db,
             assessment=assessment,
             files={
-                "results": {"object_store_url": "s3://bucket/out.jsonl"},
+                "assessment": {"object_store_url": "s3://bucket/out.jsonl"},
                 "errors": {"object_store_url": "s3://bucket/errors.jsonl"},
             },
         )
 
         with _storage_patch(self._signing_storage()):
-            metadata = build_callback_metadata(session=db, assessment=assessment)
+            files = presign_result_files(session=db, assessment=assessment)
 
-        assert metadata["result_files"]["results"] == {
-            "signed_url": f"https://signed.example/s3://bucket/out.jsonl?exp={ONE_DAY_SECONDS}",
-        }
-
-    def test_expires_at_is_one_day_out(self, db) -> None:
-        auth = get_user_test_auth_context(db)
-        assessment, _ = _seed(db, auth)
-
-        with _storage_patch(self._signing_storage()):
-            metadata = build_callback_metadata(session=db, assessment=assessment)
-
-        expires_at = datetime.fromisoformat(metadata["expires_at"])
-        assert timedelta(hours=23, minutes=59) < expires_at - now() <= timedelta(days=1)
+        assert (
+            files.assessment
+            == f"https://signed.example/s3://bucket/out.jsonl?exp={ONE_DAY_SECONDS}"
+        )
 
     def test_a_failing_presign_drops_only_its_own_kind(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -516,31 +490,30 @@ class TestBuildCallbackMetadata:
             session=db,
             assessment=assessment,
             files={
-                "results": {"object_store_url": "s3://bucket/out.jsonl"},
+                "assessment": {"object_store_url": "s3://bucket/out.jsonl"},
                 "errors": {"object_store_url": "s3://bucket/errors.jsonl"},
             },
         )
 
         with _storage_patch(self._signing_storage(failing_url="s3://bucket/out.jsonl")):
-            metadata = build_callback_metadata(session=db, assessment=assessment)
+            files = presign_result_files(session=db, assessment=assessment)
 
-        assert set(metadata["result_files"]) == {"errors"}
-        assert metadata["expires_at"]
+        assert files.assessment is None
+        assert files.errors is not None
 
-    def test_storage_outage_still_returns_the_envelope_keys(self, db) -> None:
+    def test_storage_outage_returns_an_empty_envelope(self, db) -> None:
         auth = get_user_test_auth_context(db)
         assessment, _ = _seed(db, auth)
         api.set_result_files(
             session=db,
             assessment=assessment,
-            files={"results": {"object_store_url": "s3://bucket/out.jsonl"}},
+            files={"assessment": {"object_store_url": "s3://bucket/out.jsonl"}},
         )
 
         with patch(
             "app.services.assessment.api.result_files.get_cloud_storage",
             side_effect=RuntimeError("s3 unreachable"),
         ):
-            metadata = build_callback_metadata(session=db, assessment=assessment)
+            files = presign_result_files(session=db, assessment=assessment)
 
-        assert metadata["result_files"] == {}
-        assert metadata["expires_at"]
+        assert files.model_dump(exclude_none=True) == {}
