@@ -4,6 +4,7 @@ import logging
 import socket
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -364,6 +365,14 @@ def resolve_config_blob(
     return blob, None
 
 
+@dataclass
+class GuardrailResult:
+    error: str | None = None
+    direct_response: str | None = None
+    metadata: dict[str, Any] | None = None
+    outcome: GuardrailOutcomeEnum | None = None
+
+
 def apply_input_guardrails(
     *,
     config_blob: ConfigBlob | None,
@@ -372,19 +381,13 @@ def apply_input_guardrails(
     project_id: int,
     organization_id: int,
     include_guardrail_metadata: bool = False,
-) -> tuple[
-    QueryParams,
-    str | None,
-    str | None,
-    dict[str, Any] | None,
-    GuardrailOutcomeEnum | None,
-]:
+) -> GuardrailResult:
     """Apply input guardrails from a config_blob. Shared with llm-call and llm-chain.
 
-    Returns (query, error, guardrail_direct_response, metadata, guardrail_outcome).
+    Rewrites `query` in place with the guardrail-safe text.
     """
     if not config_blob or not config_blob.input_guardrails:
-        return query, None, None, None, None
+        return GuardrailResult()
 
     if not isinstance(query.input, TextInput):
         logger.info(
@@ -392,7 +395,7 @@ def apply_input_guardrails(
             f"job_id={job_id}, "
             f"input_type={getattr(query.input, 'type', type(query.input).__name__)}"
         )
-        return query, None, None, None, None
+        return GuardrailResult()
 
     original_input_text = query.input.content.value
     outcome = apply_guardrails(
@@ -414,19 +417,21 @@ def apply_input_guardrails(
         }
 
     if outcome.error is not None:
-        return (
-            query,
-            outcome.error,
-            None,
-            metadata,
-            GuardrailOutcomeEnum.BLOCKED if outcome.blocked else None,
+        return GuardrailResult(
+            error=outcome.error,
+            metadata=metadata,
+            outcome=GuardrailOutcomeEnum.BLOCKED if outcome.blocked else None,
         )
 
     if outcome.rephrase_needed:
         logger.info(
             f"[apply_input_guardrails] rephrase_needed=True, returning safe_text directly | job_id={job_id}"
         )
-        return query, None, outcome.safe_text, metadata, GuardrailOutcomeEnum.REPHRASED
+        return GuardrailResult(
+            direct_response=outcome.safe_text,
+            metadata=metadata,
+            outcome=GuardrailOutcomeEnum.REPHRASED,
+        )
 
     # No-op paths (no validators, bypassed) leave the query untouched.
     if outcome.applied and outcome.safe_text is not None:
@@ -435,15 +440,13 @@ def apply_input_guardrails(
                 f"[apply_input_guardrails] Guardrails reduced input to empty text; "
                 f"blocking request | job_id={job_id}"
             )
-            return (
-                query,
-                "Input guardrails rejected the request and left no usable content.",
-                None,
-                metadata,
-                GuardrailOutcomeEnum.BLOCKED,
+            return GuardrailResult(
+                error="Input guardrails rejected the request and left no usable content.",
+                metadata=metadata,
+                outcome=GuardrailOutcomeEnum.BLOCKED,
             )
         query.input.content.value = outcome.safe_text
-    return query, None, None, metadata, None
+    return GuardrailResult(metadata=metadata)
 
 
 def apply_output_guardrails(
@@ -455,14 +458,13 @@ def apply_output_guardrails(
     organization_id: int,
     input_text: str | None = None,
     include_guardrail_metadata: bool = False,
-) -> tuple[BlockResult, str | None, GuardrailOutcomeEnum | None]:
+) -> GuardrailResult:
     """Apply output guardrails from a config_blob. Shared by /llm/call and /llm/chain.
 
-    Returns (modified_result, None, None) on success, or
-    (result, error_string, guardrail_outcome) on failure.
+    Rewrites `result` in place with the guardrail-safe output and metadata.
     """
     if not config_blob or not config_blob.output_guardrails:
-        return result, None, None
+        return GuardrailResult()
 
     if not isinstance(result.response.response.output, TextOutput):
         logger.info(
@@ -470,7 +472,7 @@ def apply_output_guardrails(
             f"job_id={job_id}, "
             f"output_type={getattr(result.response.response.output, 'type', type(result.response.response.output).__name__)}"
         )
-        return result, None, None
+        return GuardrailResult()
 
     original_output_text = result.response.response.output.content.value
     outcome = apply_guardrails(
@@ -492,10 +494,9 @@ def apply_output_guardrails(
         result.metadata = existing_metadata
 
     if outcome.error is not None:
-        return (
-            result,
-            outcome.error,
-            GuardrailOutcomeEnum.BLOCKED if outcome.blocked else None,
+        return GuardrailResult(
+            error=outcome.error,
+            outcome=GuardrailOutcomeEnum.BLOCKED if outcome.blocked else None,
         )
 
     if outcome.applied and outcome.safe_text is not None:
@@ -504,13 +505,12 @@ def apply_output_guardrails(
                 f"[apply_output_guardrails] Guardrails reduced output to empty text; "
                 f"blocking response | job_id={job_id}"
             )
-            return (
-                result,
-                "Output guardrails rejected the response and left no usable content.",
-                GuardrailOutcomeEnum.BLOCKED,
+            return GuardrailResult(
+                error="Output guardrails rejected the response and left no usable content.",
+                outcome=GuardrailOutcomeEnum.BLOCKED,
             )
         result.response.response.output.content.value = outcome.safe_text
-    return result, None, None
+    return GuardrailResult()
 
 
 def persist_output_guardrail_result(
@@ -667,13 +667,7 @@ def execute_llm_call(
                     project_id=project_id,
                     organization_id=organization_id,
                 )
-                (
-                    query,
-                    input_error,
-                    guardrail_direct_response,
-                    input_guardrail_metadata,
-                    input_guardrail_outcome,
-                ) = apply_input_guardrails(
+                input_guardrail = apply_input_guardrails(
                     config_blob=config_blob,
                     query=query,
                     job_id=job_id,
@@ -681,10 +675,11 @@ def execute_llm_call(
                     organization_id=organization_id,
                     include_guardrail_metadata=include_guardrail_metadata,
                 )
-                if input_guardrail_metadata:
+                if input_guardrail.metadata:
                     if request_metadata is None:
                         request_metadata = {}
-                    request_metadata.update(input_guardrail_metadata)
+                    request_metadata.update(input_guardrail.metadata)
+                guardrail_direct_response = input_guardrail.direct_response
                 if guardrail_direct_response is not None:
                     # Runs before the Kaapi->native transform, so params may be
                     # a typed model (Kaapi/proxy variants) rather than a dict.
@@ -730,15 +725,15 @@ def execute_llm_call(
                         usage=guardrail_usage,
                         metadata=request_metadata,
                         llm_call_id=llm_call_id,
-                        guardrail_outcome=input_guardrail_outcome,
+                        guardrail_outcome=input_guardrail.outcome,
                     )
-                if input_error:
+                if input_guardrail.error:
                     guard_span.set_status(
-                        trace.Status(trace.StatusCode.ERROR, input_error)
+                        trace.Status(trace.StatusCode.ERROR, input_guardrail.error)
                     )
                     return BlockResult(
-                        error=input_error,
-                        guardrail_outcome=input_guardrail_outcome,
+                        error=input_guardrail.error,
+                        guardrail_outcome=input_guardrail.outcome,
                     )
             # proxy branch, bypass execution of API CAll
             if config_blob.completion.type == Provider.PROXY.value:
@@ -949,11 +944,7 @@ def execute_llm_call(
                         project_id=project_id,
                         organization_id=organization_id,
                     )
-                    (
-                        result,
-                        output_error,
-                        output_guardrail_outcome,
-                    ) = apply_output_guardrails(
+                    output_guardrail = apply_output_guardrails(
                         config_blob=config_blob,
                         result=result,
                         job_id=job_id,
@@ -962,16 +953,16 @@ def execute_llm_call(
                         input_text=original_input_value,
                         include_guardrail_metadata=include_guardrail_metadata,
                     )
-                    if output_error:
+                    if output_guardrail.error:
                         out_guard_span.set_status(
-                            trace.Status(trace.StatusCode.ERROR, output_error)
+                            trace.Status(trace.StatusCode.ERROR, output_guardrail.error)
                         )
                         # Proxy already billed these tokens; keep them on the result.
                         return BlockResult(
-                            error=output_error,
+                            error=output_guardrail.error,
                             llm_call_id=llm_call_id,
                             usage=proxy_usage,
-                            guardrail_outcome=output_guardrail_outcome,
+                            guardrail_outcome=output_guardrail.outcome,
                         )
                     if config_blob.output_guardrails:
                         updated_content = None
@@ -1361,11 +1352,7 @@ def execute_llm_call(
                     project_id=project_id,
                     organization_id=organization_id,
                 )
-                (
-                    result,
-                    output_error,
-                    output_guardrail_outcome,
-                ) = apply_output_guardrails(
+                output_guardrail = apply_output_guardrails(
                     config_blob=config_blob,
                     result=result,
                     job_id=job_id,
@@ -1374,16 +1361,16 @@ def execute_llm_call(
                     input_text=original_input_value,
                     include_guardrail_metadata=include_guardrail_metadata,
                 )
-                if output_error:
+                if output_guardrail.error:
                     out_guard_span.set_status(
-                        trace.Status(trace.StatusCode.ERROR, output_error)
+                        trace.Status(trace.StatusCode.ERROR, output_guardrail.error)
                     )
                     # Provider already billed these tokens; keep them on the result.
                     return BlockResult(
-                        error=output_error,
+                        error=output_guardrail.error,
                         llm_call_id=llm_call_id,
                         usage=response.usage,
-                        guardrail_outcome=output_guardrail_outcome,
+                        guardrail_outcome=output_guardrail.outcome,
                     )
                 if config_blob.output_guardrails:
                     updated_content = None

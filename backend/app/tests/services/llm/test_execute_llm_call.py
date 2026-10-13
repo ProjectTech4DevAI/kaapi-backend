@@ -178,6 +178,7 @@ def call(
     text: str = "what are my land rights",
     **kw: Any,
 ) -> BlockResult:
+    kw.setdefault("record_call", False)
     project = get_project(db)
     return execute_llm_call(
         config=LLMCallConfig(blob=blob),
@@ -199,7 +200,7 @@ class TestRecordCallFalse:
         provider.execute.return_value = (provider_response, None)
         before = llm_call_count(db)
 
-        result = call(db, build_blob(TEXT_COMPLETION), record_call=False)
+        result = call(db, build_blob(TEXT_COMPLETION))
 
         assert result.error is None
         assert result.response.response.output.content.value == "Provider answer."
@@ -218,7 +219,7 @@ class TestRecordCallFalse:
         with patch(
             "app.services.llm.jobs.update_llm_call_response"
         ) as update_llm_call_response:
-            result = call(db, build_blob(PROXY_COMPLETION), record_call=False)
+            result = call(db, build_blob(PROXY_COMPLETION))
 
         assert result.error is None
         assert result.response.response.output.content.value == "Proxy answer."
@@ -240,11 +241,7 @@ class TestRecordCallFalse:
                 "data": {"safe_text": rephrase_text, "rephrase_needed": True},
             }
         ):
-            result = call(
-                db,
-                build_blob(TEXT_COMPLETION, input_guardrails=True),
-                record_call=False,
-            )
+            result = call(db, build_blob(TEXT_COMPLETION, input_guardrails=True))
 
         assert result.error is None
         assert result.response.response.output.content.value == rephrase_text
@@ -254,8 +251,8 @@ class TestRecordCallFalse:
         provider.execute.assert_not_called()
 
 
-class TestRecordCallDefault:
-    """`record_call` defaults True: audit row and metrics still fire."""
+class TestRecordCallTrue:
+    """`record_call=True`: audit row and metrics fire."""
 
     @pytest.fixture
     def llm_call_crud(self):
@@ -272,7 +269,7 @@ class TestRecordCallDefault:
         started, finished = metrics
         provider.execute.return_value = (provider_response, None)
 
-        result = call(db, build_blob(TEXT_COMPLETION))
+        result = call(db, build_blob(TEXT_COMPLETION), record_call=True)
 
         assert result.error is None
         assert result.llm_call_id == llm_call_crud.return_value.id
@@ -284,7 +281,7 @@ class TestRecordCallDefault:
     ):
         started, finished = metrics
 
-        result = call(db, build_blob(PROXY_COMPLETION))
+        result = call(db, build_blob(PROXY_COMPLETION), record_call=True)
 
         assert result.error is None
         assert result.llm_call_id == llm_call_crud.return_value.id
@@ -295,11 +292,7 @@ class TestRecordCallDefault:
 class TestGuardrailOutcome:
     def test_input_hard_block(self, db: Session, provider):
         with guardrails_http({"success": False, "error": "Unsafe content detected"}):
-            result = call(
-                db,
-                build_blob(TEXT_COMPLETION, input_guardrails=True),
-                record_call=False,
-            )
+            result = call(db, build_blob(TEXT_COMPLETION, input_guardrails=True))
 
         assert result.error == "Unsafe content detected"
         assert result.guardrail_outcome == "blocked"
@@ -313,11 +306,7 @@ class TestGuardrailOutcome:
                 "data": {"safe_text": "   ", "rephrase_needed": False},
             }
         ):
-            result = call(
-                db,
-                build_blob(TEXT_COMPLETION, input_guardrails=True),
-                record_call=False,
-            )
+            result = call(db, build_blob(TEXT_COMPLETION, input_guardrails=True))
 
         assert (
             result.error
@@ -331,11 +320,7 @@ class TestGuardrailOutcome:
     ):
         provider.execute.return_value = (provider_response, None)
         with guardrails_http({"success": False, "error": "Output blocked"}):
-            result = call(
-                db,
-                build_blob(TEXT_COMPLETION, output_guardrails=True),
-                record_call=False,
-            )
+            result = call(db, build_blob(TEXT_COMPLETION, output_guardrails=True))
 
         assert result.error == "Output blocked"
         assert result.guardrail_outcome == "blocked"
@@ -358,11 +343,7 @@ class TestGuardrailOutcome:
                 },
             ),
         ):
-            result = call(
-                db,
-                build_blob(PROXY_COMPLETION, output_guardrails=True),
-                record_call=False,
-            )
+            result = call(db, build_blob(PROXY_COMPLETION, output_guardrails=True))
 
         assert result.error == "Output blocked"
         assert result.guardrail_outcome == "blocked"
@@ -371,7 +352,7 @@ class TestGuardrailOutcome:
     def test_provider_error_has_no_guardrail_outcome(self, db: Session, provider):
         provider.execute.return_value = (None, "API rate limit exceeded")
 
-        result = call(db, build_blob(TEXT_COMPLETION), record_call=False)
+        result = call(db, build_blob(TEXT_COMPLETION))
 
         assert result.error == "API rate limit exceeded"
         assert result.guardrail_outcome is None
@@ -381,11 +362,7 @@ class TestGuardrailOutcome:
         self, db: Session, provider, status_code: int
     ):
         with guardrails_http(http_status_error(status_code)):
-            result = call(
-                db,
-                build_blob(TEXT_COMPLETION, input_guardrails=True),
-                record_call=False,
-            )
+            result = call(db, build_blob(TEXT_COMPLETION, input_guardrails=True))
 
         assert result.error == (
             f"Guardrails service rejected the request (HTTP {status_code})"
@@ -400,7 +377,7 @@ class TestRetryableFlag:
     def test_provider_failure_is_retryable(self, db: Session, provider):
         provider.execute.return_value = (None, "API rate limit exceeded")
 
-        result = call(db, build_blob(TEXT_COMPLETION), record_call=False)
+        result = call(db, build_blob(TEXT_COMPLETION))
 
         assert result.retryable is True
 
@@ -409,18 +386,14 @@ class TestRetryableFlag:
     ):
         proxy_http.post.side_effect = httpx.ConnectError("connection refused")
 
-        result = call(db, build_blob(PROXY_COMPLETION), record_call=False)
+        result = call(db, build_blob(PROXY_COMPLETION))
 
         assert result.error.startswith("Proxy call failed:")
         assert result.retryable is True
 
     def test_guardrail_block_is_not_retryable(self, db: Session, provider):
         with guardrails_http({"success": False, "error": "Unsafe content detected"}):
-            result = call(
-                db,
-                build_blob(TEXT_COMPLETION, input_guardrails=True),
-                record_call=False,
-            )
+            result = call(db, build_blob(TEXT_COMPLETION, input_guardrails=True))
 
         assert result.guardrail_outcome == "blocked"
         assert result.retryable is False
@@ -430,11 +403,7 @@ class TestRetryableFlag:
         self, db: Session, provider, status_code: int
     ):
         with guardrails_http(http_status_error(status_code)):
-            result = call(
-                db,
-                build_blob(TEXT_COMPLETION, input_guardrails=True),
-                record_call=False,
-            )
+            result = call(db, build_blob(TEXT_COMPLETION, input_guardrails=True))
 
         assert result.retryable is False
         provider.execute.assert_not_called()
@@ -445,11 +414,7 @@ class TestRetryableFlag:
         """Output-side auth failure must not retry: each retry re-bills."""
         provider.execute.return_value = (provider_response, None)
         with guardrails_http(http_status_error(401)):
-            result = call(
-                db,
-                build_blob(TEXT_COMPLETION, output_guardrails=True),
-                record_call=False,
-            )
+            result = call(db, build_blob(TEXT_COMPLETION, output_guardrails=True))
 
         assert result.error == "Guardrails service rejected the request (HTTP 401)"
         assert result.guardrail_outcome is None
@@ -488,12 +453,7 @@ class TestFileSearchResultsAreOptIn:
     ):
         provider.execute.return_value = (provider_response, None)
 
-        call(
-            db,
-            build_blob(KAAPI_KB_COMPLETION),
-            record_call=False,
-            include_provider_raw_response=True,
-        )
+        call(db, build_blob(KAAPI_KB_COMPLETION), include_provider_raw_response=True)
 
         params = self._params_sent_to_provider(provider)
         assert params["tools"][0]["type"] == "file_search"
@@ -504,7 +464,7 @@ class TestFileSearchResultsAreOptIn:
     ):
         provider.execute.return_value = (provider_response, None)
 
-        call(db, build_blob(KAAPI_KB_COMPLETION), record_call=False)
+        call(db, build_blob(KAAPI_KB_COMPLETION))
 
         params = self._params_sent_to_provider(provider)
         assert params["tools"][0]["type"] == "file_search"

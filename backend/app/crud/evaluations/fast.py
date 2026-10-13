@@ -236,28 +236,29 @@ def _llm_call_for_item(
         )
         return failed_result(f"ERROR: {exc}")
 
-    # Before error check: a rephrased row has no error and would read as success.
-    guardrail: str | None = None
-    input_to_llm: str | None = None
-    output_from_llm: str | None = None
-    if result.guardrail_outcome == GuardrailOutcomeEnum.BLOCKED:
-        generated_output = ""
-        guardrail = f"{GuardrailOutcomeEnum.BLOCKED}: {result.error}"
-    elif result.guardrail_outcome == GuardrailOutcomeEnum.REPHRASED:
-        generated_output = _response_text(result)
-        guardrail = GuardrailOutcomeEnum.REPHRASED
-    elif result.error is not None:
+    # A guardrail block also carries an error, but is a scored outcome, not a failure.
+    if (
+        result.error is not None
+        and result.guardrail_outcome != GuardrailOutcomeEnum.BLOCKED
+    ):
         logger.warning(
             f"[_llm_call_for_item] Item failed | item_id={item_id} | "
             f"error={result.error}"
         )
         return failed_result(f"ERROR: {result.error}")
+
+    guardrail: str | None = None
+    input_to_llm: str | None = None
+    output_from_llm: str | None = None
+    if result.guardrail_outcome == GuardrailOutcomeEnum.BLOCKED:
+        guardrail = f"{GuardrailOutcomeEnum.BLOCKED}: {result.error}"
+    elif result.guardrail_outcome == GuardrailOutcomeEnum.REPHRASED:
+        guardrail = GuardrailOutcomeEnum.REPHRASED
     else:
-        generated_output = _response_text(result)
+        # Rephrased rows never reached the LLM; blocked rows carry no metadata.
         metadata = result.metadata or {}
         if any(key in metadata for key in GUARDRAIL_METADATA_KEYS):
             guardrail = GUARDRAIL_APPLIED
-        # Rephrased rows never reached the LLM; blocked rows carry no metadata.
         input_to_llm = (metadata.get(INPUT_GUARDRAIL_METADATA_KEY) or {}).get(
             "input_to_llm"
         )
@@ -271,7 +272,8 @@ def _llm_call_for_item(
         question=question,
         ground_truth=ground_truth,
         question_id=question_id,
-        generated_output=generated_output,
+        # Empty for a blocked row: it has no response.
+        generated_output=_response_text(result),
         response_id=(
             result.response.response.provider_response_id if result.response else None
         ),
