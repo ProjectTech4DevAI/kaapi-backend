@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logger import configure_logging
 from app.core.middleware import StripTrailingSlashMiddleware, http_request_logger
-from app.core.sentry_filters import before_send_transaction_filter
+from app.core.sentry_filters import before_send_filter, before_send_transaction_filter
 from app.core.telemetry import instrument_app, setup_telemetry
 from app.load_env import load_environment
 
@@ -34,7 +34,11 @@ if settings.SENTRY_DSN:
         release=settings.API_VERSION,
         instrumenter="otel",
         traces_sample_rate=1.0,
+        # LLM input/output is end-user text; never attach request/response
+        # bodies to error events or trace transactions.
+        max_request_body_size="never",
         enable_logs=True,
+        before_send=before_send_filter,
         before_send_transaction=before_send_transaction_filter,
         integrations=[
             LoggingIntegration(
@@ -63,7 +67,11 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     generate_unique_id_function=custom_generate_unique_id,
-    description="**Responsible AI for the development sector**",
+    description=(
+        "**Responsible AI for the development sector**\n\n"
+        "Licensed under AGPL-3.0-or-later.\n\n"
+        "Source code: https://github.com/ProjectTech4DevAI/kaapi-backend/"
+    ),
 )
 
 
@@ -105,4 +113,5 @@ instrument_app(app)
 async def health() -> dict[str, str | float]:
     return {
         "status": "ok",
+        "sha": settings.GIT_SHA,
     }

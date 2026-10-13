@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-from typing import Any
 
 from app.core.cloud.storage import CloudStorage
 from app.models import Collection, Document
@@ -17,7 +16,7 @@ class BaseProvider(ABC):
         client: The provider-specific client instance
     """
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: object) -> None:
         self.client = client
 
     @abstractmethod

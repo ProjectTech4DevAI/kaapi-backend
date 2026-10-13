@@ -6,9 +6,9 @@ from app.models import JobType, Job
 from app.models.llm.response import LLMCallResponse
 from app.models.llm.request import (
     ConfigBlob,
-    KaapiCompletionConfig,
     LLMCallConfig,
     QueryParams,
+    build_kaapi_completion_config,
 )
 from app.tests.utils.utils import get_project
 from app.models.llm import LLMCallRequest
@@ -35,7 +35,7 @@ def create_llm_call_with_response(
     so tests can assert against predictable data.
     """
     config_blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             params={
                 "model": "gpt-4o",
@@ -89,7 +89,7 @@ def create_llm_call_with_audio_uri_response(
     format='uri' (internal format, must be swapped to presigned URL on read).
     """
     config_blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             params={
                 "model": "gpt-4o",

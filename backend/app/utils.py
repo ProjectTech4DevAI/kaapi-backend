@@ -25,7 +25,7 @@ from langfuse import Langfuse
 import openai
 from anthropic import Anthropic
 from openai import OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, JsonValue
 from sqlmodel import Session
 
 from app.core import security
@@ -46,6 +46,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+# JSON object carried across Celery boundaries and out through send_callback.
+# pydantic.JsonValue recurses through nested lists/dicts, so nested values stay checked.
+JsonObject = dict[str, JsonValue]
 
 MAX_AUDIO_SIZE = 50 * 1024 * 1024  # 50 MB
 
@@ -74,7 +78,7 @@ class APIResponse(BaseModel, Generic[T]):
         error: str | list,
         data: Optional[T] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> "APIResponse[None]":
+    ) -> "APIResponse[T]":
         if isinstance(error, list):  # to handle cases when error is a list of errors
             structured_errors = []
             for err in error:

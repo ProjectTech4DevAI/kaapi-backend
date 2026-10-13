@@ -4,7 +4,8 @@ All tasks share one queue (`default`, declared with `x-max-priority=10`) and are
 ordered by the per-task `priority`:
 
     9  LLM call + LLM chain (run_llm_job, run_llm_chain_job, run_response_job)
-    6  Fast evaluation (run_evaluation_fast_chunk, run_evaluation_fast_aggregate)
+    6  Fast evaluation (run_evaluation_fast_chunk, run_evaluation_fast_aggregate,
+       run_prompt_improvement, run_evaluation_iteration_graph_step)
     2  Everything else (doctransform, collections, STT/TTS evaluation, assessment)
     1  Notifications (send_eval_completion_notification)
 
@@ -12,9 +13,12 @@ Higher priority drains first; within the same priority, delivery is FIFO.
 """
 
 import logging
+from collections.abc import Callable
+from typing import TYPE_CHECKING, TypeVar
 
 from asgi_correlation_id import correlation_id
 from celery import Task, current_task
+from gevent import Timeout
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.propagate import extract
@@ -23,7 +27,14 @@ from app.celery.celery_app import celery_app
 from app.celery.utils import gevent_timeout
 from app.core.config import settings
 
+if TYPE_CHECKING:
+    from app.services.notifications.eval_completion import (
+        EvalCompletionCallbackResult,
+    )
+
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 # Sentinel correlation id used when no trace id is propagated from the
 # enqueueing request. Matches the codebase-wide "N/A" default (see
@@ -36,7 +47,7 @@ def _set_trace(trace_id: str) -> None:
     logger.info(f"[_set_trace] Set correlation ID: {trace_id}")
 
 
-def _extract_parent_context(task_instance) -> otel_context.Context:
+def _extract_parent_context(task_instance: Task) -> otel_context.Context:
     """Extract OTel parent context from Celery headers if available."""
     headers = getattr(task_instance.request, "headers", None) or {}
     carrier: dict[str, str] = {}
@@ -55,20 +66,19 @@ def _extract_parent_context(task_instance) -> otel_context.Context:
     return extract(carrier)
 
 
-def _run_with_otel_parent(task_instance, fn):
-    """Attach extracted parent context and execute function.
+def _run_with_otel_parent(
+    task_instance: Task, fn: Callable[[], T]
+) -> T:  # noqa: UP047 (black doesn't support PEP 695 generics yet)
+    """Attach the extracted parent context and execute `fn` under it.
 
-    When Celery auto-instrumentation is active, there is already a current
-    `run/...` span. Re-attaching extracted parent context here would make
-    service spans become siblings of `run/...` instead of children.
-
-    We only attach extracted context as a fallback when no active span exists.
+    Needed because otel's Celery instrumentation misses propagation headers
+    under `task.request.headers`, leaving `run/...` spans unparented.
     """
-    current_ctx = trace.get_current_span().get_span_context()
-    if current_ctx and current_ctx.is_valid:
+    parent_ctx = _extract_parent_context(task_instance)
+    parent_span_ctx = trace.get_current_span(parent_ctx).get_span_context()
+    if not (parent_span_ctx and parent_span_ctx.is_valid):
         return fn()
 
-    parent_ctx = _extract_parent_context(task_instance)
     token = otel_context.attach(parent_ctx)
     try:
         return fn()
@@ -348,6 +358,55 @@ def run_assessment_pipeline(
     )
 
 
+@celery_app.task(
+    bind=True,
+    queue="default",
+    priority=2,
+    autoretry_for=(Exception, Timeout),
+    retry_backoff=True,
+    # A task whose worker is lost is acked, not re-queued, so it cannot redeliver in a loop.
+    reject_on_worker_lost=False,
+)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_assessment_api_batch")
+def run_assessment_api_batch(
+    self,
+    execution_id: int,
+    organization_id: int,
+    project_id: int,
+    trace_id: str,
+    **kwargs,
+):
+    """Run one step of the BATCH API-client staged pipeline.
+
+    Self-re-enqueues while a stage is in flight; idempotent, so a failed task is retried.
+    """
+    from app.services.assessment.api.batch import (
+        POLL_COUNTDOWN_SECONDS,
+        run_batch_stage,
+    )
+
+    _set_trace(trace_id)
+    result = _run_with_otel_parent(
+        self,
+        lambda: run_batch_stage(
+            execution_id=execution_id,
+            organization_id=organization_id,
+            project_id=project_id,
+        ),
+    )
+    if result and result.get("requeue"):
+        self.apply_async(
+            kwargs={
+                "execution_id": execution_id,
+                "organization_id": organization_id,
+                "project_id": project_id,
+                "trace_id": trace_id,
+            },
+            countdown=POLL_COUNTDOWN_SECONDS,
+        )
+    return result
+
+
 @celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_result_processing")
 def run_tts_result_processing(
@@ -425,6 +484,52 @@ def run_evaluation_fast_aggregate(
     )
 
 
+# Priority 6 (fast-eval tier): same band as run_prompt_improvement — one graph
+# step per invocation is either a cheap status re-check (re-interrupts) or the
+# same-cost work run_prompt_improvement/run_evaluation_fast_* already does.
+@celery_app.task(bind=True, queue="default", priority=6)
+@gevent_timeout(
+    settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_iteration_graph_step"
+)
+def run_evaluation_iteration_graph_step(
+    self,
+    iteration_run_id: int,
+    resume: bool,
+    organization_id: int,
+    project_id: int,
+    trace_id: str = DEFAULT_TRACE_ID,
+    **kwargs,
+):
+    """Advance one step of an evaluation-iteration LangGraph loop.
+
+    `resume=False` (kickoff) invokes the graph with a fresh initial state built
+    from `kwargs` (`max_rounds`, `config_version`) + the thin tracking row;
+    `resume=True` (cron tick) sends `Command(resume=True)` to the persisted
+    checkpoint. Either call returns once the graph re-interrupts or reaches
+    `finalize_node` — see `execute_evaluation_iteration_graph_step`.
+    """
+    from app.services.evaluations.iteration_graph import (
+        execute_evaluation_iteration_graph_step,
+    )
+
+    _set_trace(trace_id)
+    logger.info(
+        f"[run_evaluation_iteration_graph_step] Starting | "
+        f"iteration_run_id={iteration_run_id} | resume={resume} | "
+        f"task_id={current_task.request.id}"
+    )
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_evaluation_iteration_graph_step(
+            iteration_run_id=iteration_run_id,
+            resume=resume,
+            organization_id=organization_id,
+            project_id=project_id,
+            **kwargs,
+        ),
+    )
+
+
 @celery_app.task(bind=True, queue="default", priority=1)
 @gevent_timeout(
     settings.CELERY_TASK_SOFT_TIME_LIMIT, "send_eval_completion_notification"
@@ -443,3 +548,16 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
     )
 
     return execute_eval_completion_notification(evaluation_id=evaluation_id)
+
+
+@celery_app.task(bind=True, queue="default", priority=1)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "send_eval_completion_callback")
+def send_eval_completion_callback(
+    self: Task, evaluation_id: int
+) -> "EvalCompletionCallbackResult":
+    """POST the run's status to its registered webhook once it is terminal."""
+    from app.services.notifications.eval_completion import (
+        execute_eval_completion_callback,
+    )
+
+    return execute_eval_completion_callback(evaluation_id=evaluation_id)

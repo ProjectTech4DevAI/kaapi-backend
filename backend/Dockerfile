@@ -44,11 +44,14 @@ COPY scripts /app/scripts
 COPY app /app/app
 COPY alembic.ini /app/alembic.ini
 
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+
 # Expose port 80
 EXPOSE 80
 
 
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80", "--workers", "4"]
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "80", "--workers", "4",  "--timeout-keep-alive", "180"]
 
 # command for Celery worker
 # CMD ["uv", "run", "celery", "-A", "app.celery.celery_app", "worker", "--loglevel=info"]

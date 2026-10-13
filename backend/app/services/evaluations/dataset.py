@@ -12,7 +12,6 @@ from app.crud.evaluations import (
     upload_dataset_to_langfuse,
 )
 from app.crud.evaluations.dataset import (
-    DATASET_META_DUPLICATE_AT_RUNTIME,
     DATASET_META_DUPLICATION_FACTOR,
     DATASET_META_ORIGINAL_ITEMS,
     DATASET_META_TOTAL_ITEMS,
@@ -162,9 +161,6 @@ def upload_dataset(
         DATASET_META_TOTAL_ITEMS: total_items_count,
         DATASET_META_DUPLICATION_FACTOR: duplication_factor,
     }
-    if not use_langfuse:
-        # The stored CSV holds only the original rows; the run expands them.
-        metadata[DATASET_META_DUPLICATE_AT_RUNTIME] = True
 
     dataset = create_evaluation_dataset(
         session=session,
