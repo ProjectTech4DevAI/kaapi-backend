@@ -194,6 +194,23 @@ def _response_text(result: BlockResult) -> str:
     return output.content.value if isinstance(output, TextOutput) else ""
 
 
+def _guardrail_fields(result: BlockResult) -> tuple[str | None, str | None, str | None]:
+    """`(guardrail, input_to_llm, output_from_llm)` for a scored row."""
+    # Rephrased rows never reached the LLM; blocked rows carry no metadata.
+    if result.guardrail_outcome == GuardrailOutcomeEnum.BLOCKED:
+        return f"{GuardrailOutcomeEnum.BLOCKED}: {result.error}", None, None
+    if result.guardrail_outcome == GuardrailOutcomeEnum.REPHRASED:
+        return GuardrailOutcomeEnum.REPHRASED, None, None
+
+    metadata = result.metadata or {}
+    guardrail = GUARDRAIL_APPLIED if metadata.keys() & GUARDRAIL_METADATA_KEYS else None
+    return (
+        guardrail,
+        (metadata.get(INPUT_GUARDRAIL_METADATA_KEY) or {}).get("input_to_llm"),
+        (metadata.get(OUTPUT_GUARDRAIL_METADATA_KEY) or {}).get("output_from_llm"),
+    )
+
+
 def _llm_call_for_item(
     *,
     config: LLMCallConfig,
@@ -247,24 +264,7 @@ def _llm_call_for_item(
         )
         return failed_result(f"ERROR: {result.error}")
 
-    guardrail: str | None = None
-    input_to_llm: str | None = None
-    output_from_llm: str | None = None
-    if result.guardrail_outcome == GuardrailOutcomeEnum.BLOCKED:
-        guardrail = f"{GuardrailOutcomeEnum.BLOCKED}: {result.error}"
-    elif result.guardrail_outcome == GuardrailOutcomeEnum.REPHRASED:
-        guardrail = GuardrailOutcomeEnum.REPHRASED
-    else:
-        # Rephrased rows never reached the LLM; blocked rows carry no metadata.
-        metadata = result.metadata or {}
-        if any(key in metadata for key in GUARDRAIL_METADATA_KEYS):
-            guardrail = GUARDRAIL_APPLIED
-        input_to_llm = (metadata.get(INPUT_GUARDRAIL_METADATA_KEY) or {}).get(
-            "input_to_llm"
-        )
-        output_from_llm = (metadata.get(OUTPUT_GUARDRAIL_METADATA_KEY) or {}).get(
-            "output_from_llm"
-        )
+    guardrail, input_to_llm, output_from_llm = _guardrail_fields(result)
 
     # Tokens are billed even on an output block, so usage is read off every outcome.
     return build_response_result(

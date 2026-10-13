@@ -82,12 +82,12 @@ Endpoint-specific behaviour, none of which exists on the `/llm/call` path:
 
 Order inside `execute_llm_call`: resolve config → capture `original_input_value` → interpolate `prompt_template` → **input guardrails** → create the `LlmCall` row → provider call → **output guardrails** → update that row.
 
-- `apply_input_guardrails` returns a **5-tuple** `(query, error, guardrail_direct_response, metadata, guardrail_outcome)`. The last element is `"blocked"` / `"rephrased"` / `None` and lands on `BlockResult.guardrail_outcome`, so a caller can tell a content verdict from a provider failure — both of which arrive as a bare string in `error`. It is `None` on a fail-closed auth error (see §4).
+- `apply_input_guardrails` rewrites `query` in place and returns a `GuardrailResult` dataclass (`error`, `direct_response`, `metadata`, `outcome`). `outcome` is `"blocked"` / `"rephrased"` / `None` and lands on `BlockResult.guardrail_outcome`, so a caller can tell a content verdict from a provider failure — both of which arrive as a bare string in `error`. It is `None` on a fail-closed auth error (see §4).
   - Hard block → job error.
-  - `rephrase_needed=True` → `safe_text` is returned to the user **without calling the LLM**; the call is recorded via `save_rephrase_guardrail_call`, and `query.input` is restored to `original_input_value` first.
+  - `rephrase_needed=True` → `safe_text` is returned to the user **without calling the LLM**; the call is recorded via `save_rephrase_guardrail_call` only when `record_call=True` (fast eval writes no row), and `query.input` is restored to `original_input_value` first.
   - Otherwise `safe_text` overwrites `query.input.content.value`.
   - Non-text input is skipped entirely.
-- `apply_output_guardrails` returns `(BlockResult, error, guardrail_outcome)`. An output block now also carries the `usage` actually spent — the provider was called and billed before the verdict arrived. It passes `text=input_text` (the pre-template user input) and `output_text=`the LLM output. On success, sanitised text overwrites the response content, then `persist_output_guardrail_result` re-writes the already-created `LlmCall` row **in its own session** (the caller's session may already be closed).
+- `apply_output_guardrails` rewrites the `BlockResult` in place and returns the same `GuardrailResult` (only `error` and `outcome` are set). An output block now also carries the `usage` actually spent — the provider was called and billed before the verdict arrived. It passes `text=input_text` (the pre-template user input) and `output_text=`the LLM output. On success, sanitised text overwrites the response content, then `persist_output_guardrail_result` re-writes the already-created `LlmCall` row **in its own session** (the caller's session may already be closed).
 - **There are two output-guardrail call sites** inside `execute_llm_call`: one in the proxy-provider branch, one in the main provider path. Any change to output guardrails must touch both.
 
 ## 7. Guardrail metadata (`include_guardrail_metadata`, PR #1195)
@@ -126,7 +126,7 @@ These do **not** fail open: upstream status codes and bodies (including its 422s
 | Change | Files, in order |
 |---|---|
 | Add/modify an output guardrail behaviour | `apply_output_guardrails`, then **both** call sites in `execute_llm_call` (proxy branch + main provider path) |
-| Change `apply_input_guardrails`' return | It is a 4-tuple — update the unpack in `execute_llm_call` |
+| Change `apply_input_guardrails`' return | Add a field to `GuardrailResult` in `jobs.py`, then read it at the call site in `execute_llm_call` |
 | Add a field to the `/guardrails` result | `models/guardrails/response.py` → `_build_callback_payload` (callback path) → `get_guardrails_job_status` (poll path, rebuilds independently) → `api/docs/guardrails/apply_guardrails.md` |
 | Add a management proxy route | `api/routes/guardrails.py` using `proxy_guardrails_request` + `_upstream_response`, declared above `/{job_id}` |
 | Change upstream request/response shape | `run_guardrails_validation` and/or `list_validators_config`; check `summarize_validator_results` still finds `data.validator_results` |
