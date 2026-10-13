@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
@@ -138,3 +140,49 @@ class TestValidationErrorResponse:
         for error in response.json()["errors"]:
             assert "openai-native" not in error["message"]
             assert "NativeCompletionConfig" not in error["field"]
+
+
+class TestGenericErrorHandler:
+    """Integration test for the generic exception handler security fix."""
+
+    @patch("app.api.routes.users.me.db.get_current_user")
+    def test_generic_exception_returns_safe_message(
+        self, mock_get_user, client: TestClient, user_api_key: TestAuthContext
+    ) -> None:
+        """Verify that unhandled exceptions don't leak internal details."""
+        # Force an unhandled exception by making get_current_user raise
+        mock_get_user.side_effect = Exception(
+            "Database connection failed: postgresql://admin:secret_password@internal-db:5432/prod"
+        )
+
+        response = client.get(
+            f"{settings.API_V1_STR}/users/me", headers={"X-API-KEY": user_api_key.key}
+        )
+
+        assert response.status_code == 500
+        body = response.json()
+        assert body["success"] is False
+        # Should NOT contain the exception string with sensitive info
+        assert "Database connection failed" not in body["error"]
+        assert "secret_password" not in body["error"]
+        assert "postgresql://" not in body["error"]
+        # Should return a generic message
+        assert body["error"] == "An internal server error occurred."
+
+    @patch("app.api.routes.users.me.db.get_current_user")
+    @patch("asgi_correlation_id.correlation_id.get")
+    def test_generic_exception_includes_correlation_id(
+        self, mock_correlation_id, mock_get_user, client: TestClient, user_api_key: TestAuthContext
+    ) -> None:
+        """Verify that the correlation_id is included in the response metadata."""
+        mock_correlation_id.return_value = "test-correlation-id-12345"
+        mock_get_user.side_effect = Exception("Some internal error")
+
+        response = client.get(
+            f"{settings.API_V1_STR}/users/me", headers={"X-API-KEY": user_api_key.key}
+        )
+
+        assert response.status_code == 500
+        body = response.json()
+        assert body["metadata"] is not None
+        assert body["metadata"]["correlation_id"] == "test-correlation-id-12345"

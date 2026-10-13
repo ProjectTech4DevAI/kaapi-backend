@@ -1,6 +1,8 @@
+import logging
 import re
 from collections import defaultdict
 
+from asgi_correlation_id import correlation_id
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -10,6 +12,8 @@ from starlette.status import (
 )
 
 from app.utils import APIResponse
+
+logger = logging.getLogger(__name__)
 
 _BRANCH_PATTERN = re.compile(r"^[A-Z]|[\[\]()]")
 
@@ -109,9 +113,20 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def generic_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        request_id = correlation_id.get()
+
+        logger.error(
+            f"[generic_error_handler] Unhandled exception | "
+            f"correlation_id: {request_id} | "
+            f"path: {request.url.path} | "
+            f"exception: {exc}",
+            exc_info=True,
+        )
+
         return JSONResponse(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
             content=APIResponse.failure_response(
-                str(exc) or "An unexpected error occurred."
+                error="An internal server error occurred.",
+                metadata={"correlation_id": request_id} if request_id else None,
             ).model_dump(),
         )
