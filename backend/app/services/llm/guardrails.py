@@ -58,7 +58,7 @@ def proxy_guardrails_request(
     url = f"{settings.KAAPI_GUARDRAILS_URL}{path}"
     headers = _guardrails_headers(organization_id, project_id)
     # Unset query params must be omitted, not sent as empty values.
-    query = {k: v for k, v in (params or {}).items() if v is not None}
+    query = {key: value for key, value in (params or {}).items() if value is not None}
 
     try:
         with (
@@ -175,20 +175,16 @@ def apply_guardrails(
             output-guardrail validators that compare input/output pairs.
             Also routes the IDs through the output-config fetch path.
     """
-    enabled: list[Validator | InlineValidator] = []
-    for entry in validators or []:
-        if entry.is_enabled:
-            enabled.append(entry)
+    enabled = [validator for validator in validators or [] if validator.is_enabled]
     if not enabled:
         return GuardrailsOutcome(
             safe_text=text, error=None, bypassed=False, rephrase_needed=False, raw={}
         )
 
     is_output = output_text is not None
-    references: list[Validator] = []
-    for entry in enabled:
-        if isinstance(entry, Validator):
-            references.append(entry)
+    references = [
+        validator for validator in enabled if isinstance(validator, Validator)
+    ]
 
     fetched: list[dict[str, Any]] = []
     if references:
@@ -206,7 +202,7 @@ def apply_guardrails(
         logger.info(
             f"[apply_guardrails] No validator configs resolved upstream; skipping "
             f"POST /guardrails. job_id={job_id}, requested_ids="
-            f"{[str(v.validator_config_id) for v in references]}, "
+            f"{[str(reference.validator_config_id) for reference in references]}, "
             f"is_output={is_output}"
         )
         return GuardrailsOutcome(
@@ -271,9 +267,6 @@ def _prepare_validators(
         if isinstance(entry, InlineValidator):
             # The service's validator configs are extra="forbid", so is_enabled must go.
             spec = entry.model_dump(mode="json", exclude={"is_enabled"})
-            # Service's on_fail is non-nullable; omitting it applies its default.
-            if spec.get("on_fail") is None:
-                spec.pop("on_fail", None)
             spec["stage"] = stage
             prepared.append(spec)
             continue
@@ -312,7 +305,7 @@ def summarize_validator_results(outcome: GuardrailsOutcome) -> list[dict[str, An
 
 def run_guardrails_validation(
     input_text: str,
-    guardrail_config: Sequence[Validator | InlineValidator | dict[str, Any]],
+    guardrail_config: Sequence[Validator | dict[str, Any]],
     job_id: UUID,
     project_id: int | None,
     organization_id: int | None,
@@ -335,13 +328,13 @@ def run_guardrails_validation(
     Returns:
         JSON response from the guardrails service with validation results.
     """
-    validators: list[dict[str, Any]] = []
-    for validator in guardrail_config:
-        if isinstance(validator, dict):
-            validators.append(validator)
-        else:
-            # Unknown to the service's extra="forbid" validator schemas.
-            validators.append(validator.model_dump(mode="json", exclude={"is_enabled"}))
+    # is_enabled is unknown to the service's extra="forbid" validator schemas.
+    validators = [
+        validator
+        if isinstance(validator, dict)
+        else validator.model_dump(mode="json", exclude={"is_enabled"})
+        for validator in guardrail_config
+    ]
 
     payload = {
         "request_id": str(job_id),

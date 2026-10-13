@@ -475,7 +475,7 @@ class TestApplyGuardrails:
             [
                 disabled_ref,
                 enabled_ref,
-                InlineValidator(type="off_inline", is_enabled=False),
+                InlineValidator(type="profanity_free", is_enabled=False),
             ]
         )
 
@@ -522,12 +522,19 @@ class TestApplyGuardrails:
         mock_fetch.return_value = ([row_y, row_x], [])
         mock_run.return_value = _PASS_RESPONSE
 
-        _apply([InlineValidator(type="a"), ref_x, InlineValidator(type="b"), ref_y])
+        _apply(
+            [
+                InlineValidator(type="profanity_free"),
+                ref_x,
+                InlineValidator(type="pii_remover"),
+                ref_y,
+            ]
+        )
 
         assert mock_run.call_args.args[1] == [
-            {"type": "a", "stage": "input"},
+            {"type": "profanity_free", "stage": "input"},
             row_x,
-            {"type": "b", "stage": "input"},
+            {"type": "pii_remover", "stage": "input"},
             row_y,
         ]
 
@@ -536,13 +543,21 @@ class TestApplyGuardrails:
 
         _apply(
             [
-                InlineValidator(type="ban_list", stage="output", banned_words=["x"]),
+                InlineValidator(
+                    type="gender_assumption_bias",
+                    stage="output",
+                    categories=["healthcare"],
+                ),
                 InlineValidator(type="pii_remover", on_fail="exception"),
             ]
         )
 
         assert mock_run.call_args.args[1] == [
-            {"type": "ban_list", "stage": "input", "banned_words": ["x"]},
+            {
+                "type": "gender_assumption_bias",
+                "stage": "input",
+                "categories": ["healthcare"],
+            },
             {"type": "pii_remover", "on_fail": "exception", "stage": "input"},
         ]
 

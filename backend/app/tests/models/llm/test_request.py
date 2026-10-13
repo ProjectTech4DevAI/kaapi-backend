@@ -1,5 +1,8 @@
 from uuid import uuid4
 
+import pytest
+from pydantic import ValidationError
+
 from app.models.llm.request import (
     ConfigBlob,
     InlineValidator,
@@ -98,13 +101,19 @@ class TestGuardrailEntryParsing:
 
     def test_dict_with_type_parses_to_inline_and_keeps_extras(self) -> None:
         blob = _blob(
-            [{"type": "ban_list", "on_fail": "fix", "languages": ["en", "hi"]}]
+            [
+                {
+                    "type": "topic_relevance_llm",
+                    "on_fail": "fix",
+                    "languages": ["en", "hi"],
+                }
+            ]
         )
 
         (entry,) = blob.input_guardrails or []
         assert isinstance(entry, InlineValidator)
         assert entry.model_dump() == {
-            "type": "ban_list",
+            "type": "topic_relevance_llm",
             "on_fail": "fix",
             "is_enabled": True,
             "languages": ["en", "hi"],
@@ -122,6 +131,10 @@ class TestGuardrailEntryParsing:
             "validator_config_id": config_id,
             "is_enabled": True,
         }
+
+    def test_unsupported_inline_type_is_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            _blob([{"type": "ban_list"}])
 
     def test_revalidating_parsed_entries_keeps_types(self) -> None:
         parsed = _blob(

@@ -476,17 +476,23 @@ class Validator(SQLModel):
     )
 
 
+class InlineValidatorTypeEnum(str, Enum):
+    GENDER_ASSUMPTION_BIAS = "gender_assumption_bias"
+    PII_REMOVER = "pii_remover"
+    PROFANITY_FREE = "profanity_free"
+    TOPIC_RELEVANCE_LLM = "topic_relevance_llm"
+
+
 class InlineValidator(SQLModel):
     """Validator spec stored directly in the config blob.
 
-    Per-type params (languages, ban_list_id, ...) are extras validated by the
+    Per-type params (on_fail, languages, ban_list_id, ...) are extras validated by the
     guardrails service, so they are allowed through untouched here.
     """
 
     model_config = ConfigDict(extra="allow")  # pyright: ignore[reportAssignmentType]
 
-    type: str = Field(..., description="Guardrails validator type, e.g. ban_list")
-    on_fail: str | None = Field(default=None, description="Action on failure")
+    type: InlineValidatorTypeEnum = Field(..., description="Guardrails validator type")
     is_enabled: bool = Field(
         default=True,
         description="When false, the spec is kept in the blob but not run.",
@@ -495,10 +501,8 @@ class InlineValidator(SQLModel):
 
 def _guardrail_entry_tag(value: Any) -> str:
     if isinstance(value, dict):
-        has_ref = "validator_config_id" in value
-    else:
-        has_ref = hasattr(value, "validator_config_id")
-    return "ref" if has_ref else "inline"
+        return "ref" if "validator_config_id" in value else "inline"
+    return "ref" if hasattr(value, "validator_config_id") else "inline"
 
 
 # Explicit tag: InlineValidator allows extras, so a smart union could also
