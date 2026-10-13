@@ -20,6 +20,7 @@ from app.core.db import engine
 from app.core.providers import Provider
 from app.core.langfuse.langfuse import observe_llm_execution
 from app.core.telemetry import (
+    LogModuleEnum,
     set_gen_ai_request_attributes,
     set_gen_ai_response_attributes,
     flush_telemetry,
@@ -210,6 +211,7 @@ def start_chain_job(
 
     with log_context(
         tag="llm-chain",
+        module=LogModuleEnum.LLM_CHAIN,
         lifecycle="llm.chain.start_job",
         job_id=job.id,
         project_id=project_id,
@@ -1623,6 +1625,7 @@ def execute_chain_job(
 
     with log_context(
         tag="llm-chain",
+        module=LogModuleEnum.LLM_CHAIN,
         lifecycle="llm.chain.execute_job",
         job_id=job_uuid,
         task_id=task_id,
