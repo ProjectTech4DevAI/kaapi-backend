@@ -88,7 +88,7 @@ Order inside `execute_llm_call`: resolve config → capture `original_input_valu
   - Otherwise `safe_text` overwrites `query.input.content.value`.
   - Non-text input is skipped entirely.
 - `apply_output_guardrails` rewrites the `BlockResult` in place and returns the same `GuardrailResult` (only `error` and `outcome` are set). An output block now also carries the `usage` actually spent — the provider was called and billed before the verdict arrived. It passes `text=input_text` (the pre-template user input) and `output_text=`the LLM output. On success, sanitised text overwrites the response content, then `persist_output_guardrail_result` re-writes the already-created `LlmCall` row **in its own session** (the caller's session may already be closed).
-- **There are two output-guardrail call sites** inside `execute_llm_call`: one in the proxy-provider branch, one in the main provider path. Any change to output guardrails must touch both.
+- Both the proxy branch (`_execute_proxy_call`) and the main provider path finish through one helper, `_run_output_guardrails`, which applies output guardrails and persists the outcome. Change output-guardrail handling there, once.
 
 ## 7. Guardrail metadata (`include_guardrail_metadata`, PR #1195)
 
@@ -125,8 +125,8 @@ These do **not** fail open: upstream status codes and bodies (including its 422s
 
 | Change | Files, in order |
 |---|---|
-| Add/modify an output guardrail behaviour | `apply_output_guardrails`, then **both** call sites in `execute_llm_call` (proxy branch + main provider path) |
-| Change `apply_input_guardrails`' return | Add a field to `GuardrailResult` in `jobs.py`, then read it at the call site in `execute_llm_call` |
+| Add/modify an output guardrail behaviour | `apply_output_guardrails`, then `_run_output_guardrails` in `jobs.py` (shared by the proxy and provider paths) |
+| Change `apply_input_guardrails`' return | Add a field to `GuardrailResult` in `jobs.py`, then read it in `_run_input_guardrails` (`jobs.py`) |
 | Add a field to the `/guardrails` result | `models/guardrails/response.py` → `_build_callback_payload` (callback path) → `get_guardrails_job_status` (poll path, rebuilds independently) → `api/docs/guardrails/apply_guardrails.md` |
 | Add a management proxy route | `api/routes/guardrails.py` using `proxy_guardrails_request` + `_upstream_response`, declared above `/{job_id}` |
 | Change upstream request/response shape | `run_guardrails_validation` and/or `list_validators_config`; check `summarize_validator_results` still finds `data.validator_results` |
