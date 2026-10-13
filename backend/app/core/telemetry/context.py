@@ -15,7 +15,9 @@ _log_context_var: ContextVar[dict[str, str] | None] = ContextVar(
     "kaapi_log_context", default=None
 )
 
-MODULE_NAME_FIELD = "module_name"
+# Sentry skips "_"-prefixed record attributes, so only LOG_MODULE_FIELD reaches Sentry Logs.
+LOG_MODULE_FIELD = "log_module"
+LOG_LOCATION_FIELD = "_log_location"
 
 
 class LogModuleEnum(StrEnum):
@@ -167,7 +169,7 @@ def log_context(
         payload["tag"] = tag
         payload.setdefault("system", tag)
     if module:
-        payload[MODULE_NAME_FIELD] = module.value
+        payload[LOG_MODULE_FIELD] = module.value
     for key, value in fields.items():
         if value is None:
             continue
@@ -212,14 +214,15 @@ class LogContextFilter(logging.Filter):
                 if not hasattr(record, "system"):
                     record.system = "collection"
 
-        module = (context_payload or {}).get(MODULE_NAME_FIELD) or _LOGGER_MODULES.get(
+        module = (context_payload or {}).get(LOG_MODULE_FIELD) or _LOGGER_MODULES.get(
             record.name
         )
-        location = f"{record.name}.{record.funcName}"
+        if module:
+            setattr(record, LOG_MODULE_FIELD, str(module))
         setattr(
             record,
-            MODULE_NAME_FIELD,
-            f"[{module}] {location}" if module else location,
+            LOG_LOCATION_FIELD,
+            f"[{module}] {record.name}" if module else record.name,
         )
 
         if not hasattr(record, "lifecycle"):

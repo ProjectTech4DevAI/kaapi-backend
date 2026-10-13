@@ -141,16 +141,16 @@ Every log line goes to two places with the same content:
 
 | Sink | What you see | Search |
 |---|---|---|
-| **Sentry Logs** | structured fields: `message`, `module_name`, `logger.name`, `code.line.number`, tenant tags, link to the trace | `module_name:[llm-call]*` |
+| **Sentry Logs** | structured fields: `message`, `log_module`, `logger.name`, `code.line.number`, tenant tags, link to the trace | `log_module:llm-call` |
 | **CloudWatch** | one text line from container stdout | `filter @message like "[llm-call]"` |
 
 ```
-2026-10-11 10:16:57,137 - [kaapi-backend] - [a1b2c3] - INFO - [knowledgebase] app.api.routes.collection_job.get_collection_job - [get_collection_job] Fetched job | job_id=8f2c
+2026-10-11 10:16:57,137 - [kaapi-backend] - [a1b2c3] - INFO - [knowledgebase] app.api.routes.collection_job - [get_collection_job] Fetched job | job_id=8f2c
 ```
 
 **Log context.** `log_context(...)` wraps a request or task and adds fields (`job_id`, `project_id`, `lifecycle`, …) to every log line inside it, including lines from shared helpers. After auth, the org and project ids are added the same way. `LogContextFilter` applies these fields; it is installed with logging, so it works even when tracing is off.
 
-**Per-module context.** Every line also carries `module_name` = `[<module>] <logger>.<function>`:
+**Per-module context.** Every line from a known module carries `log_module` (for example `llm-call`), and the CloudWatch line shows it in front of the logger name:
 
 | Module | Covers |
 |---|---|
@@ -164,7 +164,7 @@ Every log line goes to two places with the same content:
 
 - The module comes from a file-to-module map (`_LOGGER_MODULES` in `context.py`).
 - When a flow runs another flow's code, it sets the module itself with `log_context(module=LogModuleEnum.X)`: LLM chain jobs and fast-eval tasks do this.
-- Files outside these modules show `<logger>.<function>` without a module.
+- Files outside these modules have no `log_module`, and their CloudWatch line shows just the logger name.
 
 ---
 

@@ -18,7 +18,7 @@ LOG_FILE_PATH = os.path.join(LOG_DIR, "app.log")
 LOGGING_LEVEL = logging.INFO
 LOGGING_FORMAT = (
     "%(asctime)s - [%(service_name)s] - [%(correlation_id)s] - "
-    "%(levelname)s - %(module_name)s - %(message)s"
+    "%(levelname)s - %(_log_location)s - %(message)s"
 )
 _service_name_context: ContextVar[str | None] = ContextVar(
     "kaapi_service_name", default=None
