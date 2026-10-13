@@ -32,6 +32,10 @@ tags_metadata = [
         "description": "Dataset upload, running evaluations, listing datasets as well as evaluations",
     },
     {
+        "name": "Agent",
+        "description": "Read-only natural-language Q&A over your project's evaluations, configs, collections and documents",
+    },
+    {
         "name": "Fine Tuning",
         "description": "Fine tuning LLM for specific use cases by providing labelled dataset",
     },
@@ -90,6 +94,7 @@ tag_groups = [
             "Config Management",
             "LLM",
             "Evaluation",
+            "Agent",
             "Fine Tuning",
             "Model Evaluation",
             "Responses",

@@ -1,6 +1,7 @@
 import base64
 import io
 import logging
+from collections.abc import Callable
 from typing import Any
 
 import anthropic
@@ -33,56 +34,59 @@ FILES_API_BETA = "files-api-2025-04-14"
 STOP_REASON_COMPLETE = "end_turn"
 
 
-def log_anthropic_error(exc: Exception, *, fn_name: str, context: str = "") -> None:
-    """Log an Anthropic `messages.create` failure at the right level/tag.
-
-    Shared by one-shot call sites outside `ClaudeProvider.execute` (its own
-    dispatch has a wider, return-tuple-based ladder and stays self-contained) —
-    currently `crud/evaluations/summary.py` and
-    `services/evaluations/prompt_improvement.py`, which otherwise duplicated
-    this same 6-branch ladder verbatim. Callers keep their own control flow
-    (return `None` vs. `raise`); this only logs.
-    """
-    tail = f" | {context}" if context else ""
+def describe_anthropic_error(exc: Exception) -> str:
+    """Caller-safe description of an Anthropic `messages.create` failure."""
     if isinstance(exc, anthropic.AuthenticationError):
-        logger.warning(
-            f"[{fn_name}] [ANTHROPIC] Authentication failed (code: 401){tail}: "
-            "verify the API key is valid and not expired.",
-            exc_info=True,
+        return (
+            "[ANTHROPIC] Authentication failed (code: 401): verify the API key is "
+            "valid and not expired."
         )
-    elif isinstance(exc, anthropic.RateLimitError):
-        logger.warning(
-            f"[{fn_name}] [ANTHROPIC] Rate limit exceeded (code: 429){tail}.",
-            exc_info=True,
+    if isinstance(exc, anthropic.RateLimitError):
+        return (
+            "[ANTHROPIC] Rate limit exceeded (code: 429): wait at least 1 minute "
+            "and retry."
         )
-    elif isinstance(exc, anthropic.APITimeoutError):
-        # Must come before APIConnectionError — APITimeoutError is a subclass.
-        logger.error(
-            f"[{fn_name}] [KAAPI] Anthropic request timed out "
-            f"(code: APITimeoutError){tail}.",
-            exc_info=True,
+    # Must come before APIConnectionError — APITimeoutError is a subclass.
+    if isinstance(exc, anthropic.APITimeoutError):
+        return (
+            "[KAAPI] Anthropic request timed out (code: APITimeoutError): retry. "
+            "If persistent, contact Kaapi."
         )
-    elif isinstance(exc, anthropic.APIConnectionError):
-        logger.error(
-            f"[{fn_name}] [KAAPI] Anthropic connection failed "
-            f"(code: APIConnectionError){tail}.",
-            exc_info=True,
+    if isinstance(exc, anthropic.APIConnectionError):
+        return (
+            "[KAAPI] Anthropic connection failed (code: APIConnectionError): "
+            "check connectivity and retry. If persistent, contact Kaapi."
         )
-    elif isinstance(exc, anthropic.APIStatusError):
-        status = exc.status_code
+    if isinstance(exc, anthropic.APIStatusError):
+        return (
+            f"[ANTHROPIC] API status error (code: {exc.status_code}, "
+            f"request_id={exc.request_id}): retry in a few seconds. If persistent, "
+            "contact Kaapi."
+        )
+    return (
+        f"[KAAPI] Unexpected error during Anthropic call "
+        f"(code: {type(exc).__name__}): contact Kaapi if persistent."
+    )
+
+
+def _anthropic_error_log_level(exc: Exception) -> Callable[..., None]:
+    if isinstance(exc, (anthropic.AuthenticationError, anthropic.RateLimitError)):
+        return logger.warning
+    if isinstance(exc, anthropic.APIStatusError):
         # 5xx is provider-side (alert-worthy); 4xx is caller's fault (noise if alerted).
-        log = logger.error if status and status >= 500 else logger.warning
-        log(
-            f"[{fn_name}] [ANTHROPIC] API status error (code: {status}){tail}: "
-            f"{exc.message}.",
-            exc_info=True,
-        )
-    else:
-        logger.error(
-            f"[{fn_name}] [KAAPI] Unexpected error during Anthropic call "
-            f"(code: {type(exc).__name__}){tail}: {exc}.",
-            exc_info=True,
-        )
+        status = exc.status_code
+        return logger.error if status and status >= 500 else logger.warning
+    return logger.error
+
+
+def log_anthropic_error(exc: Exception, *, fn_name: str, context: str = "") -> None:
+    """Log an Anthropic `messages.create` failure at the right level/tag."""
+    tail = f" | {context}" if context else ""
+    detail = exc.message if isinstance(exc, anthropic.APIError) else str(exc)
+    _anthropic_error_log_level(exc)(
+        f"[{fn_name}] {describe_anthropic_error(exc)}{tail} | detail: {detail}",
+        exc_info=True,
+    )
 
 
 class ClaudeProvider(BaseProvider):

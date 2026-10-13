@@ -10,6 +10,13 @@ from app.models.analytics import (  # noqa: F401
 )
 from app.models.assessment import Assessment, AssessmentRun  # noqa: F401
 
+from .agent import (
+    AgentQueryRequest,
+    AgentQueryResponse,
+    AgentStopReasonEnum,
+    AgentToolCallPublic,
+    AgentUsagePublic,
+)
 from .api_key import (
     APIKey,
     APIKeyBase,

@@ -52,7 +52,7 @@ def set_auth_cookies(
     is_secure = settings.ENVIRONMENT in ("staging", "production")
 
     response.set_cookie(
-        key="access_token",
+        key=security.ACCESS_TOKEN_COOKIE_NAME,
         value=access_token,
         httponly=True,
         secure=is_secure,
@@ -76,7 +76,7 @@ def clear_auth_cookies(response: JSONResponse) -> None:
     is_secure = settings.ENVIRONMENT in ("staging", "production")
 
     response.delete_cookie(
-        key="access_token",
+        key=security.ACCESS_TOKEN_COOKIE_NAME,
         httponly=True,
         secure=is_secure,
         samesite="lax",
