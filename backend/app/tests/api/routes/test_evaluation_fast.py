@@ -3,6 +3,11 @@
 Covers FR-1 through FR-15 from the Fast Evaluation SRD plus the chunk/aggregate
 split of the responses stage. External boundaries (OpenAI, Langfuse, S3, Celery
 dispatch) are mocked; the DB is real (`db` fixture).
+
+Per-row timing is pinned at the worker level in `test_fast_llm_call.py` by
+patching `app.crud.evaluations.fast.time`, which swaps the whole `time` module
+object seen by `fast.py`; tests here never patch the clock because the thread
+pool interleaves `perf_counter` reads across rows.
 """
 
 import random
@@ -139,6 +144,7 @@ def _make_fast_run(
     total_items: int = 0,
     run_name: str | None = None,
     batch_job_id: int | None = None,
+    latency: dict[str, Any] | None = None,
 ) -> EvaluationRun:
     """Persist a fast-mode EvaluationRun with a real dataset + config."""
     dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
@@ -153,6 +159,7 @@ def _make_fast_run(
         run_mode=RunModeEnum.FAST.value,
         total_items=total_items,
         batch_job_id=batch_job_id,
+        latency=latency,
         organization_id=user_api_key.organization_id,
         project_id=user_api_key.project_id,
     )
@@ -180,6 +187,7 @@ def _resp_result(
     *,
     failed: bool = False,
     question_id: Any = None,
+    latency_ms: float | None = None,
 ) -> dict[str, Any]:
     """A Stage-1 per-item result in the shape a chunk partial persists."""
     return {
@@ -191,6 +199,7 @@ def _resp_result(
         "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
         "question_id": question_id,
         "failed": failed,
+        "latency_ms": latency_ms,
     }
 
 
@@ -425,6 +434,46 @@ class TestFastEvaluationRoute:
         assert resp.status_code == 200
         assert resp.json()["data"]["run_mode"] == "fast"
 
+    def test_get_evaluation_exposes_latency(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ):
+        eval_run = _make_fast_run(
+            db=db,
+            user_api_key=user_api_key,
+            status="completed",
+            latency={"avg_latency_ms": 250.0, "call_count": 4},
+        )
+
+        resp = client.get(
+            f"/api/v1/evaluations/{eval_run.id}", headers=user_api_key_header
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["latency"] == {
+            "avg_latency_ms": 250.0,
+            "call_count": 4,
+        }
+
+    def test_get_evaluation_latency_is_null_for_untimed_run(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ):
+        eval_run = _make_fast_run(db=db, user_api_key=user_api_key)
+
+        resp = client.get(
+            f"/api/v1/evaluations/{eval_run.id}", headers=user_api_key_header
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert "latency" in data
+        assert data["latency"] is None
+
 
 # Dataset listing eligibility filter (FR-5)
 
@@ -533,6 +582,38 @@ class TestRunResponseChunk:
         assert job.config["usage"]["total_tokens"] == 24
         assert job.raw_output_url == f"s3://bucket/responses_{eval_run.id}_0.json"
         assert len(_s3_store[job.raw_output_url]) == 2
+
+    def test_every_stored_row_carries_latency_ms(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        _s3_store,
+    ):
+        eval_run = _make_fast_run(db=db, user_api_key=user_api_key)
+        items = [_dataset_item("item-ok", "Q-ok"), _dataset_item("item-bad", "Q-bad")]
+
+        def _execute(*, query, **_):
+            if query.input.content.value == "Q-bad":
+                return BlockResult(error="invalid request")
+            return _ok_block_result()
+
+        with patch("app.crud.evaluations.fast.execute_llm_call", side_effect=_execute):
+            run_response_chunk(
+                session=db,
+                eval_run=eval_run,
+                config_blob=_kaapi_config_blob(),
+                dataset_items_slice=items,
+                chunk_index=0,
+            )
+
+        job = get_chunk_job(session=db, eval_run_id=eval_run.id, chunk_index=0)
+        rows = {r["item_id"]: r for r in _s3_store[job.raw_output_url]}
+        assert all("latency_ms" in r for r in rows.values())
+        assert rows["item-ok"]["failed"] is False
+        assert isinstance(rows["item-ok"]["latency_ms"], float)
+        assert rows["item-ok"]["latency_ms"] >= 0
+        assert rows["item-bad"]["failed"] is True
+        assert rows["item-bad"]["latency_ms"] is None
 
     def test_reads_the_batch_job_model_from_native_dict_params(
         self,
@@ -706,6 +787,27 @@ class TestMergeResponseChunks:
         ).all()
         assert len(canonical_rows) == 1
 
+    def test_latency_ms_survives_merge_and_retry_reload(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        _s3_store,
+    ):
+        eval_run = _make_fast_run(db=db, user_api_key=user_api_key)
+        _seed_response_chunk(
+            db=db,
+            eval_run=eval_run,
+            chunk_index=0,
+            results=[_resp_result("item-a", "Qa", latency_ms=123.4)],
+            store=_s3_store,
+        )
+
+        merged_run, merged = _merge_response_chunks(session=db, eval_run=eval_run)
+        _, reloaded = _merge_response_chunks(session=db, eval_run=merged_run)
+
+        assert merged[0]["latency_ms"] == 123.4
+        assert reloaded[0]["latency_ms"] == 123.4
+
 
 # Stage skipping on retry (FR-7 — embeddings)
 
@@ -744,6 +846,7 @@ class TestStageSkipping:
                 "ground_truth_embedding": [1.0, 0.0],
                 "usage": {"prompt_tokens": 5, "total_tokens": 5},
                 "failed": False,
+                "latency_ms": 87.5,
             }
         ]
 
@@ -765,6 +868,7 @@ class TestStageSkipping:
             )
 
         assert results == cached
+        assert results[0]["latency_ms"] == 87.5
         fake_openai.embeddings.create.assert_not_called()
 
 
@@ -978,6 +1082,47 @@ class TestFastPipelineEndToEnd:
         assert sample["ground_truth_answer"] == "A1"
         assert sample["scores"][0]["name"] == "Cosine Similarity"
         assert sample["scores"][0]["value"] == pytest.approx(1.0, abs=0.01)
+
+    def test_pipeline_persists_run_latency(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        _fast_pipeline_mocks,
+    ):
+        eval_run = _make_fast_run(db=db, user_api_key=user_api_key, status="pending")
+        _seed_response_chunk(
+            db=db,
+            eval_run=eval_run,
+            chunk_index=0,
+            results=[
+                _resp_result("item-1", "Q1", "A1", question_id=1, latency_ms=100.0),
+                _resp_result("item-2", "Q2", "A2", question_id=2, latency_ms=300.0),
+            ],
+            store=_fast_pipeline_mocks.store,
+        )
+        fake_openai = MagicMock()
+        fake_openai.embeddings.create.return_value = _fake_embedding_response()
+
+        with patch(
+            "app.crud.evaluations.fast.save_score",
+            side_effect=_persist_score_into(db),
+        ):
+            result = run_fast_evaluation(
+                session=db,
+                openai_client=fake_openai,
+                langfuse=MagicMock(),
+                eval_run=eval_run,
+            )
+
+        db.expire_all()
+        run = db.get(EvaluationRun, result.id)
+        assert run.latency["response"] == {"avg_latency_ms": 200.0, "call_count": 2}
+        # Embedding rows are timed against the real clock; only the count is stable.
+        assert run.latency["embedding"]["call_count"] == 2
+        assert run.latency["call_count"] == 4
+        assert "judge" not in run.latency
+        # attach_latency runs unmocked beside the mocked attach_cost.
+        assert _fast_pipeline_mocks.attach_cost.call_count == 2
 
 
 # Aggregate-level failure threshold (FR-14)

@@ -9,6 +9,7 @@ remaining metrics.
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -25,6 +26,7 @@ from app.crud.evaluations.judge_prompts import (
     KNOWLEDGE_BASE_JUDGE_PROMPT,
     PROMPT_JUDGE_PROMPT,
 )
+from app.crud.evaluations.latency import LATENCY_MS_DECIMALS, MS_PER_SECOND
 from app.crud.evaluations.response_parsing import extract_response_text
 from app.crud.evaluations.retry import retry_openai_call
 from app.crud.evaluations.score import (
@@ -138,6 +140,8 @@ class JudgeResult:
 
     metrics: dict[JudgeMetricEnum, MetricScore]
     usage: dict[str, int]
+    # In-memory only: never persisted to S3, so judge latency is recomputed on redelivery.
+    latency_ms: float | None = None
 
 
 def _required_input_union(metrics: list[JudgeMetricSpec]) -> list[JudgeInputEnum]:
@@ -304,7 +308,11 @@ def judge_row(
     }
 
     try:
+        started = time.perf_counter()
         response = _create_judge_response(openai_client, params)
+        latency_ms = round(
+            (time.perf_counter() - started) * MS_PER_SECOND, LATENCY_MS_DECIMALS
+        )
     except openai.OpenAIError as exc:
         status = getattr(exc, "status_code", None)
         # 5xx is provider-side (alert-worthy); 4xx/None is caller/Kaapi-side noise.
@@ -327,4 +335,4 @@ def judge_row(
     }
 
     metric_scores = _parse_judge_output(extract_response_text(response), applicable)
-    return JudgeResult(metrics=metric_scores, usage=usage)
+    return JudgeResult(metrics=metric_scores, usage=usage, latency_ms=latency_ms)

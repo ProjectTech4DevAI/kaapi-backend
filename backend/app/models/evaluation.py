@@ -445,6 +445,16 @@ class EvaluationRun(SQLModel, table=True):
         description="Cost breakdown by stage (response, embedding) with token counts and USD",
     )
 
+    latency: dict[str, Any] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB,
+            nullable=True,
+            comment="Avg OpenAI call latency per stage (fast runs only; NULL for batch)",
+        ),
+        description="Avg OpenAI call latency per stage (response, embedding, judge) with call counts; fast runs only",
+    )
+
     # Error message field
     error_message: str | None = SQLField(
         default=None,
@@ -530,6 +540,7 @@ class EvaluationRunUpdate(SQLModel):
     unscoreable: dict[str, Any] | None = None
     is_score_updated: bool | None = None
     cost: dict[str, Any] | None = None
+    latency: dict[str, Any] | None = None
     embedding_batch_job_id: int | None = None
     is_judge_run: bool | None = None
     callback_url: str | None = None
@@ -557,6 +568,7 @@ class EvaluationRunPublic(SQLModel):
     is_score_updated: bool | None = None
     is_judge_run: bool | None = None
     cost: dict[str, Any] | None
+    latency: dict[str, Any] | None = None
     error_message: str | None
     organization_id: int
     project_id: int

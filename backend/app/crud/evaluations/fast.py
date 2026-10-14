@@ -6,7 +6,7 @@ on retry if its `batch_job` row already exists.
 
     Stage 1 — Responses unit:   evaluation_run.batch_job_id
     Stage 2 — Embeddings unit:  evaluation_run.embedding_batch_job_id
-    Stage 3 — Score + trace + cost (no marker; each step is idempotent)
+    Stage 3 — Score + trace + cost + latency (no marker; each step is idempotent)
     Stage 4 — Persist score unit (summary + per-trace) via the shared save_score
               helper, so the cached trace unit (score_trace_url) exists before
               the run is advertised as complete and the read path (trace view /
@@ -28,6 +28,7 @@ See `Fast Evaluation SRD.md` for the full design.
 """
 
 import logging
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -94,6 +95,11 @@ from app.crud.evaluations.fast_results import (
 )
 from app.crud.evaluations.fast_traces import build_trace_records
 from app.crud.evaluations.judge import METRIC_REGISTRY, JudgeMetricSpec, JudgeResult
+from app.crud.evaluations.latency import (
+    LATENCY_MS_DECIMALS,
+    MS_PER_SECOND,
+    attach_latency,
+)
 from app.crud.evaluations.judge_stage import (
     build_metric_summary_scores,
     judge_rows,
@@ -240,11 +246,15 @@ def _llm_call_for_item(
         return failed_result("ERROR: missing question in dataset item")
 
     try:
+        started = time.perf_counter()
         result = _execute_llm_call_for_question(
             config=config,
             question=question,
             project_id=project_id,
             organization_id=organization_id,
+        )
+        latency_ms = round(
+            (time.perf_counter() - started) * MS_PER_SECOND, LATENCY_MS_DECIMALS
         )
     except Exception as exc:
         logger.warning(
@@ -265,6 +275,8 @@ def _llm_call_for_item(
         return failed_result(f"ERROR: {result.error}")
 
     guardrail, input_to_llm, output_from_llm = _guardrail_fields(result)
+    if result.guardrail_outcome is not None:
+        latency_ms = None
 
     # Tokens are billed even on an output block, so usage is read off every outcome.
     return build_response_result(
@@ -285,6 +297,7 @@ def _llm_call_for_item(
         retrieved_chunks=extract_file_search_chunks(
             result.response.provider_raw_response if result.response else None
         ),
+        latency_ms=latency_ms,
     )
 
 
@@ -301,11 +314,15 @@ def _embedding_call_for_pair(
         return build_embedding_failure(item_id, "empty output or ground_truth")
 
     try:
+        started = time.perf_counter()
         response = _create_embedding(
             openai_client,
             model=embedding_model,
             output_text=output_text,
             ground_truth=ground_truth,
+        )
+        latency_ms = round(
+            (time.perf_counter() - started) * MS_PER_SECOND, LATENCY_MS_DECIMALS
         )
     except openai.OpenAIError as exc:
         logger.warning(
@@ -313,7 +330,9 @@ def _embedding_call_for_pair(
         )
         return build_embedding_failure(item_id, str(exc))
 
-    return parse_embedding_pair(item_id=item_id, response=response)
+    return parse_embedding_pair(
+        item_id=item_id, response=response, latency_ms=latency_ms
+    )
 
 
 def _upload_unit_to_s3(
@@ -644,7 +663,7 @@ def _attach_stage_costs(
     response_results: list[dict[str, Any]],
     embedding_results: list[dict[str, Any]] | None,
 ) -> None:
-    """Attach the response- and embedding-stage costs (idempotent per stage)."""
+    """Attach the response- and embedding-stage costs and latency (idempotent per stage)."""
     if response_results:
         attach_cost(
             session=session,
@@ -674,6 +693,13 @@ def _attach_stage_costs(
             embedding_model=EMBEDDING_MODEL,
             embedding_raw_results=embedding_raw,
         )
+
+    attach_latency(
+        eval_run=eval_run,
+        log_prefix=log_prefix,
+        response_results=response_results or None,
+        embedding_results=embedding_results or None,
+    )
 
 
 def _score_cosine_path(
@@ -745,14 +771,22 @@ def _score_judge_path(
 
     # One combined judge call means all metric tokens land in single cost stage.
     if outcome.judge_results and judge_model:
+        judge_usage_rows: list[dict[str, Any]] = []
+        for result in outcome.judge_results.values():
+            judge_usage_rows.append(
+                {"usage": result.usage, "latency_ms": result.latency_ms}
+            )
         attach_cost(
             session=session,
             eval_run=eval_run,
             log_prefix=log_prefix,
             judge_model=judge_model,
-            judge_results=[
-                {"usage": result.usage} for result in outcome.judge_results.values()
-            ],
+            judge_results=judge_usage_rows,
+        )
+        attach_latency(
+            eval_run=eval_run,
+            log_prefix=log_prefix,
+            judge_results=judge_usage_rows,
         )
     return outcome
 
@@ -819,7 +853,7 @@ def _stage3_score_and_trace(
     embedding_results: list[EmbeddingResult] | None,
     log_prefix: str,
 ) -> tuple[EvaluationRun, EvaluationScore, list[dict[str, Any]]]:
-    """Stage 3 — cosine (v1) or judge (v2), create traces, attach costs. Idempotent.
+    """Stage 3 — cosine (v1) or judge (v2), create traces, attach costs + latency. Idempotent.
 
     Returns the run, the full score unit (summary_scores + per-trace records in the
     batch path's shape), and the Langfuse `write_items` (empty for v2). Everything
@@ -898,7 +932,7 @@ def _stage3_score_and_trace(
         else None
     )
 
-    # Persist cost + unscoreable here; the score unit (summary + traces) is persisted
+    # Persist cost + latency + unscoreable here; the score unit (summary + traces) is persisted
     # by the caller via save_score, before the completed transition, so it lands in
     # S3 like the batch path. This write must stay committed: save_score opens a
     # second session on the same row.
@@ -907,6 +941,7 @@ def _stage3_score_and_trace(
         eval_run=eval_run,
         update=EvaluationRunUpdate(
             cost=eval_run.cost,
+            latency=eval_run.latency,
             unscoreable=eval_run.unscoreable,
         ),
     )
@@ -1036,7 +1071,7 @@ def run_fast_evaluation(
             f"Score unit not persisted; run row is gone | eval_run_id={eval_run.id}"
         )
 
-    # Stage 5 — mark completed. Cost was persisted in Stage 3, score in Stage 4,
+    # Stage 5 — mark completed. Cost + latency were persisted in Stage 3, score in Stage 4,
     # so there's never a completed + NULL-score window.
     eval_run = update_evaluation_run(
         session=session,

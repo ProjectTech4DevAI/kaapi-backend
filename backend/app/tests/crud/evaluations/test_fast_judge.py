@@ -17,6 +17,7 @@ External boundaries mocked: OpenAI (embeddings + the judge completion at
 `_create_judge_response`), S3, `save_score`, model/cost resolution. DB is real.
 """
 
+import itertools
 import json
 from collections.abc import Iterator
 from contextlib import ExitStack
@@ -144,7 +145,11 @@ def _make_run(
 
 
 def _resp_result(
-    item_id: str, question: str, ground_truth: str = "golden"
+    item_id: str,
+    question: str,
+    ground_truth: str = "golden",
+    *,
+    latency_ms: float | None = None,
 ) -> dict[str, Any]:
     return {
         "item_id": item_id,
@@ -155,6 +160,7 @@ def _resp_result(
         "usage": {"input_tokens": 5, "output_tokens": 5, "total_tokens": 10},
         "question_id": item_id,
         "failed": False,
+        "latency_ms": latency_ms,
     }
 
 
@@ -541,6 +547,64 @@ class TestGroundTruthScoring:
         # cost_usd from the mocked estimate: (0.001 + 0.002) rounded.
         assert stage["cost_usd"] == pytest.approx(0.003, abs=1e-9)
 
+    def test_judge_latency_stage_tracked(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
+        # One row only: with more, the judge pool interleaves perf_counter reads.
+        _seed_chunk(
+            db=db,
+            eval_run=eval_run,
+            results=[_resp_result("item-1", "Q1", "golden-1", latency_ms=100.0)],
+            store=_s3_store,
+        )
+
+        with patch("app.crud.evaluations.judge.time") as mock_time:
+            mock_time.perf_counter.side_effect = itertools.chain(
+                [1.0, 1.25], itertools.repeat(1.25)
+            )
+            result, _ = _run_pipeline(
+                db=db,
+                eval_run=eval_run,
+                judge_side_effect=lambda _p: _judge_response(4, "close"),
+            )
+
+        db.expire_all()
+        run = db.get(EvaluationRun, result.id)
+        assert run.latency == {
+            "response": {"avg_latency_ms": 100.0, "call_count": 1},
+            "judge": {"avg_latency_ms": 250.0, "call_count": 1},
+            "avg_latency_ms": 175.0,
+            "call_count": 2,
+        }
+
+    def test_malformed_judge_reply_is_not_a_timed_call(
+        self, db: Session, user_api_key: TestAuthContext, _s3_store
+    ):
+        eval_run = _make_run(db=db, user_api_key=user_api_key, is_judge_run=True)
+        _seed_chunk(
+            db=db,
+            eval_run=eval_run,
+            results=[
+                _resp_result("item-good", "Q-good", "golden-good"),
+                _resp_result("item-bad", "Q-bad", "golden-bad"),
+            ],
+            store=_s3_store,
+        )
+
+        def _judge(params):
+            if "Q-bad" in params["input"]:
+                return _raw_judge_response("totally not json")
+            return _judge_response(5, "correct")
+
+        result, _ = _run_pipeline(db=db, eval_run=eval_run, judge_side_effect=_judge)
+
+        db.expire_all()
+        run = db.get(EvaluationRun, result.id)
+        assert run.latency["judge"]["call_count"] == 1
+        # Seeded response rows carry no latency_ms (pre-deploy shape): stage omitted.
+        assert "response" not in run.latency
+
 
 BOT_INSTRUCTIONS = "You are a farming helpline bot. Always answer in Hindi."
 
@@ -875,6 +939,7 @@ class TestV1PipelineUnchanged:
         assert GROUND_TRUTH_SCORE_NAME not in summary_names
         assert PROMPT_SCORE_NAME not in summary_names
         assert COSINE_SCORE_NAME in summary_names
+        assert "judge" not in (run.latency or {})
 
 
 class TestRunOverallSummary:
@@ -1120,6 +1185,7 @@ class TestResponsesChunkCapture:
             {"score": 0.91, "text": "chunk A", "filename": "doc.pdf"},
             {"score": 0.42, "text": "chunk B", "filename": None},
         ]
+        assert isinstance(result["latency_ms"], float)
         json.dumps(result)  # the S3 unit must stay JSON-serializable
 
     def test_success_without_hits_returns_empty_chunks(self):
@@ -1135,6 +1201,7 @@ class TestResponsesChunkCapture:
 
         assert result["failed"] is True
         assert result["retrieved_chunks"] is None
+        assert result["latency_ms"] is None
 
 
 class TestKnowledgeBaseScoring:
