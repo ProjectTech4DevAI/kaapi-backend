@@ -5,10 +5,13 @@ import sentry_sdk
 from asgi_correlation_id import correlation_id
 from fastapi import Request, Response
 from opentelemetry import trace
+from starlette.middleware.base import RequestResponseEndpoint
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.config import settings
 from app.core.logger import log_service_name
+from app.core.telemetry import record_http_request, record_unmatched_request
+from app.core.telemetry.http import UNMATCHED_ROUTE
 
 logger = logging.getLogger("http_request_logger")
 
@@ -18,6 +21,10 @@ SILENT_LOG_PATHS: frozenset[str] = frozenset(
         f"{settings.API_V1_STR}/utils/health",
     }
 )
+
+CRON_PATH_PREFIX: str = f"{settings.API_V1_STR}/cron/"
+
+TRACE_EXCLUDED_PATH_PREFIXES: frozenset[str] = frozenset({CRON_PATH_PREFIX})
 
 
 class StripTrailingSlashMiddleware:
@@ -47,11 +54,13 @@ def _resolve_http_route(request: Request) -> str:
     """
     route = request.scope.get("route")
     templated = getattr(route, "path", None)
-    return templated or "unmatched"
+    return templated or UNMATCHED_ROUTE
 
 
-async def http_request_logger(request: Request, call_next) -> Response:
-    if request.url.path.startswith(f"{settings.API_V1_STR}/cron/"):
+async def http_request_logger(
+    request: Request, call_next: RequestResponseEndpoint
+) -> Response:
+    if request.url.path.startswith(CRON_PATH_PREFIX):
         with log_service_name(settings.CRON_SERVICE_NAME):
             return await _log_http_request(request, call_next)
 
@@ -69,38 +78,43 @@ def _resolve_request_body_size(request: Request) -> int:
         return 0
 
 
-async def _log_http_request(request: Request, call_next) -> Response:
+async def _log_http_request(
+    request: Request, call_next: RequestResponseEndpoint
+) -> Response:
     start_time = time.time()
     method = request.method
     raw_path = request.url.path
+    metrics_enabled = raw_path not in SILENT_LOG_PATHS
     request_body_size = _resolve_request_body_size(request)
 
     span = trace.get_current_span()
     if span.is_recording():
-        span.set_attribute("http.request.method", method)
-        span.set_attribute("http.request_method", method)
-        span.set_attribute("http.method", method)
         span.set_attribute("http.request.body.size", request_body_size)
 
     if sentry_sdk.get_client().is_active():
         sentry_sdk.set_tag("http.method", method)
-        sentry_sdk.set_tag("http.request.method", method)
         if request_id := correlation_id.get():
             sentry_sdk.set_tag("correlation_id", request_id)
 
     try:
         response = await call_next(request)
     except Exception:
+        duration_ms = (time.time() - start_time) * 1000
         status = 500
         http_route = _resolve_http_route(request)
-        if span.is_recording():
-            span.set_attribute("http.route", http_route)
-            span.set_attribute("http.status_code", status)
-            span.set_attribute("http.response.status_code", status)
         if sentry_sdk.get_client().is_active():
             sentry_sdk.set_tag("http.route", http_route)
             sentry_sdk.set_tag("http.status_code", str(status))
-            sentry_sdk.set_tag("http.response.status_code", str(status))
+        if http_route == UNMATCHED_ROUTE:
+            record_unmatched_request(method=method)
+        elif metrics_enabled:
+            record_http_request(
+                method=method,
+                http_route=http_route,
+                status=status,
+                duration_ms=duration_ms,
+                request_body_size=request_body_size,
+            )
         logger.exception("Unhandled exception during request")
         raise
 
@@ -108,48 +122,24 @@ async def _log_http_request(request: Request, call_next) -> Response:
     status = response.status_code
     http_route = _resolve_http_route(request)
 
-    if span.is_recording():
-        span.set_attribute("http.route", http_route)
-        span.set_attribute("http.status_code", status)
-        span.set_attribute("http.response.status_code", status)
-        span.set_attribute("http.request.duration_ms", round(duration_ms, 2))
+    if sentry_sdk.get_client().is_active():
+        sentry_sdk.set_tag("http.route", http_route)
+        sentry_sdk.set_tag("http.status_code", str(status))
 
-    if raw_path not in SILENT_LOG_PATHS:
+    if http_route == UNMATCHED_ROUTE:
+        record_unmatched_request(method=method)
+    elif metrics_enabled:
         logger.info(
             f"[_log_http_request] {method} {raw_path} - {status} [{duration_ms:.2f}ms] "
             f"| request_body_size: {request_body_size}B "
             f"| correlation_id: {correlation_id.get()}"
         )
-
-    try:
-        if sentry_sdk.get_client().is_active():
-            sentry_sdk.set_tag("http.route", http_route)
-            sentry_sdk.set_tag("http.status_code", str(status))
-            sentry_sdk.set_tag("http.response.status_code", str(status))
-
-            attrs = {
-                "http.method": method,
-                "http.route": http_route,
-                "http.status_code": str(status),
-            }
-            sentry_sdk.metrics.count("http.server.request.count", 1, attributes=attrs)
-            sentry_sdk.metrics.distribution(
-                "http.server.request.body.size",
-                request_body_size,
-                unit="byte",
-                attributes=attrs,
-            )
-            sentry_sdk.metrics.distribution(
-                "http.server.request.duration",
-                duration_ms,
-                unit="millisecond",
-                attributes=attrs,
-            )
-            if status >= 400:
-                sentry_sdk.metrics.count(
-                    "http.server.request.error", 1, attributes=attrs
-                )
-    except Exception:
-        logger.debug("[http_request_logger] Sentry metric emit failed")
+        record_http_request(
+            method=method,
+            http_route=http_route,
+            status=status,
+            duration_ms=duration_ms,
+            request_body_size=request_body_size,
+        )
 
     return response

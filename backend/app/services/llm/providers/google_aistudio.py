@@ -169,10 +169,6 @@ class GoogleAIProvider(BaseProvider):
         else:
             merged_instruction = f"{lang_instruction}. {forced_transcription_text}"
 
-        logger.info(
-            f"The merged instructions is {merged_instruction} and output language is {output_language} and input language is {input_language}"
-        )
-
         # Materialize the AudioRef to a temp file so the genai SDK can upload it.
         with resolved_input.to_path() as audio_path:
             gemini_file = self.client.files.upload(file=audio_path)

@@ -37,7 +37,7 @@ EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
 
 DAILY_STATS_CRON_MONITOR_CONFIG: MonitorConfig = {
     "schedule": {"type": "crontab", "value": "0 9 * * *"},
-    "timezone": "UTC",
+    "timezone": "Asia/Kolkata",
     "checkin_margin": 5,
     "max_runtime": 10,
     "failure_issue_threshold": 1,
