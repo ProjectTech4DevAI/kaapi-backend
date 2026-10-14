@@ -107,12 +107,7 @@ def attach_latency(
     embedding_results: list[dict[str, Any]] | None = None,
     judge_results: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Recompute latency for the passed stage(s) onto `eval_run.latency`, never raising.
-
-    A stage whose list is None keeps its previous entry, so a partial re-attach
-    never clobbers prior data. If no stage ends up with an entry the column is left
-    untouched. Caller persists `eval_run` afterwards.
-    """
+    """Recompute latency for the passed stage(s) onto `eval_run.latency`, never raising."""
     try:
         existing = eval_run.latency or {}
         passed: dict[str, list[dict[str, Any]] | None] = {
@@ -128,13 +123,6 @@ def attach_latency(
                 continue
             entry = _stage_entry(rows)
             entries[stage] = entry
-            if entry is not None:
-                emitted = _emit_entry(entry[_SUM_MS_KEY], int(entry[CALL_COUNT_KEY]))
-                logger.info(
-                    f"[attach_latency] {log_prefix} stage={stage} "
-                    f"avg_latency_ms={emitted[AVG_LATENCY_MS_KEY]} "
-                    f"call_count={emitted[CALL_COUNT_KEY]}"
-                )
 
         latency = _build_latency_dict(
             response=entries[STAGE_RESPONSE],

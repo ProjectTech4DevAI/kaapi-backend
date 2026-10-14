@@ -140,7 +140,6 @@ class JudgeResult:
 
     metrics: dict[JudgeMetricEnum, MetricScore]
     usage: dict[str, int]
-    # In-memory only: never persisted to S3, so judge latency is recomputed on redelivery.
     latency_ms: float | None = None
 
 
