@@ -2,36 +2,45 @@ import logging
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
 from fastapi.responses import JSONResponse
 from opentelemetry import trace
-from sqlmodel import SQLModel
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.guardrails_schemas import (
+    BAN_LIST_CREATE_EXAMPLE,
+    BAN_LIST_LIST_OK,
+    BAN_LIST_OK,
+    BAN_LIST_UPDATE_EXAMPLE,
+    DELETE_OK,
+    JOB_ITEM_RESPONSES,
+    JOB_RESPONSES,
+    LLM_PROMPT_CONFIG_CREATE_EXAMPLES,
+    LLM_PROMPT_CONFIG_LIST_OK,
+    LLM_PROMPT_CONFIG_OK,
+    LLM_PROMPT_CONFIG_UPDATE_EXAMPLE,
+    PROXY_ITEM_RESPONSES,
+    PROXY_ITEM_WRITE_RESPONSES,
+    PROXY_READ_RESPONSES,
+    PROXY_WRITE_RESPONSES,
+    VALIDATOR_CONFIG_CREATE_EXAMPLES,
+    VALIDATOR_CONFIG_LIST_OK,
+    VALIDATOR_CONFIG_OK,
+    VALIDATOR_CONFIG_UPDATE_EXAMPLE,
+    VALIDATOR_TYPE_LIST_OK,
+    render_validator_reference,
+)
+from app.api.openapi_docs import doc, ref
 from app.api.permissions import Permission, require_permission
 from app.core.rate_monitor import monitor_rate
 from app.core.telemetry import log_context
 from app.crud.jobs import JobCrud
 from app.models import JobStatus, JobType
 from app.models.guardrails import (
-    BanListCreate,
-    BanListPublic,
-    BanListUpdate,
     GuardrailsCallbackData,
-    GuardrailsDeletePublic,
     GuardrailsJobImmediatePublic,
     GuardrailsJobPublic,
     GuardrailsRequest,
-    LLMPromptConfigCreate,
-    LLMPromptConfigPublic,
-    LLMPromptConfigUpdate,
-    LLMValidatorNameEnum,
-    StageEnum,
-    ValidatorConfigCreate,
-    ValidatorConfigPublic,
-    ValidatorConfigUpdate,
-    ValidatorTypeEnum,
-    ValidatorTypeListPublic,
 )
 from app.services.guardrails.jobs import start_job
 from app.services.llm.guardrails import proxy_guardrails_request
@@ -41,6 +50,24 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Guardrails"])
 guardrails_callback_router = APIRouter()
+
+ProxyBody = Annotated[
+    Any,
+    Body(
+        description=(
+            "Forwarded to the guardrails service unchanged. That service owns "
+            "validation for this payload, so the gateway neither checks nor "
+            "reshapes it; its 422 is what you see on a bad body."
+        )
+    ),
+]
+"""Body of a management-API proxy route.
+
+Deliberately untyped at run time: a Pydantic mirror of the upstream schema
+would reject payloads upstream accepts the moment the two drift (a new
+validator type, a new tuning key). The documented shape lives in
+`app.api.docs.guardrails_schemas` instead.
+"""
 
 
 @guardrails_callback_router.post(
@@ -69,6 +96,7 @@ def guardrails_callback_notification(
         Depends(require_permission(Permission.REQUIRE_PROJECT)),
         Depends(monitor_rate("llm_call")),
     ],
+    **doc(responses=JOB_RESPONSES),
 )
 def apply_guardrails_endpoint(
     _current_user: AuthContextDep,
@@ -138,25 +166,18 @@ def _upstream_response(status_code: int, payload: Any) -> Response:
     return JSONResponse(status_code=status_code, content=payload, headers=headers)
 
 
-def _forward_body(body: SQLModel) -> dict[str, Any]:
-    """Serialise a validated body back to the exact keys the caller sent.
-
-    ``exclude_unset`` matters most on PATCH: without it every omitted optional
-    field would be forwarded as an explicit ``null`` and blank out stored data.
-    ``mode="json"`` renders UUIDs, enums and datetimes as JSON scalars.
-    """
-    return body.model_dump(mode="json", exclude_unset=True)
-
-
 # ROUTE ORDERING: these fixed paths must stay above GET /guardrails/{job_id}.
 
 
 @router.get(
     "/guardrails",
     summary="List validator types",
-    description=load_description("guardrails/list_validator_types.md"),
-    response_model=ValidatorTypeListPublic,
+    # The per-type reference is rendered from the same catalogue that builds
+    # the example response, so the two cannot disagree.
+    description=load_description("guardrails/list_validator_types.md")
+    + render_validator_reference(),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(responses={200: VALIDATOR_TYPE_LIST_OK, **PROXY_READ_RESPONSES}),
 )
 def list_guardrails_validator_types(_current_user: AuthContextDep) -> Response:
     """List the validator types supported upstream and their JSON schemas."""
@@ -173,18 +194,22 @@ def list_guardrails_validator_types(_current_user: AuthContextDep) -> Response:
     "/guardrails/ban_lists",
     summary="Create a ban list",
     description=load_description("guardrails/create_ban_list.md"),
-    response_model=APIResponse[BanListPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(
+        request_schema=ref("GuardrailsBanListCreate"),
+        request=BAN_LIST_CREATE_EXAMPLE,
+        responses={200: BAN_LIST_OK, **PROXY_WRITE_RESPONSES},
+    ),
 )
 def create_guardrails_ban_list(
-    _current_user: AuthContextDep, body: BanListCreate
+    _current_user: AuthContextDep, body: ProxyBody = None
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "POST",
         "/ban_lists/",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
-        json_body=_forward_body(body),
+        json_body=body,
     )
     return _upstream_response(status_code, payload)
 
@@ -193,8 +218,8 @@ def create_guardrails_ban_list(
     "/guardrails/ban_lists",
     summary="List ban lists",
     description=load_description("guardrails/list_ban_lists.md"),
-    response_model=APIResponse[list[BanListPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(responses={200: BAN_LIST_LIST_OK, **PROXY_READ_RESPONSES}),
 )
 def list_guardrails_ban_lists(
     _current_user: AuthContextDep,
@@ -222,18 +247,22 @@ def list_guardrails_ban_lists(
     "/guardrails/llm_prompt_configs",
     summary="Create an LLM prompt config",
     description=load_description("guardrails/create_llm_prompt_config.md"),
-    response_model=APIResponse[LLMPromptConfigPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(
+        request_schema=ref("GuardrailsLLMPromptConfigCreate"),
+        request_examples=LLM_PROMPT_CONFIG_CREATE_EXAMPLES,
+        responses={200: LLM_PROMPT_CONFIG_OK, **PROXY_WRITE_RESPONSES},
+    ),
 )
 def create_guardrails_llm_prompt_config(
-    _current_user: AuthContextDep, body: LLMPromptConfigCreate
+    _current_user: AuthContextDep, body: ProxyBody = None
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "POST",
         "/llm_prompt_configs/",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
-        json_body=_forward_body(body),
+        json_body=body,
     )
     return _upstream_response(status_code, payload)
 
@@ -242,14 +271,19 @@ def create_guardrails_llm_prompt_config(
     "/guardrails/llm_prompt_configs",
     summary="List LLM prompt configs",
     description=load_description("guardrails/list_llm_prompt_configs.md"),
-    response_model=APIResponse[list[LLMPromptConfigPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(responses={200: LLM_PROMPT_CONFIG_LIST_OK, **PROXY_READ_RESPONSES}),
 )
 def list_guardrails_llm_prompt_configs(
     _current_user: AuthContextDep,
     validator_name: Annotated[
-        LLMValidatorNameEnum | None,
-        Query(description="Filter to prompts driving this validator."),
+        str | None,
+        Query(
+            description=(
+                "Filter to prompts driving this validator, e.g. "
+                "`topic_relevance` or `answer_relevance_custom_llm`."
+            )
+        ),
     ] = None,
     offset: Annotated[int, Query(ge=0, description="Rows to skip.")] = 0,
     limit: Annotated[
@@ -263,7 +297,7 @@ def list_guardrails_llm_prompt_configs(
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
         params={
-            "validator_name": validator_name.value if validator_name else None,
+            "validator_name": validator_name,
             "offset": offset,
             "limit": limit,
         },
@@ -275,18 +309,22 @@ def list_guardrails_llm_prompt_configs(
     "/guardrails/validators/configs",
     summary="Create a validator config",
     description=load_description("guardrails/create_validator_config.md"),
-    response_model=APIResponse[ValidatorConfigPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(
+        request_schema=ref("GuardrailsValidatorConfigCreate"),
+        request_examples=VALIDATOR_CONFIG_CREATE_EXAMPLES,
+        responses={200: VALIDATOR_CONFIG_OK, **PROXY_WRITE_RESPONSES},
+    ),
 )
 def create_guardrails_validator_config(
-    _current_user: AuthContextDep, body: ValidatorConfigCreate
+    _current_user: AuthContextDep, body: ProxyBody = None
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "POST",
         "/validators/configs/",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
-        json_body=_forward_body(body),
+        json_body=body,
     )
     return _upstream_response(status_code, payload)
 
@@ -295,8 +333,8 @@ def create_guardrails_validator_config(
     "/guardrails/validators/configs",
     summary="List validator configs",
     description=load_description("guardrails/list_validator_configs.md"),
-    response_model=APIResponse[list[ValidatorConfigPublic]],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(responses={200: VALIDATOR_CONFIG_LIST_OK, **PROXY_READ_RESPONSES}),
 )
 def list_guardrails_validator_configs(
     _current_user: AuthContextDep,
@@ -305,10 +343,17 @@ def list_guardrails_validator_configs(
         Query(description="Repeat to fetch several configs by id."),
     ] = None,
     stage: Annotated[
-        StageEnum | None, Query(description="Filter by the stage the config targets.")
+        str | None,
+        Query(description="Filter by the stage the config targets: input or output."),
     ] = None,
     type: Annotated[
-        ValidatorTypeEnum | None, Query(description="Filter by validator type.")
+        str | None,
+        Query(
+            description=(
+                "Filter by validator type. See GET /api/v1/guardrails for the "
+                "supported types."
+            )
+        ),
     ] = None,
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
@@ -318,8 +363,8 @@ def list_guardrails_validator_configs(
         project_id=_current_user.project_.id,
         params={
             "ids": [str(config_id) for config_id in ids] if ids else None,
-            "stage": stage.value if stage else None,
-            "type": type.value if type else None,
+            "stage": stage,
+            "type": type,
         },
     )
     return _upstream_response(status_code, payload)
@@ -329,8 +374,8 @@ def list_guardrails_validator_configs(
     "/guardrails/validators/configs/{config_id}",
     summary="Get a validator config",
     description=load_description("guardrails/get_validator_config.md"),
-    response_model=APIResponse[ValidatorConfigPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(responses={200: VALIDATOR_CONFIG_OK, **PROXY_ITEM_RESPONSES}),
 )
 def get_guardrails_validator_config(
     _current_user: AuthContextDep,
@@ -349,20 +394,24 @@ def get_guardrails_validator_config(
     "/guardrails/validators/configs/{config_id}",
     summary="Update a validator config",
     description=load_description("guardrails/update_validator_config.md"),
-    response_model=APIResponse[ValidatorConfigPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(
+        request_schema=ref("GuardrailsValidatorConfigUpdate"),
+        request=VALIDATOR_CONFIG_UPDATE_EXAMPLE,
+        responses={200: VALIDATOR_CONFIG_OK, **PROXY_ITEM_WRITE_RESPONSES},
+    ),
 )
 def update_guardrails_validator_config(
     _current_user: AuthContextDep,
     config_id: Annotated[UUID, Path(description="Validator config id.")],
-    body: ValidatorConfigUpdate,
+    body: ProxyBody = None,
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "PATCH",
         f"/validators/configs/{config_id}",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
-        json_body=_forward_body(body),
+        json_body=body,
     )
     return _upstream_response(status_code, payload)
 
@@ -371,8 +420,8 @@ def update_guardrails_validator_config(
     "/guardrails/validators/configs/{config_id}",
     summary="Delete a validator config",
     description=load_description("guardrails/delete_validator_config.md"),
-    response_model=APIResponse[GuardrailsDeletePublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(responses={200: DELETE_OK, **PROXY_ITEM_RESPONSES}),
 )
 def delete_guardrails_validator_config(
     _current_user: AuthContextDep,
@@ -391,8 +440,8 @@ def delete_guardrails_validator_config(
     "/guardrails/ban_lists/{ban_list_id}",
     summary="Get a ban list",
     description=load_description("guardrails/get_ban_list.md"),
-    response_model=APIResponse[BanListPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(responses={200: BAN_LIST_OK, **PROXY_ITEM_RESPONSES}),
 )
 def get_guardrails_ban_list(
     _current_user: AuthContextDep,
@@ -411,20 +460,24 @@ def get_guardrails_ban_list(
     "/guardrails/ban_lists/{ban_list_id}",
     summary="Update a ban list",
     description=load_description("guardrails/update_ban_list.md"),
-    response_model=APIResponse[BanListPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(
+        request_schema=ref("GuardrailsBanListUpdate"),
+        request=BAN_LIST_UPDATE_EXAMPLE,
+        responses={200: BAN_LIST_OK, **PROXY_ITEM_WRITE_RESPONSES},
+    ),
 )
 def update_guardrails_ban_list(
     _current_user: AuthContextDep,
     ban_list_id: Annotated[UUID, Path(description="Ban list id.")],
-    body: BanListUpdate,
+    body: ProxyBody = None,
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "PATCH",
         f"/ban_lists/{ban_list_id}",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
-        json_body=_forward_body(body),
+        json_body=body,
     )
     return _upstream_response(status_code, payload)
 
@@ -433,8 +486,8 @@ def update_guardrails_ban_list(
     "/guardrails/ban_lists/{ban_list_id}",
     summary="Delete a ban list",
     description=load_description("guardrails/delete_ban_list.md"),
-    response_model=APIResponse[GuardrailsDeletePublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(responses={200: DELETE_OK, **PROXY_ITEM_RESPONSES}),
 )
 def delete_guardrails_ban_list(
     _current_user: AuthContextDep,
@@ -453,8 +506,8 @@ def delete_guardrails_ban_list(
     "/guardrails/llm_prompt_configs/{prompt_config_id}",
     summary="Get an LLM prompt config",
     description=load_description("guardrails/get_llm_prompt_config.md"),
-    response_model=APIResponse[LLMPromptConfigPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(responses={200: LLM_PROMPT_CONFIG_OK, **PROXY_ITEM_RESPONSES}),
 )
 def get_guardrails_llm_prompt_config(
     _current_user: AuthContextDep,
@@ -473,20 +526,24 @@ def get_guardrails_llm_prompt_config(
     "/guardrails/llm_prompt_configs/{prompt_config_id}",
     summary="Update an LLM prompt config",
     description=load_description("guardrails/update_llm_prompt_config.md"),
-    response_model=APIResponse[LLMPromptConfigPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(
+        request_schema=ref("GuardrailsLLMPromptConfigUpdate"),
+        request=LLM_PROMPT_CONFIG_UPDATE_EXAMPLE,
+        responses={200: LLM_PROMPT_CONFIG_OK, **PROXY_ITEM_WRITE_RESPONSES},
+    ),
 )
 def update_guardrails_llm_prompt_config(
     _current_user: AuthContextDep,
     prompt_config_id: Annotated[UUID, Path(description="LLM prompt config id.")],
-    body: LLMPromptConfigUpdate,
+    body: ProxyBody = None,
 ) -> Response:
     status_code, payload = proxy_guardrails_request(
         "PATCH",
         f"/llm_prompt_configs/{prompt_config_id}",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
-        json_body=_forward_body(body),
+        json_body=body,
     )
     return _upstream_response(status_code, payload)
 
@@ -495,8 +552,8 @@ def update_guardrails_llm_prompt_config(
     "/guardrails/llm_prompt_configs/{prompt_config_id}",
     summary="Delete an LLM prompt config",
     description=load_description("guardrails/delete_llm_prompt_config.md"),
-    response_model=APIResponse[GuardrailsDeletePublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(responses={200: DELETE_OK, **PROXY_ITEM_RESPONSES}),
 )
 def delete_guardrails_llm_prompt_config(
     _current_user: AuthContextDep,
@@ -517,6 +574,7 @@ def delete_guardrails_llm_prompt_config(
     description=load_description("guardrails/get_guardrails_job.md"),
     response_model=APIResponse[GuardrailsJobPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    **doc(responses=JOB_ITEM_RESPONSES),
 )
 def get_guardrails_job_status(
     _current_user: AuthContextDep,

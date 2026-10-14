@@ -13,8 +13,7 @@ The body is a fixed set of base fields **plus** whatever tuning keys the chosen 
   "stage": "input",
   "on_fail_action": "fix",
   "is_enabled": true,
-  "entity_types": ["PERSON", "PHONE_NUMBER", "IN_AADHAAR"],
-  "threshold": 0.6
+  "entity_types": ["EMAIL_ADDRESS", "PHONE_NUMBER", "IN_AADHAAR"]
 }
 ```
 
@@ -27,7 +26,9 @@ The body is a fixed set of base fields **plus** whatever tuning keys the chosen 
 | `is_enabled` | boolean | no | Defaults to `true`. |
 | *(extra keys)* | any | no | Validator-specific tuning, stored as the config blob. |
 
-In the example above, `entity_types` and `threshold` are `pii_remover` tuning keys — they are not part of the base schema, which is why Swagger shows them as additional properties rather than named fields.
+In the example above, `entity_types` is a `pii_remover` tuning key — not part of the base schema, which is why it appears as an additional property rather than a named field.
+
+This endpoint forwards the body to the guardrails service unchanged; that service validates it. A tuning key or validator type newer than this documentation still works — check `GET /guardrails` for what your deployment accepts.
 
 ### Notes
 
@@ -39,5 +40,5 @@ In the example above, `entity_types` and `threshold` are `pii_remover` tuning ke
 ### Errors
 
 - `400` — a validator config with this name already exists in the project.
-- `422` — the body failed validation, or it contained `organization_id`/`project_id`.
+- `422` — the guardrails service rejected the body, or it contained `organization_id`/`project_id`.
 - `502` — the guardrails service is unreachable or returned a non-JSON body.

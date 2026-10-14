@@ -30,5 +30,5 @@ A ban list is stored by the guardrails service and scoped to the calling project
 ### Errors
 
 - `400` — a ban list with this configuration already exists.
-- `422` — the body failed validation.
+- `422` — the guardrails service rejected the body.
 - `502` — the guardrails service is unreachable or returned a non-JSON body.

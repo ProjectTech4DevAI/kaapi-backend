@@ -45,5 +45,5 @@ Answer only YES or NO.
 ### Errors
 
 - `400` — a config with the same validator, version and prompt text already exists.
-- `422` — the body failed validation, or an `answer_relevance_custom_llm` prompt was missing `{query}`/`{answer}`.
+- `422` — the guardrails service rejected the body, e.g. an `answer_relevance_custom_llm` prompt missing `{query}`/`{answer}`.
 - `502` — the guardrails service is unreachable or returned a non-JSON body.

@@ -17,5 +17,5 @@ Only `name`, `type`, `stage`, `on_fail_action` and `is_enabled` can be patched.
 
 - `400` — the new `name` collides with an existing config in the project.
 - `404` — no such config, or it belongs to another project.
-- `422` — the body contained a key outside the five base fields, a value failed validation, or `config_id` is not a valid UUID.
+- `422` — the guardrails service rejected the body, e.g. a key outside the five base fields. A malformed `config_id` is rejected here, before the call is forwarded.
 - `502` — the guardrails service is unreachable or returned a non-JSON body.
