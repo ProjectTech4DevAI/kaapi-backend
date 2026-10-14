@@ -144,6 +144,11 @@ class GuardrailsOutcome:
     def applied(self) -> bool:
         return bool(self.raw) and not self.bypassed
 
+    @property
+    def blocked(self) -> bool:
+        """True for a rejecting verdict, not a fail-closed auth/transport error."""
+        return self.error is not None and not self.raw.get("auth_error")
+
 
 def apply_guardrails(
     *,
@@ -345,6 +350,7 @@ def run_guardrails_validation(
             return {
                 "success": False,
                 "bypassed": False,
+                "auth_error": True,
                 # Status only — str(e) embeds the internal service URL and this
                 # string is client-visible via job.error_message.
                 "error": f"Guardrails service rejected the request (HTTP {status_code})",
