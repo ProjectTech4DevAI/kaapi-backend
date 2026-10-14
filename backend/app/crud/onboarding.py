@@ -120,16 +120,17 @@ def onboard_project(
 
     if onboard_in.credentials:
         for item in onboard_in.credentials:
-            (provider_str,) = item.keys()
-            values = item[provider_str]
+            ((provider, payload),) = item.items()
 
-            encrypted_credentials = encrypt_credentials(values)
+            encrypted_credentials = encrypt_credentials(
+                payload.model_dump(exclude_unset=True)
+            )
 
             cred_row = Credential(
                 organization_id=organization.id,
                 project_id=project.id,
                 is_active=True,
-                provider=provider_str,
+                provider=provider.value,
                 credential=encrypted_credentials,
             )
             session.add(cred_row)
@@ -137,13 +138,6 @@ def onboard_project(
             created_credentials.append(cred_row)
 
     session.commit()
-    cred_ids = [c.id for c in created_credentials]
-
-    logger.info(
-        "[onboard_project] Onboarding completed successfully. "
-        f"org_id={organization.id}, project_id={project.id}, user_id={user.id}, "
-        f"cred_ids={cred_ids}"
-    )
 
     return OnboardingResponse(
         organization_id=organization.id,

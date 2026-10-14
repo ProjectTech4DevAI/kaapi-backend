@@ -45,7 +45,11 @@ def get_file_search_results(response: Response) -> list[FileResultChunk]:
     for tool_call in response.output:
         if tool_call.type == "file_search_call":
             results.extend(
-                FileResultChunk(score=hit.score, text=hit.text)
+                FileResultChunk(
+                    score=hit.score,
+                    text=hit.text,
+                    filename=getattr(hit, "filename", None),
+                )
                 for hit in tool_call.results
             )
     return results

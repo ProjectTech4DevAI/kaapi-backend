@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded
 
+from app.crud.assessment import core as assessment_core
+from app.crud.assessment.core import _read_exec
 from app.models.assessment import Stage
 from app.services.assessment import tasks
 
@@ -26,24 +28,26 @@ def _patch_session(run):
 class TestMarkRunFailed:
     def test_marks_non_terminal_run_failed(self) -> None:
         run = SimpleNamespace(
-            stage=Stage.PRE_FILTER_TOPIC_RELEVANCE,
-            stage_status="PENDING",
+            execution={
+                "stage": Stage.PRE_FILTER_TOPIC_RELEVANCE,
+                "stage_status": "PENDING",
+            },
             assessment_id=7,
         )
         cm, session = _patch_session(run)
-        with cm, patch.object(
+        with cm, patch.object(assessment_core, "flag_modified"), patch.object(
             tasks, "update_assessment_run_status"
         ) as upd, patch.object(tasks, "recompute_assessment_status") as recompute:
             tasks._mark_run_failed(11, "boom")
         upd.assert_called_once()
         assert upd.call_args.kwargs["status"] == "failed"
         # Failed stage preserved for resume; only stage_status flips to FAILED.
-        assert run.stage == Stage.PRE_FILTER_TOPIC_RELEVANCE
-        assert run.stage_status == "FAILED"
+        assert _read_exec(run).get("stage") == Stage.PRE_FILTER_TOPIC_RELEVANCE
+        assert _read_exec(run).get("stage_status") == "FAILED"
         recompute.assert_called_once_with(session=session, assessment_id=7)
 
     def test_skips_terminal_run(self) -> None:
-        run = SimpleNamespace(stage=Stage.COMPLETED, assessment_id=7)
+        run = SimpleNamespace(execution={"stage": Stage.COMPLETED}, assessment_id=7)
         cm, _ = _patch_session(run)
         with cm, patch.object(tasks, "update_assessment_run_status") as upd:
             tasks._mark_run_failed(11, "boom")

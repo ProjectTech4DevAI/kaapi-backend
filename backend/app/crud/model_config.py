@@ -1,14 +1,19 @@
 import logging
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal, get_args
 
 from fastapi import HTTPException
+from pydantic import JsonValue, ValidationError
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.models import ModelConfig
-from app.models.llm.constants import CompletionType, Provider as ProviderEnum
-from app.models.llm.request import ConfigBlob
+from app.models.config.assessment_blob import AssessmentConfigBlob
+from app.models.config.config import ConfigTag
+from app.models.llm.constants import CompletionType
+from app.models.llm.constants import Provider as ProviderEnum
+from app.models.llm.request import CompletionConfig, ConfigBlob, KaapiLLMParams
 from app.models.model_config import (
     ModelConfigBulkUpdateItem,
     ModelConfigCreate,
@@ -126,7 +131,80 @@ def is_model_supported(
 
 
 def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
-    """Reject ConfigBlob whose completion.params.model is not in model_config.
+    """Reject ConfigBlob whose completion.params.model is not in model_config."""
+    _validate_completion_model_or_raise(session, blob.completion)
+
+
+def validate_config_blob_for_tag(
+    session: Session, tag: ConfigTag, raw_blob: dict[str, JsonValue]
+) -> ConfigBlob | AssessmentConfigBlob:
+    """Validate a raw (or merged partial) blob against the type its tag dictates.
+
+    DEFAULT → ConfigBlob, ASSESSMENT → AssessmentConfigBlob. Shape errors surface
+    as 422; the model-existence check stays liberal (warn, don't raise).
+    """
+    blob_type: type[ConfigBlob] | type[AssessmentConfigBlob] = (
+        AssessmentConfigBlob if tag == ConfigTag.ASSESSMENT else ConfigBlob
+    )
+    try:
+        blob = blob_type.model_validate(raw_blob)
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=e.errors()) from e
+    validate_blob_completion_models(session, blob)
+    return blob
+
+
+def validate_blob_completion_models(
+    session: Session, blob: ConfigBlob | AssessmentConfigBlob
+) -> None:
+    """Run the model-existence check on an already-parsed blob (create path).
+
+    For an assessment blob every present pre-filter runs its own completion, so
+    each is validated on the same path as the main completion.
+    """
+    completion = (
+        blob.assessment if isinstance(blob, AssessmentConfigBlob) else blob.completion
+    )
+    _validate_completion_model_or_raise(session, completion)
+
+    if isinstance(blob, AssessmentConfigBlob) and blob.pre_filters is not None:
+        topic_relevance = blob.pre_filters.topic_relevance
+        if topic_relevance is not None:
+            _validate_model_or_raise(
+                session,
+                raw_provider=topic_relevance.provider,
+                completion_type=CompletionType.TEXT,
+                params=topic_relevance.params,
+            )
+
+
+def _validate_completion_model_or_raise(
+    session: Session, completion: CompletionConfig
+) -> None:
+    """Reject a completion whose params.model is not in model_config."""
+    _validate_model_or_raise(
+        session,
+        raw_provider=completion.provider,
+        completion_type=completion.type,
+        params=completion.params,
+    )
+
+
+def _get_param(params: KaapiLLMParams | dict[str, Any] | None, key: str) -> Any:
+    """Read a field from completion params, dict or typed Kaapi model alike."""
+    if isinstance(params, dict):
+        return params.get(key)
+    return getattr(params, key, None)
+
+
+def _validate_model_or_raise(
+    session: Session,
+    *,
+    raw_provider: str | None,
+    completion_type: str,
+    params: KaapiLLMParams | dict[str, Any] | None,
+) -> None:
+    """Reject a (provider, type, params) whose params.model is not in model_config.
 
     model_config is the source of truth — all providers/types validated.
     Native configs are exempt (they forward raw params to the provider).
@@ -134,9 +212,6 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
     # As of now - this whole validation is liberal
     # change this if we want to be more strict about unsupported models/providers or missing model configs.
     """
-    completion = blob.completion
-    raw_provider = completion.provider
-    completion_type = completion.type
 
     # Proxy forwards the request to the client's own LLM endpoint — no model
     # lookup, no provider mapping.
@@ -151,7 +226,7 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
 
     provider = _normalize_provider(raw_provider)
 
-    model_name = (completion.params or {}).get("model") or None
+    model_name = _get_param(params, "model") or None
     if not model_name:
         raise HTTPException(
             status_code=400,
@@ -165,12 +240,12 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
     )
     if model_row is None:
         logger.warning(
-            f"[validate_blob_model_or_raise] Model '{model_name}' not found for provider='{provider}'."
+            f"[_validate_model_or_raise] Model '{model_name}' not found for provider='{provider}'."
             "Kaapi does not yet support this model, but will forward as long as the `model` field has no typos and the model is not deprecated by the provider"
         )
 
     if completion_type == "tts" and model_row is not None:
-        voice = (completion.params or {}).get("voice")
+        voice = _get_param(params, "voice")
         voice_spec = (
             model_row.config.get("voice")
             if isinstance(model_row.config, dict)
@@ -181,7 +256,7 @@ def validate_blob_model_or_raise(session: Session, blob: ConfigBlob) -> None:
         )
         if voice and allowed_voices and voice not in allowed_voices:
             logger.warning(
-                f"[validate_blob_model_or_raise] Voice '{voice}' is not supported for provider='{provider}' "
+                f"[_validate_model_or_raise] Voice '{voice}' is not supported for provider='{provider}' "
                 f"model='{model_name}'. Allowed: {allowed_voices}."
             )
 
@@ -299,23 +374,40 @@ def is_summary_model(session: Session, provider: Provider, model_name: str) -> b
     return "summary" in model.config
 
 
-def estimate_model_cost(
+def list_active_model_pricing(
     session: Session,
-    provider: Provider,
+    pairs: set[tuple[str, str]],
+) -> dict[tuple[str, str], Mapping[str, Any] | None]:
+    """Fetch pricing for many (provider, model_name) pairs in one query."""
+    if not pairs:
+        return {}
+    providers = {provider for provider, _ in pairs}
+    model_names = {model_name for _, model_name in pairs}
+    stmt = select(
+        ModelConfig.provider, ModelConfig.model_name, ModelConfig.pricing
+    ).where(
+        ModelConfig.provider.in_(providers),  # type: ignore[attr-defined]
+        ModelConfig.model_name.in_(model_names),  # type: ignore[attr-defined]
+        ModelConfig.is_active,
+    )
+    return {
+        (provider, model_name): pricing
+        for provider, model_name, pricing in session.exec(stmt).all()
+    }
+
+
+def compute_cost_from_pricing(
+    pricing: Mapping[str, Any] | None,
+    provider: str,
     model_name: str,
     input_tokens: int,
     output_tokens: int,
     usage_type: Literal["response", "batch"] = "response",
 ) -> dict[str, Any] | None:
-    model = get_model_config(session=session, provider=provider, model_name=model_name)
-    if model is None or model.pricing is None:
+    if not isinstance(pricing, dict):
         return None
 
-    if not isinstance(model.pricing, dict):
-        return None
-
-    pricing_source: dict[str, Any] = model.pricing
-    usage_pricing = pricing_source.get(usage_type)
+    usage_pricing = pricing.get(usage_type)
     if not isinstance(usage_pricing, dict):
         return None
 
@@ -341,3 +433,24 @@ def estimate_model_cost(
         "total_cost": input_cost + output_cost,
         "currency": "USD",
     }
+
+
+def estimate_model_cost(
+    session: Session,
+    provider: Provider,
+    model_name: str,
+    input_tokens: int,
+    output_tokens: int,
+    usage_type: Literal["response", "batch"] = "response",
+) -> dict[str, Any] | None:
+    model = get_model_config(session=session, provider=provider, model_name=model_name)
+    if model is None:
+        return None
+    return compute_cost_from_pricing(
+        pricing=model.pricing,
+        provider=provider,
+        model_name=model_name,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        usage_type=usage_type,
+    )

@@ -3,7 +3,7 @@ import logging
 from typing import List
 
 from fastapi import HTTPException
-from sqlmodel import Session, select, and_
+from sqlmodel import Session, select
 
 from app.models.collection_job import (
     CollectionJob,
@@ -53,7 +53,7 @@ class CollectionJobCrud:
         logger.info(
             f"[CollectionJobCrud.read_all] Retrieved all collection jobs for project | {{'project_id': '{self.project_id}', 'count': {len(collection_jobs)}}}"
         )
-        return collection_jobs
+        return list(collection_jobs)
 
     def update(self, job_id: UUID, patch: CollectionJobUpdate) -> CollectionJob:
         """Update an existing collection job and return the updated row."""
@@ -78,12 +78,12 @@ class CollectionJobCrud:
     def create(self, collection_job: CollectionJobCreate) -> CollectionJob:
         """Create a new collection job."""
         try:
-            collection_job = CollectionJob(**collection_job.model_dump())
-            self.session.add(collection_job)
+            job = CollectionJob(**collection_job.model_dump())
+            self.session.add(job)
             self.session.commit()
-            self.session.refresh(collection_job)
+            self.session.refresh(job)
             logger.info(
-                f"[CollectionJobCrud.create] Collection job created successfully | {{'collection_job_id': '{collection_job.id}'}}"
+                f"[CollectionJobCrud.create] Collection job created successfully | {{'collection_job_id': '{job.id}'}}"
             )
 
         except Exception as e:
@@ -93,4 +93,4 @@ class CollectionJobCrud:
             )
             raise
 
-        return collection_job
+        return job
