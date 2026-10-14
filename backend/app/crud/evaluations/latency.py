@@ -40,7 +40,7 @@ def _stage_entry(rows: Iterable[Mapping[str, Any]]) -> dict[str, float] | None:
     return {_SUM_MS_KEY: sum_ms, CALL_COUNT_KEY: count}
 
 
-def _emit_entry(sum_ms: float, count: int) -> dict[str, Any]:
+def _emit_entry(sum_ms: float, count: int) -> dict[str, float]:
     return {
         AVG_LATENCY_MS_KEY: round(sum_ms / count, LATENCY_MS_DECIMALS),
         CALL_COUNT_KEY: count,
