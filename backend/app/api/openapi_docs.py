@@ -87,7 +87,14 @@ def doc(
     kwargs: dict[str, Any] = {}
 
     if request_schema is not None or request is not None or request_examples:
-        content: dict[str, Any] = {"schema": request_schema or infer_schema(request)}
+        # With only `request_examples`, infer from the first one — inferring
+        # from `request` (None) would document the body as nullable.
+        inferred_from = request
+        if inferred_from is None and request_examples:
+            inferred_from = next(iter(request_examples.values()))[1]
+        content: dict[str, Any] = {
+            "schema": request_schema or infer_schema(inferred_from)
+        }
         if request_examples:
             content["examples"] = {
                 name: {"summary": summary, "value": body}
