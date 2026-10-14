@@ -21,6 +21,7 @@ from app.models.llm.request import (
 )
 from app.services.llm.guardrails import (
     GuardrailsOutcome,
+    apply_guardrails,
     list_validators_config,
     run_guardrails_validation,
     summarize_validator_results,
@@ -532,3 +533,76 @@ class TestSaveRephraseGuardrailCall:
                 self._call(db, job, request_metadata=metadata)
         _, kwargs = mock_create.call_args
         assert kwargs["request"].request_metadata == metadata
+
+
+class TestGuardrailsOutcomeBlocked:
+    """`blocked` separates a content verdict from a fail-closed auth error."""
+
+    VALIDATORS = [Validator(validator_config_id=uuid.uuid4())]
+
+    def _apply(self, post_result: Any) -> GuardrailsOutcome:
+        config_response = MagicMock()
+        config_response.raise_for_status.return_value = None
+        config_response.json.return_value = {
+            "success": True,
+            "data": [{"type": "uli_slur_match", "stage": "input"}],
+        }
+
+        client = MagicMock()
+        client.get.return_value = config_response
+        if isinstance(post_result, Exception):
+            client.post.side_effect = post_result
+        else:
+            post_response = MagicMock()
+            post_response.raise_for_status.return_value = None
+            post_response.json.return_value = post_result
+            client.post.return_value = post_response
+
+        with patch("app.services.llm.guardrails.httpx.Client") as client_cls:
+            client_cls.return_value.__enter__.return_value = client
+            return apply_guardrails(
+                text=TEST_TEXT,
+                validators=self.VALIDATORS,
+                job_id=TEST_JOB_ID,
+                project_id=TEST_PROJECT_ID,
+                organization_id=TEST_ORGANIZATION_ID,
+            )
+
+    @staticmethod
+    def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
+        response = MagicMock()
+        response.status_code = status_code
+        return httpx.HTTPStatusError("rejected", request=MagicMock(), response=response)
+
+    def test_content_verdict_is_blocked(self) -> None:
+        outcome = self._apply({"success": False, "error": "Unsafe content detected"})
+
+        assert outcome.error == "Unsafe content detected"
+        assert outcome.blocked is True
+
+    @pytest.mark.parametrize("status_code", [401, 403, 422])
+    def test_auth_failure_is_not_blocked(self, status_code: int) -> None:
+        outcome = self._apply(self._http_status_error(status_code))
+
+        assert outcome.error == (
+            f"Guardrails service rejected the request (HTTP {status_code})"
+        )
+        assert outcome.blocked is False
+
+    def test_success_is_not_blocked(self) -> None:
+        outcome = self._apply(
+            {
+                "success": True,
+                "bypassed": False,
+                "data": {"safe_text": TEST_TEXT, "rephrase_needed": False},
+            }
+        )
+
+        assert outcome.error is None
+        assert outcome.blocked is False
+
+    def test_bypassed_is_not_blocked(self) -> None:
+        outcome = self._apply(httpx.ConnectError("guardrails unreachable"))
+
+        assert outcome.bypassed is True
+        assert outcome.blocked is False

@@ -238,3 +238,49 @@ class TestTraceEnvelope:
         assert traces[0]["question_id"] == 1
         assert traces[0]["llm_answer"] == "out"
         assert traces[0]["ground_truth_answer"] == "gt"
+
+
+class TestBuildTraceRecordsGuardrail:
+    def test_every_trace_carries_the_key_even_when_guardrails_did_not_fire(
+        self,
+    ) -> None:
+        traces = build_trace_records(
+            response_results=[
+                _response("a", guardrail="blocked: input flagged as abusive"),
+                _response("b"),
+            ],
+            item_refs={"a": "a", "b": "b"},
+            is_judge_run=False,
+            judge_results={},
+            metrics=[],
+            cosine_by_item_id={"b": 0.5},
+            unscoreable={"a": "guardrail_blocked"},
+        )
+
+        by_ref = {t["trace_id"]: t for t in traces}
+        assert by_ref["a"]["guardrail"] == "blocked: input flagged as abusive"
+        # Subscript, not .get: an absent key would read as None and hide the gap.
+        assert by_ref["b"]["guardrail"] is None
+        assert by_ref["b"]["input_to_llm"] is None
+        assert by_ref["b"]["output_from_llm"] is None
+
+    def test_guardrail_texts_pass_through_to_the_trace(self) -> None:
+        traces = build_trace_records(
+            response_results=[
+                _response(
+                    "a",
+                    guardrail="applied",
+                    input_to_llm="q [REDACTED]",
+                    output_from_llm="raw out",
+                )
+            ],
+            item_refs={"a": "a"},
+            is_judge_run=False,
+            judge_results={},
+            metrics=[],
+            cosine_by_item_id={"a": 0.5},
+            unscoreable={},
+        )
+
+        assert traces[0]["input_to_llm"] == "q [REDACTED]"
+        assert traces[0]["output_from_llm"] == "raw out"

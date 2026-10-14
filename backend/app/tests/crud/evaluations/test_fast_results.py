@@ -16,6 +16,7 @@ from app.crud.evaluations.fast_results import (
     build_response_result,
     extract_usage,
     is_failure_threshold_breached,
+    is_guardrail_blocked,
     parse_embedding_pair,
     sum_usage,
 )
@@ -41,6 +42,9 @@ class TestBuildResponseResult:
             "question_id",
             "failed",
             "retrieved_chunks",
+            "guardrail",
+            "input_to_llm",
+            "output_from_llm",
         }
 
     def test_optional_fields_default_to_none(self) -> None:
@@ -55,6 +59,9 @@ class TestBuildResponseResult:
         assert result["response_id"] is None
         assert result["usage"] is None
         assert result["retrieved_chunks"] is None
+        assert result["guardrail"] is None
+        assert result["input_to_llm"] is None
+        assert result["output_from_llm"] is None
 
 
 class TestBuildEmbeddingFailure:
@@ -166,3 +173,18 @@ class TestIsFailureThresholdBreached:
             )
             is True
         )
+
+
+class TestIsGuardrailBlocked:
+    def test_blocked_row_carries_the_provider_reason_after_the_prefix(self) -> None:
+        assert is_guardrail_blocked({"guardrail": "blocked: input flagged as abusive"})
+
+    @pytest.mark.parametrize(
+        "guardrail", ["rephrased", "applied", None, "", "blockedish"]
+    )
+    def test_non_blocking_outcomes_are_not_blocked(self, guardrail: str | None) -> None:
+        # "blockedish" is the colon check: only the "blocked: " prefix counts.
+        assert not is_guardrail_blocked({"guardrail": guardrail})
+
+    def test_response_unit_written_before_guardrails_has_no_key(self) -> None:
+        assert not is_guardrail_blocked({"item_id": "i", "generated_output": "out"})
