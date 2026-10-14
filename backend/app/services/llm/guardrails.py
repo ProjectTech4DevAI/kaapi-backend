@@ -204,12 +204,6 @@ def apply_guardrails(
     stage = GUARDRAIL_STAGE_OUTPUT if is_output else GUARDRAIL_STAGE_INPUT
     resolved = _prepare_validators(enabled, fetched, stage, job_id)
     if not resolved:
-        logger.info(
-            f"[apply_guardrails] No validator configs resolved upstream; skipping "
-            f"POST /guardrails. job_id={job_id}, requested_ids="
-            f"{[str(reference.validator_config_id) for reference in references]}, "
-            f"is_output={is_output}"
-        )
         return GuardrailsOutcome(
             safe_text=text, error=None, bypassed=False, rephrase_needed=False, raw={}
         )
