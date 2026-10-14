@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal, get_args
 
@@ -376,7 +377,7 @@ def is_summary_model(session: Session, provider: Provider, model_name: str) -> b
 def list_active_model_pricing(
     session: Session,
     pairs: set[tuple[str, str]],
-) -> dict[tuple[str, str], dict[str, Any] | None]:
+) -> dict[tuple[str, str], Mapping[str, Any] | None]:
     """Fetch pricing for many (provider, model_name) pairs in one query."""
     if not pairs:
         return {}
@@ -390,12 +391,13 @@ def list_active_model_pricing(
         ModelConfig.is_active,
     )
     return {
-        (row.provider, row.model_name): row.pricing for row in session.exec(stmt).all()
+        (provider, model_name): pricing
+        for provider, model_name, pricing in session.exec(stmt).all()
     }
 
 
 def compute_cost_from_pricing(
-    pricing: dict[str, Any] | None,
+    pricing: Mapping[str, Any] | None,
     provider: str,
     model_name: str,
     input_tokens: int,
