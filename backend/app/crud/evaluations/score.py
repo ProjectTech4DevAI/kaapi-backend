@@ -1,7 +1,7 @@
 """Score types, verdict banding and the run-level overall rollup."""
 
 from enum import Enum
-from typing import NotRequired, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 DEFAULT_CATEGORY: str = "Other"
 
@@ -48,6 +48,7 @@ UNSCOREABLE_EMPTY_OUTPUT: str = "empty_output"
 UNSCOREABLE_EMPTY_GROUND_TRUTH: str = "empty_ground_truth"
 UNSCOREABLE_EMBEDDING_FAILED: str = "embedding_failed"
 UNSCOREABLE_MISSING_TRACE_ID: str = "missing_trace_id"
+UNSCOREABLE_GUARDRAIL_BLOCKED: str = "guardrail_blocked"
 JUDGE_FAILED_REASON: str = "judge_failed"
 
 UNSCOREABLE_REASONS: tuple[str, ...] = (
@@ -55,6 +56,7 @@ UNSCOREABLE_REASONS: tuple[str, ...] = (
     UNSCOREABLE_EMPTY_GROUND_TRUTH,
     UNSCOREABLE_EMBEDDING_FAILED,
     UNSCOREABLE_MISSING_TRACE_ID,
+    UNSCOREABLE_GUARDRAIL_BLOCKED,
     JUDGE_FAILED_REASON,
 )
 
@@ -80,7 +82,18 @@ class TraceData(TypedDict):
     question_id: int | None
     ground_truth_answer: str
     category: NotRequired[str]
+    # "blocked: ..." | "rephrased" | "applied"; None if guardrails didn't fire.
+    guardrail: NotRequired[str | None]
+    # LLM input after input guardrails / output before output guardrails.
+    input_to_llm: NotRequired[str | None]
+    output_from_llm: NotRequired[str | None]
     scores: list[TraceScore]
+
+
+# Merged key-by-key since None is meaningful.
+GUARDRAIL_TRACE_KEYS: tuple[
+    Literal["guardrail", "input_to_llm", "output_from_llm"], ...
+] = ("guardrail", "input_to_llm", "output_from_llm")
 
 
 class CategoryMetrics(TypedDict):
