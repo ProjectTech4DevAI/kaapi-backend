@@ -373,23 +373,39 @@ def is_summary_model(session: Session, provider: Provider, model_name: str) -> b
     return "summary" in model.config
 
 
-def estimate_model_cost(
+def list_active_model_pricing(
     session: Session,
-    provider: Provider,
+    pairs: set[tuple[str, str]],
+) -> dict[tuple[str, str], dict[str, Any] | None]:
+    """Fetch pricing for many (provider, model_name) pairs in one query."""
+    if not pairs:
+        return {}
+    providers = {provider for provider, _ in pairs}
+    model_names = {model_name for _, model_name in pairs}
+    stmt = select(
+        ModelConfig.provider, ModelConfig.model_name, ModelConfig.pricing
+    ).where(
+        ModelConfig.provider.in_(providers),  # type: ignore[attr-defined]
+        ModelConfig.model_name.in_(model_names),  # type: ignore[attr-defined]
+        ModelConfig.is_active,
+    )
+    return {
+        (row.provider, row.model_name): row.pricing for row in session.exec(stmt).all()
+    }
+
+
+def compute_cost_from_pricing(
+    pricing: dict[str, Any] | None,
+    provider: str,
     model_name: str,
     input_tokens: int,
     output_tokens: int,
     usage_type: Literal["response", "batch"] = "response",
 ) -> dict[str, Any] | None:
-    model = get_model_config(session=session, provider=provider, model_name=model_name)
-    if model is None or model.pricing is None:
+    if not isinstance(pricing, dict):
         return None
 
-    if not isinstance(model.pricing, dict):
-        return None
-
-    pricing_source: dict[str, Any] = model.pricing
-    usage_pricing = pricing_source.get(usage_type)
+    usage_pricing = pricing.get(usage_type)
     if not isinstance(usage_pricing, dict):
         return None
 
@@ -415,3 +431,24 @@ def estimate_model_cost(
         "total_cost": input_cost + output_cost,
         "currency": "USD",
     }
+
+
+def estimate_model_cost(
+    session: Session,
+    provider: Provider,
+    model_name: str,
+    input_tokens: int,
+    output_tokens: int,
+    usage_type: Literal["response", "batch"] = "response",
+) -> dict[str, Any] | None:
+    model = get_model_config(session=session, provider=provider, model_name=model_name)
+    if model is None:
+        return None
+    return compute_cost_from_pricing(
+        pricing=model.pricing,
+        provider=provider,
+        model_name=model_name,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        usage_type=usage_type,
+    )

@@ -21,7 +21,8 @@ from sqlmodel import Session, select
 from app.crud.model_config import (
     KNOWN_PROVIDERS,
     NATIVE_PROVIDER_SUFFIX,
-    estimate_model_cost,
+    compute_cost_from_pricing,
+    list_active_model_pricing,
 )
 from app.models.analytics import Modality
 from app.models.config.version import ConfigVersion
@@ -103,11 +104,12 @@ def _aggregate_llm_calls(
 ) -> None:
     """GROUP BY llm_call → merge counts, tokens, and per-group cost into buckets.
 
-    Cost is computed per (provider, model) group via `estimate_model_cost`
-    using the summed tokens. The pricing function is linear in tokens, so
-    summing first and pricing once is equivalent to per-row pricing. Skipped
-    for providers outside `KNOWN_PROVIDERS` (the `model_config.provider`
-    enum) since the lookup would raise InvalidTextRepresentation.
+    Cost is computed per (provider, model) group from the summed tokens. The
+    pricing function is linear in tokens, so summing first and pricing once
+    is equivalent to per-row pricing. Pricing for every group is fetched in
+    one query up front — a per-group lookup was an N+1. Providers outside
+    `KNOWN_PROVIDERS` (the `model_config.provider` enum) are excluded from
+    the lookup since Postgres would raise InvalidTextRepresentation.
     """
     month_col = (
         sa.func.date_trunc("month", LlmCall.inserted_at).cast(sa.Date).label("month")
@@ -149,7 +151,17 @@ def _aggregate_llm_calls(
     if provider_filter is not None:
         stmt = stmt.where(LlmCall.provider == provider_filter)
 
-    for row in session.exec(stmt).all():
+    rows = session.exec(stmt).all()
+    pricing_by_model = list_active_model_pricing(
+        session,
+        {
+            (row.provider, row.model)
+            for row in rows
+            if row.provider in KNOWN_PROVIDERS and row.model is not None
+        },
+    )
+
+    for row in rows:
         modality_enum = Modality(row.modality)
         if modality_filter is not None and modality_enum is not modality_filter:
             continue
@@ -160,16 +172,17 @@ def _aggregate_llm_calls(
         output_tokens = int(row.output_tokens or 0)
         bucket["input_tokens"] += input_tokens
         bucket["output_tokens"] += output_tokens
-        if (input_tokens or output_tokens) and row.provider in KNOWN_PROVIDERS:
-            estimate = estimate_model_cost(
-                session=session,
-                provider=row.provider,  # type: ignore[arg-type]
-                model_name=row.model,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-            )
-            if estimate is not None:
-                bucket["cost_usd"] += Decimal(str(estimate.get("total_cost", 0)))
+        if not (input_tokens or output_tokens):
+            continue
+        estimate = compute_cost_from_pricing(
+            pricing=pricing_by_model.get((row.provider, row.model)),
+            provider=row.provider,
+            model_name=row.model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        )
+        if estimate is not None:
+            bucket["cost_usd"] += Decimal(str(estimate.get("total_cost", 0)))
 
 
 def _aggregate_chains(
