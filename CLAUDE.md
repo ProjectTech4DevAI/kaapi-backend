@@ -75,6 +75,15 @@ The backend follows a layered architecture located in `backend/app/`:
 - API key support for programmatic access
 - Organization and project-level permissions
 
+## Codebase Knowledge (wiki)
+
+`docs/wiki/INDEX.md` routes to per-module knowledge pages (routes, tables, models, services per domain) and `docs/wiki/domain-map.md` (entity graph + blast-radius procedure). Load discipline:
+
+- Starting feature or planning work in a domain → read INDEX + that one `docs/wiki/modules/*.md` page before exploratory greps.
+- Adding a table or config shape → check `domain-map.md` first; an existing entity/flow may already cover it.
+- Deep design rationale → follow the module page's link into `docs/architecture/*.md`; never bulk-load those.
+- **Maintenance rule:** a change to a module's routes/tables/models/services updates that module's wiki page (and `domain-map.md` if entities/edges changed) in the same PR.
+
 ## Environment Configuration
 
 The application uses different environment files:

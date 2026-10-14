@@ -482,8 +482,11 @@ def test_update_credential_empty_credential(
         headers={"X-API-KEY": user_api_key.key},
     )
 
-    # Should still update but with empty credential
-    assert response.status_code in [200, 400]  # Depends on implementation
+    assert response.status_code == 422
+    assert any(
+        "Missing required fields for openai" in error["message"]
+        for error in response.json()["errors"]
+    )
 
 
 def test_read_credentials_when_none_exist(

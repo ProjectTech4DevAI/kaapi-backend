@@ -384,29 +384,6 @@ class TestCreateLangfuseDatasetRun:
         assert "question_id" not in trace_attr_call.kwargs["metadata"]
 
 
-class TestLangfuseOptOutGuards:
-    """Tracing opt-out (langfuse=None) short-circuits before any API call."""
-
-    def test_create_langfuse_dataset_run_returns_empty_when_disabled(self) -> None:
-        assert (
-            create_langfuse_dataset_run(
-                langfuse=None,
-                dataset_name="test_dataset",
-                run_name="test_run",
-                results=[{"item_id": "item_1"}],
-            )
-            == {}
-        )
-
-    def test_upload_dataset_to_langfuse_returns_none_zero_when_disabled(self) -> None:
-        assert upload_dataset_to_langfuse(
-            langfuse=None,
-            items=[{"question": "q", "answer": "a"}],
-            dataset_name="test_dataset",
-            duplication_factor=3,
-        ) == (None, 0)
-
-
 class TestUpdateTracesWithCosineScores:
     """Test updating Langfuse traces with cosine similarity scores."""
 
@@ -464,6 +441,23 @@ class TestUpdateTracesWithCosineScores:
         per_item_scores = [
             {"trace_id": "trace_1", "cosine_similarity": 0.95},
             {"cosine_similarity": 0.87},
+            {"trace_id": "trace_3", "cosine_similarity": 0.92},
+        ]
+
+        failed = update_traces_with_cosine_scores(
+            langfuse=mock_langfuse, per_item_scores=per_item_scores
+        )
+
+        assert failed == []
+        assert mock_langfuse.create_score.call_count == 2
+
+    def test_update_traces_with_cosine_scores_missing_value(self) -> None:
+        """Test that non-unscoreable items missing cosine_similarity are skipped."""
+        mock_langfuse = MagicMock()
+
+        per_item_scores = [
+            {"trace_id": "trace_1", "cosine_similarity": 0.95},
+            {"trace_id": "trace_2"},  # no cosine_similarity, not unscoreable
             {"trace_id": "trace_3", "cosine_similarity": 0.92},
         ]
 

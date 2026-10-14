@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
-from typing import Any
+from typing import Any, cast
 
 from fastapi import HTTPException
 from langfuse import Langfuse
@@ -32,11 +32,9 @@ from app.core.batch.client import GeminiClient
 from app.core.batch.gemini import BatchJobState, extract_text_from_response_dict
 from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import load_json_from_object_store
-from app.crud.evaluations.batch import (
-    load_evaluation_dataset_items,
-    use_langfuse_client,
-)
+from app.crud.evaluations.batch import fetch_dataset_items
 from app.crud.evaluations.core import (
+    build_log_prefix,
     persist_score_traces,
     resolve_model_from_config,
     save_score,
@@ -58,13 +56,14 @@ from app.crud.evaluations.merge import apply_cosine_breakdown
 from app.crud.evaluations.score import (
     COSINE_SCORE_COMMENT,
     COSINE_SCORE_NAME,
+    EvaluationScore,
     TraceData,
 )
 from app.crud.job import get_batch_job, update_batch_job
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.batch_job import BatchJob, BatchJobUpdate
 from app.models.evaluation import RunModeEnum
-from app.utils import get_openai_client, get_tracing_client
+from app.utils import get_langfuse_client, get_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +135,7 @@ def _extract_batch_error_message(
                 continue
 
         if error_counts:
-            top_error = max(error_counts, key=error_counts.get)
+            top_error = max(error_counts, key=lambda msg: error_counts[msg])
             top_count = error_counts[top_error]
             total = sum(error_counts.values())
             error_msg = f"{top_error} ({top_count}/{total} requests)"
@@ -353,12 +352,14 @@ def build_trace_skeleton(
     traces: list[TraceData] = []
     for result in results:
         item_id = result.get("item_id")
-        ref = trace_id_mapping.get(item_id) or item_id
-        if not ref:
+        if item_id is None:
+            continue
+        trace_id = trace_id_mapping.get(item_id)
+        if not trace_id:
             continue
         traces.append(
             {
-                "trace_id": ref,
+                "trace_id": trace_id,
                 "question": result.get("question", ""),
                 "llm_answer": result.get("generated_output", ""),
                 "ground_truth_answer": result.get("ground_truth", ""),
@@ -373,7 +374,7 @@ async def process_completed_evaluation(
     eval_run: EvaluationRun,
     session: Session,
     openai_client: OpenAI,
-    langfuse: Langfuse | None,
+    langfuse: Langfuse,
 ) -> EvaluationRun:
     """
     Process a completed evaluation batch.
@@ -396,7 +397,7 @@ async def process_completed_evaluation(
     Raises:
         Exception: If processing fails
     """
-    log_prefix = f"[org={eval_run.organization_id}][project={eval_run.project_id}][eval={eval_run.id}]"
+    log_prefix = build_log_prefix(eval_run)
     logger.info(
         f"[process_completed_evaluation] {log_prefix} Processing completed evaluation"
     )
@@ -442,10 +443,9 @@ async def process_completed_evaluation(
             f"[process_completed_evaluation] {log_prefix} Fetching dataset items | dataset={eval_run.dataset_name}"
         )
         dataset_items = await asyncio.to_thread(
-            load_evaluation_dataset_items,
-            session=session,
-            eval_run=eval_run,
+            fetch_dataset_items,
             langfuse=langfuse,
+            dataset_name=eval_run.dataset_name,
         )
 
         # Step 4: Parse evaluation results
@@ -636,7 +636,7 @@ async def process_completed_embedding_batch(
     eval_run: EvaluationRun,
     session: Session,
     openai_client: OpenAI,
-    langfuse: Langfuse | None,
+    langfuse: Langfuse,
 ) -> EvaluationRun:
     """
     Process a completed embedding batch and calculate similarity scores.
@@ -662,7 +662,7 @@ async def process_completed_embedding_batch(
     Raises:
         Exception: If processing fails
     """
-    log_prefix = f"[org={eval_run.organization_id}][project={eval_run.project_id}][eval={eval_run.id}]"
+    log_prefix = build_log_prefix(eval_run)
     logger.info(
         f"[process_completed_embedding_batch] {log_prefix} Processing completed embedding batch"
     )
@@ -772,7 +772,7 @@ async def process_completed_embedding_batch(
         write_items = per_item_scores + unscoreable_writes
         # False if any write fails, so a cron can retry the gap from per_item_scores.
         is_score_updated = True
-        if langfuse is not None and write_items:
+        if write_items:
             try:
                 failed_trace_ids = update_traces_with_cosine_scores(
                     langfuse=langfuse,
@@ -816,7 +816,10 @@ async def process_completed_embedding_batch(
                 },
                 unscoreable=eval_run.unscoreable or {},
             )
-            full_score = {"summary_scores": summary_scores, "traces": traces}
+            full_score: EvaluationScore = {
+                "summary_scores": summary_scores,
+                "traces": traces,
+            }
             saved = save_score(
                 eval_run_id=eval_run.id,
                 organization_id=eval_run.organization_id,
@@ -825,7 +828,7 @@ async def process_completed_embedding_batch(
             )
             if saved is not None:
                 eval_run = saved
-                eval_run.score = full_score
+                eval_run.score = cast(dict[str, Any], full_score)
             logger.info(
                 f"[process_completed_embedding_batch] {log_prefix} Persisted "
                 f"durable trace unit | traces={len(traces)}"
@@ -863,7 +866,7 @@ async def check_and_process_evaluation(
     eval_run: EvaluationRun,
     session: Session,
     openai_client: OpenAI,
-    langfuse: Langfuse | None,
+    langfuse: Langfuse,
 ) -> dict[str, Any]:
     """
     Check evaluation batch status and process if completed.
@@ -890,11 +893,8 @@ async def check_and_process_evaluation(
             "action": "processed" | "embeddings_completed" | "embeddings_failed" | "failed" | "no_change"
         }
     """
-    log_prefix = f"[org={eval_run.organization_id}][project={eval_run.project_id}][eval={eval_run.id}]"
+    log_prefix = build_log_prefix(eval_run)
     previous_status = eval_run.status
-    langfuse = use_langfuse_client(
-        session=session, eval_run=eval_run, langfuse=langfuse
-    )
 
     try:
         # Check if we need to process embedding batch first
@@ -1017,7 +1017,7 @@ async def check_and_process_evaluation(
                 and status_result.get("error_file_id")
             ):
                 error_msg = _extract_batch_error_message(
-                    provider=provider,
+                    provider=cast(OpenAIBatchProvider, provider),
                     error_file_id=status_result["error_file_id"],
                     batch_job=batch_job,
                     session=session,
@@ -1200,7 +1200,7 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
                     org_id=org_id,
                     project_id=project_id,
                 )
-                langfuse = get_tracing_client(
+                langfuse = get_langfuse_client(
                     session=session,
                     org_id=org_id,
                     project_id=project_id,

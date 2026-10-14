@@ -29,7 +29,8 @@ Refresh the remote baseline, then pin the base so every run reviews the same fil
 ### Layering & duplication
 - `HTTPException` belongs in routes, not `crud/`. CRUD returns data / `None` / raises domain errors. Third-party network calls also don't belong in `crud/` — that's DB-only.
 - Routes thin, business logic in `services/`, DB access in `crud/`.
-- Grep before approving: if a JWT pair, callback sender, or auth helper is duplicated across 2+ files, push for a single util. Before suggesting "extract a helper", confirm one doesn't already exist.
+- Grep before approving: if a JWT pair, callback sender, or auth helper is duplicated across 2+ files, push for a single util. Before suggesting "extract a helper", confirm one doesn't already exist — the touched domain's `docs/wiki/modules/*.md` page lists its existing services/crud/utils, use it as the grep starting point.
+- New table in the diff → check `docs/wiki/domain-map.md`: does an existing entity/flow already cover it? Ask for the justification if the page suggests reuse.
 - Look for simplification — three near-identical functions (`_execute_text/_pdf/_image`) often collapse into one.
 
 ### Magic values & config
@@ -94,6 +95,9 @@ Refresh the remote baseline, then pin the base so every run reviews the same fil
 - New tables include timestamps + indexes on FKs / common filters; nullability correct; no skipped seed IDs.
 - `downgrade()` implemented and reversible — empty downgrade is a blocker.
 - Backfills live in `upgrade()` SQL, not a separate manual script.
+
+### Wiki freshness
+- Diff adds/removes a route, table, model, service, crud file, or Celery task but the matching `docs/wiki/modules/*.md` page (or `docs/wiki/domain-map.md` for entity/edge changes) is not updated in the same diff → flag it. Stale wiki misleads every future session.
 
 ### Cleanup
 - Unused imports / functions / params / dead paths.

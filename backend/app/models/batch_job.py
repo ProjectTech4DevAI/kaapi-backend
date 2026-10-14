@@ -83,6 +83,16 @@ class BatchJob(SQLModel, table=True):
         description="Provider's output file ID",
         sa_column_kwargs={"comment": "Provider's output file ID"},
     )
+    provider_error_file_id: str | None = Field(
+        default=None,
+        description="Provider's error file ID (OpenAI only)",
+        sa_column_kwargs={
+            "comment": (
+                "Provider's error file ID (OpenAI only; Anthropic and Gemini report "
+                "per-item errors inline)"
+            )
+        },
+    )
 
     # Provider status tracking
     provider_status: str | None = Field(
@@ -171,6 +181,7 @@ class BatchJobUpdate(SQLModel):
     provider_batch_id: str | None = None
     provider_file_id: str | None = None
     provider_output_file_id: str | None = None
+    provider_error_file_id: str | None = None
     provider_status: str | None = None
     raw_output_url: str | None = None
     total_items: int | None = None
@@ -187,6 +198,7 @@ class BatchJobPublic(SQLModel):
     provider_batch_id: str | None
     provider_file_id: str | None
     provider_output_file_id: str | None
+    provider_error_file_id: str | None
     provider_status: str | None
     raw_output_url: str | None
     total_items: int

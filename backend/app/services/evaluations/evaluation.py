@@ -1,7 +1,7 @@
 """Evaluation run orchestration service."""
 
 import logging
-from typing import Any
+from typing import cast
 from uuid import UUID
 
 from asgi_correlation_id import correlation_id
@@ -14,7 +14,6 @@ from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import load_json_from_object_store
 from app.crud.evaluations import (
     EvaluationScore,
-    create_evaluation_run,
     fetch_trace_scores_from_langfuse,
     get_dataset_by_id,
     get_evaluation_run_by_id,
@@ -23,13 +22,16 @@ from app.crud.evaluations import (
     save_score,
     sort_traces_by_question_id,
 )
+from app.crud.evaluations import (
+    create_evaluation_run as _create_evaluation_run,
+)
 from app.crud.evaluations.core import update_evaluation_run
 from app.crud.evaluations.merge import apply_cosine_breakdown
 from app.crud.evaluations.score import CategoryMetrics, TraceData
 from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnum
 from app.models.llm.constants import CompletionType
 from app.services.llm.providers import LLMProvider
-from app.utils import get_tracing_client
+from app.utils import get_langfuse_client
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +68,7 @@ def _is_run_name_conflict(error: IntegrityError) -> bool:
     return _RUN_NAME_UNIQUE_CONSTRAINT in str(error.orig or error)
 
 
-def create_evaluation_run_or_409(
+def create_evaluation_run(
     *,
     session: Session,
     run_name: str,
@@ -77,16 +79,25 @@ def create_evaluation_run_or_409(
     organization_id: int,
     project_id: int,
     run_mode: RunModeEnum = RunModeEnum.BATCH,
+    is_judge_run: bool = False,
+    callback_url: str | None = None,
+    duplication_factor: int | None = None,
+    total_items: int | None = None,
+    status: str = "pending",
     log_context: str,
 ) -> EvaluationRun:
     """Create an EvaluationRun, translating a duplicate-run_name collision into 409.
 
     The (organization_id, project_id, run_name) unique constraint guards against
-    double-click / client-retry races; on collision we roll back and raise a 409
-    instead of leaking the IntegrityError.
+    double-click / client-retry races; on collision we roll back and raise 409 if
+    the run_name already exists for this organization and project.
+
+    The v2-only params (is_judge_run, callback_url, duplication_factor, total_items,
+    status) are passed straight through and default to the v1 no-op values, so
+    existing batch callers need no change.
     """
     try:
-        return create_evaluation_run(
+        return _create_evaluation_run(
             session=session,
             run_name=run_name,
             dataset_name=dataset_name,
@@ -96,6 +107,11 @@ def create_evaluation_run_or_409(
             organization_id=organization_id,
             project_id=project_id,
             run_mode=run_mode,
+            is_judge_run=is_judge_run,
+            callback_url=callback_url,
+            duplication_factor=duplication_factor,
+            total_items=total_items,
+            status=status,
         )
     except IntegrityError as exc:
         session.rollback()
@@ -124,7 +140,7 @@ def create_evaluation_run_or_409(
 
 
 def _compute_category_metrics(
-    traces: list[dict[str, Any]],
+    traces: list[TraceData],
 ) -> list[CategoryMetrics]:
     """Aggregate cosine + correctness scores per category across the trace list.
 
@@ -183,17 +199,19 @@ def _compute_category_metrics(
     return metrics
 
 
-def _attach_category_metrics(score: dict[str, Any] | None) -> dict[str, Any] | None:
+def _attach_category_metrics(
+    score: EvaluationScore | None,
+) -> EvaluationScore | None:
     """Idempotently add `category_metrics` to a score dict in place.
 
     No-op when `score` is None or has no `traces`. Safe to call multiple
     times — recomputes from the current `traces` so cached scores that
     predate this feature get backfilled on read.
     """
-    if not score or not isinstance(score, dict):
+    if not score:
         return score
     traces = score.get("traces")
-    if not isinstance(traces, list):
+    if traces is None:
         return score
     score["category_metrics"] = _compute_category_metrics(traces)
     return score
@@ -263,11 +281,11 @@ def validate_and_start_batch_evaluation(
         f"langfuse_id={dataset.langfuse_dataset_id}"
     )
 
-    if not dataset.langfuse_dataset_id and not dataset.object_store_url:
+    if not dataset.langfuse_dataset_id:
         raise HTTPException(
             status_code=400,
-            detail=f"Dataset {dataset_id} has no Langfuse nor object-store "
-            "backing; cannot run evaluation.",
+            detail=f"Dataset {dataset_id} does not have a Langfuse dataset ID. "
+            "Please ensure Langfuse credentials were configured when the dataset was created.",
         )
 
     # Step 2: Resolve config from stored config management
@@ -277,7 +295,7 @@ def validate_and_start_batch_evaluation(
         config_version=config_version,
         project_id=project_id,
     )
-    if error:
+    if error or config is None:
         raise HTTPException(
             status_code=400,
             detail=f"Failed to resolve config from stored config: {error}",
@@ -306,7 +324,7 @@ def validate_and_start_batch_evaluation(
     )
 
     # Step 3: Create EvaluationRun record with config references
-    eval_run = create_evaluation_run_or_409(
+    eval_run = create_evaluation_run(
         session=session,
         run_name=experiment_name,
         dataset_name=dataset.name,
@@ -375,7 +393,7 @@ def _load_cached_traces(
                 storage=storage, url=eval_run.score_trace_url
             )
             if traces is not None:
-                return traces, False
+                return cast(list[TraceData], traces), False
             logger.warning(
                 f"[_load_cached_traces] Cached traces URL returned no data | "
                 f"evaluation_id={eval_run.id} | url={eval_run.score_trace_url}"
@@ -453,6 +471,8 @@ def get_evaluation_with_scores(
     if not get_trace_info:
         return eval_run, None
 
+    run_overall = (eval_run.score or {}).get("overall")
+
     # Caching strategy: trace scores are fetched from Langfuse once, then cached
     # (traces in S3, summary in the DB). Normal reads serve from that cache, which is
     # much faster than hitting Langfuse. resync_score=true bypasses the cache.
@@ -484,7 +504,9 @@ def get_evaluation_with_scores(
             total_items=eval_run.total_items,
             unscoreable=eval_run.unscoreable,
         )
-        eval_run.score = _attach_category_metrics(cached_score)
+        eval_run.score = cast(dict[str, object], _attach_category_metrics(cached_score))
+        if run_overall is not None and eval_run.score is not None:
+            eval_run.score["overall"] = run_overall
         logger.info(
             f"[get_evaluation_with_scores] Served traces from cache | "
             f"evaluation_id={evaluation_id} | traces_count={len(cached_traces)}"
@@ -505,35 +527,11 @@ def get_evaluation_with_scores(
         )
 
     # Fetch fresh scores from Langfuse (first sync, or resync).
-    langfuse = get_tracing_client(
+    langfuse = get_langfuse_client(
         session=session,
         org_id=organization_id,
         project_id=project_id,
     )
-
-    # Opt-out: resync needs Langfuse (400); a normal read serves durable cosine.
-    if langfuse is None:
-        if resync_score:
-            raise HTTPException(
-                status_code=400,
-                detail="Tracing is disabled for this project; cannot resync "
-                "scores from Langfuse.",
-            )
-        cosine_score, _ = merge_scores_step_forward(
-            existing_score={
-                "summary_scores": (eval_run.score or {}).get("summary_scores", []),
-                "traces": cached_traces or [],
-            },
-            fresh_score={"summary_scores": [], "traces": []},
-            per_item_scores=eval_run.per_item_scores,
-        )
-        apply_cosine_breakdown(
-            cosine_score["summary_scores"],
-            total_items=eval_run.total_items,
-            unscoreable=eval_run.unscoreable,
-        )
-        eval_run.score = _attach_category_metrics(cosine_score)
-        return eval_run, None
 
     dataset_name = eval_run.dataset_name
     run_name = eval_run.run_name
@@ -587,11 +585,14 @@ def get_evaluation_with_scores(
     # `_attach_category_metrics` mutates in place and is idempotent.
     _attach_category_metrics(merged_score)
 
+    if run_overall is not None:
+        merged_score["overall"] = run_overall
+
     logger.info(
         f"[get_evaluation_with_scores] Merged traces step-forward | "
         f"evaluation_id={evaluation_id} | cached={len(cached_traces)} | "
         f"fetched={len(langfuse_score.get('traces', []))} | "
-        f"merged={len(merged_score['traces'])} | reused={merge_stats['reused']} | "
+        f"merged={len(merged_score.get('traces', []))} | reused={merge_stats['reused']} | "
         f"updated={merge_stats['updated']} | added={merge_stats['added']}"
     )
 
@@ -603,6 +604,6 @@ def get_evaluation_with_scores(
     )
 
     if eval_run:
-        eval_run.score = merged_score
+        eval_run.score = cast(dict[str, object], merged_score)
 
     return eval_run, None

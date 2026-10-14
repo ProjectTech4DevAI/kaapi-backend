@@ -1,7 +1,7 @@
 import logging
 from uuid import UUID
 
-from sqlmodel import Session, select, and_
+from sqlmodel import Session, and_, col, select
 
 from app.models import Document
 from app.core.util import now
@@ -20,7 +20,7 @@ class DocumentCrud:
             and_(
                 Document.id == doc_id,
                 Document.project_id == self.project_id,
-                Document.deleted_at.is_(None),
+                col(Document.deleted_at).is_(None),
             )
         )
 
@@ -33,15 +33,22 @@ class DocumentCrud:
 
         return result
 
+    def exists(self, doc_id: UUID) -> bool:
+        # Ignores deleted_at and project scope: the PK stays taken after a soft delete.
+        return self.session.get(Document, doc_id) is not None
+
     def read_many(
         self,
         skip: int | None = None,
         limit: int | None = None,
     ) -> tuple[list[Document], bool]:
         statement = select(Document).where(
-            and_(Document.project_id == self.project_id, Document.deleted_at.is_(None))
+            and_(
+                Document.project_id == self.project_id,
+                col(Document.deleted_at).is_(None),
+            )
         )
-        statement = statement.order_by(Document.inserted_at.desc())
+        statement = statement.order_by(col(Document.inserted_at).desc())
 
         if skip is not None:
             if skip < 0:
@@ -65,7 +72,7 @@ class DocumentCrud:
                     raise
             statement = statement.limit(limit + 1)
 
-        documents = self.session.exec(statement).all()
+        documents = list(self.session.exec(statement).all())
 
         has_more = False
         if limit is not None and len(documents) > limit:
@@ -74,12 +81,12 @@ class DocumentCrud:
 
         return documents, has_more
 
-    def read_each(self, doc_ids: list[UUID]):
+    def read_each(self, doc_ids: list[UUID]) -> list[Document]:
         statement = select(Document).where(
             and_(
                 Document.project_id == self.project_id,
-                Document.id.in_(doc_ids),
-                Document.deleted_at.is_(None),
+                col(Document.id).in_(doc_ids),
+                col(Document.deleted_at).is_(None),
             )
         )
         results = self.session.exec(statement).all()
@@ -90,16 +97,16 @@ class DocumentCrud:
                 raise ValueError(
                     f"Requested atleast {requested_count} document retrieved {retrieved_count}"
                 )
-            except ValueError as err:
+            except ValueError:
                 logger.error(
                     f"[DocumentCrud.read_each] Mismatch in retrieved documents | {{'project_id': {self.project_id}, 'requested_count': {requested_count}, 'retrieved_count': {retrieved_count}}}",
                     exc_info=True,
                 )
                 raise
 
-        return results
+        return list(results)
 
-    def update(self, document: Document):
+    def update(self, document: Document) -> Document:
         if not document.project_id:
             document.project_id = self.project_id
         elif document.project_id != self.project_id:
@@ -125,7 +132,7 @@ class DocumentCrud:
 
         return document
 
-    def delete(self, doc_id: UUID):
+    def delete(self, doc_id: UUID) -> Document:
         document = self.read_one(doc_id)
         document.deleted_at = now()
         document.updated_at = now()

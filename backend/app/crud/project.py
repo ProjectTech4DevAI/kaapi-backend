@@ -47,6 +47,26 @@ def get_project_by_id(*, session: Session, project_id: int) -> Project | None:
     return session.get(Project, project_id)
 
 
+TRACING_SETTINGS_KEY = "tracing"
+
+
+def is_tracing_enabled(*, session: Session, project_id: int | str) -> bool:
+    """
+    True when the project opted into Langfuse tracing (settings['tracing']).
+    """
+    try:
+        pid = int(project_id)
+    except (TypeError, ValueError):
+        logger.info(
+            f"[is_tracing_enabled] Invalid project_id; tracing off | "
+            f"project_id={project_id}"
+        )
+        return False
+
+    project = get_project_by_id(session=session, project_id=pid)
+    return bool(project and (project.settings or {}).get(TRACING_SETTINGS_KEY, False))
+
+
 def update_project_settings(
     *, session: Session, project_id: int, settings_patch: dict[str, Any]
 ) -> Project:

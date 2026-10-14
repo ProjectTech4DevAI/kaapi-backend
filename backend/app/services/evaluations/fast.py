@@ -9,14 +9,15 @@ See `Fast Evaluation SRD.md` for the full design.
 
 import logging
 import math
+from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
 from langfuse import Langfuse
-from openai import OpenAI
 from sqlmodel import Session
 
 from app.celery.utils import start_fast_evaluation_chunk
+from app.core.cloud import get_cloud_storage
 from app.core.config import settings
 from app.core.db import engine
 from app.crud.evaluations import (
@@ -24,17 +25,26 @@ from app.crud.evaluations import (
     resolve_evaluation_config,
     run_fast_evaluation,
 )
-from app.crud.evaluations.batch import (
-    load_evaluation_dataset_items,
-    use_langfuse_client,
-)
+from app.crud.evaluations.batch import fetch_dataset_items
 from app.crud.evaluations.core import update_evaluation_run
+from app.crud.evaluations.dataset import (
+    DATASET_META_DUPLICATION_FACTOR,
+    DATASET_META_ORIGINAL_ITEMS,
+    download_csv_from_object_store,
+)
 from app.crud.evaluations.fast import run_response_chunk
-from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnum
-from app.models.llm.request import TextLLMParams
-from app.services.evaluations.evaluation import create_evaluation_run_or_409
+from app.crud.evaluations.score import DEFAULT_CATEGORY
+from app.models.evaluation import (
+    EvaluationDataset,
+    EvaluationRun,
+    EvaluationRunUpdate,
+    RunModeEnum,
+)
+from app.models.llm.request import ConfigBlob
+from app.services.evaluations.evaluation import create_evaluation_run
+from app.services.evaluations.validators import parse_csv_items
 from app.services.llm.providers import LLMProvider
-from app.utils import get_openai_client, get_tracing_client
+from app.utils import get_langfuse_client, get_openai_client
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +52,10 @@ logger = logging.getLogger(__name__)
 # Error codes surfaced in HTTPException.detail so the UI can localize/branch.
 ERR_CONFIG_TYPE_UNSUPPORTED = "config_type_unsupported"
 ERR_DATASET_TOO_LARGE_FOR_FAST = "dataset_too_large_for_fast"
+ERR_DUPLICATION_FACTOR_NOT_SUPPORTED = "duplication_factor_override_not_supported"
+ERR_CONFIG_TEMPLATE_MISSING_INPUT = "config_template_missing_input"
+
+PROMPT_TEMPLATE_INPUT_PLACEHOLDER = "{{input}}"
 
 
 def is_dataset_fast_eligible(*, original_items_count: int) -> bool:
@@ -49,37 +63,111 @@ def is_dataset_fast_eligible(*, original_items_count: int) -> bool:
     return original_items_count <= settings.EVAL_FAST_MAX_UNIQUE_ROWS
 
 
-def validate_and_start_fast_evaluation(
+def load_run_dataset_items(
+    *,
+    session: Session,
+    dataset: EvaluationDataset,
+    langfuse: Langfuse | None,
+    duplication_factor: int | None = None,
+) -> list[dict[str, Any]]:
+    """Load a run's dataset items, choosing the source by the dataset row.
+
+    - Langfuse-backed dataset (v1): items are already physically duplicated in
+      Langfuse; read as-is via `fetch_dataset_items`, never re-multiplied.
+    - S3-only dataset (`langfuse_dataset_id` NULL): download the original-items CSV
+      and expand each original row ×duplication_factor with a unique item id per copy.
+
+    Both the fan-out sizing and the per-chunk load call this, so they agree on the
+    same expanded item set. `duplication_factor`, when set, overrides the dataset's
+    stored factor (see `_load_items_from_object_store`); it never applies to a
+    Langfuse dataset.
+    """
+    if dataset.langfuse_dataset_id:
+        if langfuse is None:
+            raise ValueError(
+                f"Dataset {dataset.id} is Langfuse-backed but no Langfuse client available"
+            )
+        return fetch_dataset_items(langfuse=langfuse, dataset_name=dataset.name)
+
+    return _load_items_from_object_store(
+        session=session, dataset=dataset, duplication_factor=duplication_factor
+    )
+
+
+def _load_items_from_object_store(
+    *,
+    session: Session,
+    dataset: EvaluationDataset,
+    duplication_factor: int | None = None,
+) -> list[dict[str, Any]]:
+    """Parse the dataset's original-items CSV from S3 into fast-pipeline items.
+
+    This loader is only reached for S3-only datasets (`langfuse_dataset_id` NULL),
+    whose stored CSV always holds the original (un-duplicated) rows. Each original
+    row is emitted `duplication_factor` times with a distinct item id
+    (`item_{row}_{dup}`) so per-row score keys stay unique."""
+    if not dataset.object_store_url:
+        raise ValueError(f"Dataset {dataset.id} has no object-store CSV to load")
+
+    storage = get_cloud_storage(session=session, project_id=dataset.project_id)
+    csv_content = download_csv_from_object_store(
+        storage=storage, object_store_url=dataset.object_store_url
+    )
+    original_items = parse_csv_items(csv_content)
+
+    metadata = dataset.dataset_metadata or {}
+    effective_factor = (
+        duplication_factor
+        if duplication_factor is not None
+        else int(metadata.get(DATASET_META_DUPLICATION_FACTOR, 1))
+    )
+    duplication_factor = max(1, effective_factor)
+
+    items: list[dict[str, Any]] = []
+    for row_idx, item in enumerate(original_items):
+        for dup_idx in range(duplication_factor):
+            # 1-based question_id shared across duplicates to group by original question.
+            item_metadata: dict[str, Any] = {"question_id": row_idx + 1}
+            if "category" in item:
+                item_metadata["category"] = item["category"] or DEFAULT_CATEGORY
+            items.append(
+                {
+                    "id": f"item_{row_idx}_{dup_idx}",
+                    "input": {"question": item["question"]},
+                    "expected_output": {"answer": item["answer"]},
+                    "metadata": item_metadata,
+                }
+            )
+    return items
+
+
+def validate_fast_evaluation_inputs(
     *,
     session: Session,
     dataset_id: int,
-    run_name: str,
     config_id: UUID,
     config_version: int,
     organization_id: int,
     project_id: int,
-    trace_id: str = "N/A",
-) -> EvaluationRun:
-    """Validate + create + dispatch a fast evaluation run.
+    is_judge_run: bool = False,
+    duplication_factor: int | None = None,
+) -> EvaluationDataset:
+    """Run the dataset/config precondition checks shared by
+    `validate_and_start_fast_evaluation` and the eval-iteration graph's
+    `start_eval_node`. Raises HTTPException on the first failing check; returns
+    the validated dataset on success. No DB writes.
 
-    Validation (in order):
-    1. Dataset exists and has a Langfuse id.
+    Checks (in order):
+    1. Dataset exists; v1 runs also require a Langfuse id, v2 judged runs don't
+       (they load items from S3).
     2. Config resolves to a text-type OpenAI config.
-    3. Dataset's original_items_count <= EVAL_FAST_MAX_UNIQUE_ROWS.
-    4. (organization_id, project_id, run_name) is unique — enforced by the DB
-       constraint; a collision is translated to 409 by the shared helper.
+    3. Config's prompt_template, when set, carries the {{input}} placeholder.
+    4. Dataset's original_items_count <= EVAL_FAST_MAX_UNIQUE_ROWS.
 
-    On success the function creates the EvaluationRun row with
-    `run_mode="fast"`, `status="processing"`, and enqueues the orchestrator
-    task. The caller (route) returns the row immediately.
+    `duplication_factor`, when provided, overrides the dataset's stored factor for
+    this run only and is supported for S3-only datasets exclusively; it is rejected
+    with 422 for Langfuse-backed datasets (whose items come pre-duplicated).
     """
-    logger.info(
-        f"[validate_and_start_fast_evaluation] Starting fast eval | "
-        f"run_name={run_name} | dataset_id={dataset_id} | "
-        f"org_id={organization_id} | project_id={project_id}"
-    )
-
-    # 1. Dataset must exist + have a Langfuse id (same as batch path).
     dataset = get_dataset_by_id(
         session=session,
         dataset_id=dataset_id,
@@ -94,16 +182,25 @@ def validate_and_start_fast_evaluation(
                 "organization/project"
             ),
         )
-    if not dataset.langfuse_dataset_id and not dataset.object_store_url:
+    # v1 runs require Langfuse-backed dataset; v2 judged runs load from S3.
+    if not dataset.langfuse_dataset_id and not is_judge_run:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Dataset {dataset_id} has no Langfuse nor object-store backing; "
-                "cannot run evaluation."
+                f"Dataset {dataset_id} has no Langfuse dataset id; cannot run "
+                "evaluation."
             ),
         )
 
-    # 2. Config must resolve and be a text OpenAI config.
+    if duplication_factor is not None and dataset.langfuse_dataset_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{ERR_DUPLICATION_FACTOR_NOT_SUPPORTED}: this dataset is "
+                "Langfuse-backed and pre-duplicated; re-upload to change its factor"
+            ),
+        )
+
     config_blob, error = resolve_evaluation_config(
         session=session,
         config_id=config_id,
@@ -126,8 +223,25 @@ def validate_and_start_fast_evaluation(
             detail=ERR_CONFIG_TYPE_UNSUPPORTED,
         )
 
-    # 3. Dataset must be small enough for fast eval.
-    original_items_count = (dataset.dataset_metadata or {}).get("original_items_count")
+    # execute_llm_call always interpolates prompt_template; no placeholder drops input.
+    prompt_template = config_blob.prompt_template
+    if (
+        prompt_template is not None
+        and PROMPT_TEMPLATE_INPUT_PLACEHOLDER not in prompt_template.template
+    ):
+        logger.warning(
+            f"[validate_fast_evaluation_inputs] Config prompt_template has no "
+            f"{PROMPT_TEMPLATE_INPUT_PLACEHOLDER} placeholder, so every dataset "
+            f"question would be dropped | config_id={config_id}"
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=ERR_CONFIG_TEMPLATE_MISSING_INPUT,
+        )
+
+    original_items_count = (dataset.dataset_metadata or {}).get(
+        DATASET_META_ORIGINAL_ITEMS
+    )
     if original_items_count is None:
         raise HTTPException(
             status_code=422,
@@ -147,8 +261,64 @@ def validate_and_start_fast_evaluation(
             ),
         )
 
-    # 4. Create the run; the shared helper translates a duplicate run_name into 409.
-    eval_run = create_evaluation_run_or_409(
+    return dataset
+
+
+def validate_and_start_fast_evaluation(
+    *,
+    session: Session,
+    dataset_id: int,
+    run_name: str,
+    config_id: UUID,
+    config_version: int,
+    organization_id: int,
+    project_id: int,
+    trace_id: str = "N/A",
+    is_judge_run: bool = False,
+    callback_url: str | None = None,
+    duplication_factor: int | None = None,
+) -> EvaluationRun:
+    """Validate, create, and dispatch a fast evaluation run.
+
+    Creates EvaluationRun with total_items derived from dataset metadata and
+    v2 markers (is_judge_run, callback_url, duplication_factor) in one INSERT,
+    then enqueues chunk tasks. Returns immediately; chunks run after response.
+
+    - `is_judge_run`: v2 marker; aggregate reads it to pick judge path.
+    - `callback_url`: optional HTTPS webhook (v2 only) for terminal transition.
+    - `duplication_factor`: overrides dataset's stored factor (S3-only datasets).
+    """
+    logger.info(
+        f"[validate_and_start_fast_evaluation] Starting fast eval | "
+        f"run_name={run_name} | dataset_id={dataset_id} | "
+        f"org_id={organization_id} | project_id={project_id}"
+    )
+
+    dataset = validate_fast_evaluation_inputs(
+        session=session,
+        dataset_id=dataset_id,
+        config_id=config_id,
+        config_version=config_version,
+        organization_id=organization_id,
+        project_id=project_id,
+        is_judge_run=is_judge_run,
+        duplication_factor=duplication_factor,
+    )
+
+    # Fan-out count = original items × factor (from metadata, no load needed).
+    metadata = dataset.dataset_metadata or {}
+    original_items = int(metadata.get(DATASET_META_ORIGINAL_ITEMS, 0))
+    stored_factor = int(metadata.get(DATASET_META_DUPLICATION_FACTOR, 1))
+    effective_factor = (
+        duplication_factor if duplication_factor is not None else stored_factor
+    )
+    total_items = original_items * max(1, effective_factor)
+    if total_items == 0:
+        raise ValueError(f"Dataset '{dataset.name}' has no items")
+    n_chunks = math.ceil(total_items / settings.EVAL_FAST_CHUNK_SIZE)
+
+    # v2 markers (is_judge_run, callback_url, duplication_factor) land in one INSERT.
+    eval_run = create_evaluation_run(
         session=session,
         run_name=run_name,
         dataset_name=dataset.name,
@@ -158,35 +328,16 @@ def validate_and_start_fast_evaluation(
         organization_id=organization_id,
         project_id=project_id,
         run_mode=RunModeEnum.FAST,
+        is_judge_run=is_judge_run,
+        callback_url=callback_url,
+        duplication_factor=duplication_factor,
+        status="processing",
+        total_items=total_items,
         log_context="validate_and_start_fast_evaluation",
     )
 
-    # Fetch the dataset items now to size the fan-out: ceil(total / chunk_size)
-    # parallel chunk tasks drain the responses stage across workers. Any failure
-    # here marks the run failed so it never lingers in `processing`.
+    # Dispatch chunk tasks; on failure mark run failed so it doesn't linger.
     try:
-        langfuse_client = get_tracing_client(
-            session=session,
-            org_id=organization_id,
-            project_id=project_id,
-        )
-        dataset_items = load_evaluation_dataset_items(
-            session=session, eval_run=eval_run, langfuse=langfuse_client
-        )
-        total_items = len(dataset_items)
-        if total_items == 0:
-            raise ValueError(f"Dataset '{dataset.name}' returned no items")
-        n_chunks = math.ceil(total_items / settings.EVAL_FAST_CHUNK_SIZE)
-
-        # total_items isn't on EvaluationRunUpdate; set it directly, then flip to
-        # processing so the GET endpoint reflects state before dispatch.
-        eval_run.total_items = total_items
-        eval_run = update_evaluation_run(
-            session=session,
-            eval_run=eval_run,
-            update=EvaluationRunUpdate(status="processing"),
-        )
-
         for chunk_index in range(n_chunks):
             start_fast_evaluation_chunk(
                 eval_run_id=eval_run.id,
@@ -234,12 +385,9 @@ def _get_fast_run(*, session: Session, eval_run_id: int) -> EvaluationRun:
 
 
 def _resolve_config_and_clients(
-    *, session: Session, eval_run: EvaluationRun
-) -> tuple[TextLLMParams, OpenAI, Langfuse | None]:
-    """Resolve the run's text config and build its OpenAI + Langfuse clients.
-
-    The Langfuse client is None when the project opted out of tracing (#996) so
-    the run degrades to cosine-only instead of failing."""
+    *, session: Session, eval_run: EvaluationRun, dataset: EvaluationDataset
+) -> tuple[ConfigBlob, Langfuse | None]:
+    """Resolve the run's config blob, plus a Langfuse client for v1 datasets only."""
     config_blob, error = resolve_evaluation_config(
         session=session,
         config_id=eval_run.config_id,
@@ -249,18 +397,16 @@ def _resolve_config_and_clients(
     if error or config_blob is None:
         raise ValueError(f"Failed to resolve config: {error}")
 
-    text_params = TextLLMParams.model_validate(config_blob.completion.params)
-    openai_client = get_openai_client(
-        session=session,
-        org_id=eval_run.organization_id,
-        project_id=eval_run.project_id,
+    langfuse_client = (
+        get_langfuse_client(
+            session=session,
+            org_id=eval_run.organization_id,
+            project_id=eval_run.project_id,
+        )
+        if dataset.langfuse_dataset_id
+        else None
     )
-    langfuse_client = get_tracing_client(
-        session=session,
-        org_id=eval_run.organization_id,
-        project_id=eval_run.project_id,
-    )
-    return text_params, openai_client, langfuse_client
+    return config_blob, langfuse_client
 
 
 def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None:
@@ -286,35 +432,40 @@ def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None
             return
 
         try:
-            text_params, openai_client, langfuse_client = _resolve_config_and_clients(
-                session=session, eval_run=eval_run
+            dataset = get_dataset_by_id(
+                session=session,
+                dataset_id=eval_run.dataset_id,
+                organization_id=eval_run.organization_id,
+                project_id=eval_run.project_id,
             )
-            dataset_items = load_evaluation_dataset_items(
-                session=session, eval_run=eval_run, langfuse=langfuse_client
+            if dataset is None:
+                raise ValueError(
+                    f"Dataset {eval_run.dataset_id} not found for run {eval_run_id}"
+                )
+            config_blob, langfuse_client = _resolve_config_and_clients(
+                session=session, eval_run=eval_run, dataset=dataset
+            )
+            dataset_items = load_run_dataset_items(
+                session=session,
+                dataset=dataset,
+                langfuse=langfuse_client,
+                duplication_factor=eval_run.duplication_factor,
             )
             # Same order across every chunk task, so slices never overlap or miss.
             dataset_items.sort(key=lambda item: item["id"])
             start = chunk_index * settings.EVAL_FAST_CHUNK_SIZE
             items_slice = dataset_items[start : start + settings.EVAL_FAST_CHUNK_SIZE]
 
-            log_prefix = (
-                f"[org={eval_run.organization_id}]"
-                f"[project={eval_run.project_id}]"
-                f"[eval={eval_run.id}]"
-            )
             run_response_chunk(
                 session=session,
-                openai_client=openai_client,
                 eval_run=eval_run,
-                config=text_params,
+                config_blob=config_blob,
                 dataset_items_slice=items_slice,
                 chunk_index=chunk_index,
-                log_prefix=log_prefix,
             )
 
         except Exception as exc:
-            # No per-chunk failed marker: the cron healer re-enqueues any index
-            # without a raw_output_url, so a failed chunk is already retried.
+            # Cron healer re-enqueues chunks without raw_output_url, so no marker needed.
             logger.error(
                 f"[execute_fast_evaluation_chunk] Chunk failed | "
                 f"eval_run_id={eval_run_id} | chunk_index={chunk_index} | error={exc}",
@@ -324,17 +475,10 @@ def execute_fast_evaluation_chunk(*, eval_run_id: int, chunk_index: int) -> None
 
 
 def execute_fast_evaluation_aggregate(*, eval_run_id: int) -> None:
-    """Worker entry point for the fan-in aggregate.
+    """Worker entry point for aggregate. Merges chunks and runs embeddings/scoring.
 
-    Called from `run_evaluation_fast_aggregate`. Merges the chunks and runs
-    embeddings + scoring + completion via `run_fast_evaluation`. Owns the run's
-    completed/failed transition, so on terminal failure it marks the run failed
-    and re-raises.
+    Owns run's completed/failed transition; on failure marks run failed and re-raises.
     """
-    logger.info(
-        f"[execute_fast_evaluation_aggregate] Starting | eval_run_id={eval_run_id}"
-    )
-
     with Session(engine) as session:
         eval_run = _get_fast_run(session=session, eval_run_id=eval_run_id)
         if eval_run.status == "completed":
@@ -345,23 +489,20 @@ def execute_fast_evaluation_aggregate(*, eval_run_id: int) -> None:
             return
 
         try:
-            # No config resolve here: re-resolving a config edited/pruned since
-            # dispatch would fail a run whose chunks already succeeded. Aggregate
-            # needs only the two clients.
             openai_client = get_openai_client(
                 session=session,
                 org_id=eval_run.organization_id,
                 project_id=eval_run.project_id,
             )
-            langfuse_client = get_tracing_client(
-                session=session,
-                org_id=eval_run.organization_id,
-                project_id=eval_run.project_id,
-            )
-            # Trace only a Langfuse-backed dataset — an opt-out or S3-backed run
-            # degrades to cosine-only rather than writing orphan traces.
-            langfuse_client = use_langfuse_client(
-                session=session, eval_run=eval_run, langfuse=langfuse_client
+            # v2 judged runs: Kaapi-native, no Langfuse; v1: sync to Langfuse.
+            langfuse_client = (
+                None
+                if eval_run.is_judge_run
+                else get_langfuse_client(
+                    session=session,
+                    org_id=eval_run.organization_id,
+                    project_id=eval_run.project_id,
+                )
             )
             run_fast_evaluation(
                 session=session,

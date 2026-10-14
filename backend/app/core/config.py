@@ -1,11 +1,12 @@
+import multiprocessing
+import os
 import secrets
 import warnings
-import os
-import multiprocessing
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from pydantic import (
     EmailStr,
+    Field,
     HttpUrl,
     PostgresDsn,
     computed_field,
@@ -13,7 +14,6 @@ from pydantic import (
 )
 from pydantic_core import MultiHostUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing_extensions import Self
 
 
 def parse_cors(origins: Any) -> list[str] | str:
@@ -34,6 +34,8 @@ class Settings(BaseSettings):
     )
 
     API_V1_STR: str = "/api/v1"
+    # v2 hosts
+    API_V2_STR: str = "/api/v2"
     SECRET_KEY: str = secrets.token_urlsafe(32)
     # 60 minutes * 24 hours * 1 days = 1 days
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 1
@@ -45,7 +47,9 @@ class Settings(BaseSettings):
 
     PROJECT_NAME: str
     API_VERSION: str = "0.5.0"
+    GIT_SHA: str = "unknown"
     SENTRY_DSN: HttpUrl | None = None
+    DISCORD_STATS_WEBHOOK_URL: HttpUrl | None = None
     POSTGRES_SERVER: str
     POSTGRES_PORT: int = 5432
     POSTGRES_USER: str
@@ -103,6 +107,8 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str = ""
     AWS_DEFAULT_REGION: str = ""
     AWS_S3_BUCKET_PREFIX: str = ""
+    # KMS key (ID, ARN, or alias) for credential encryption
+    AWS_KMS_KEY_ID: str = ""
 
     # GCP Vertex AI platform defaults. Used when a project does not register
     # its own ``google`` credential row (BYOK is all-or-nothing — see the
@@ -114,6 +120,8 @@ class Settings(BaseSettings):
     # Used by the registry fallback when a project has no ``google`` row.
     GCP_SA_KEY: str = ""
     GCS_AUDIO_BUCKET: str = ""
+    # A batch can run for hours; sign attachment URLs for 24h so they don't expire mid-run.
+    MAX_SIGNED_URL_EXPIRY_SECONDS: int = 86400
 
     # RabbitMQ configuration for Celery broker
     RABBITMQ_HOST: str = "localhost"
@@ -150,6 +158,12 @@ class Settings(BaseSettings):
     OTEL_SERVICE_NAME: str = "kaapi-backend"
     BACKEND_SERVICE_NAME: str = "kaapi-backend"
     CRON_SERVICE_NAME: str = "kaapi-cron"
+
+    SENTRY_TRACES_SAMPLE_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
+    SENTRY_SEND_DEFAULT_PII: bool = False
+    SENTRY_ERROR_SAMPLE_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
+    SENTRY_PROFILE_SESSION_SAMPLE_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
+    SENTRY_PROFILE_LIFECYCLE: Literal["manual", "trace"] = "trace"
 
     # Threshold Request Rate per minute
     THRESHOLD_LLM_CALL_RATE: int = 15
@@ -207,6 +221,32 @@ class Settings(BaseSettings):
     # Items per responses chunk task; smaller = more parallel workers and each
     # task well under CELERY_TASK_SOFT_TIME_LIMIT.
     EVAL_FAST_CHUNK_SIZE: int = 50
+
+    # Evaluation iteration loop (eval -> improve-prompt -> eval, LangGraph-orchestrated).
+    EVAL_ITERATION_MAX_ROUNDS_DEFAULT: int = 10
+    EVAL_ITERATION_MAX_ROUNDS_HARD_CAP: int = 25
+    # Absolute (0-1 scale) stop-score delta below which a round counts as "no
+    # meaningful improvement" toward the ceiling-reached stop condition.
+    EVAL_ITERATION_CEILING_DELTA_THRESHOLD: float = 0.05
+    # Consecutive low-delta rounds required before the loop stops as ceiling_reached.
+    EVAL_ITERATION_CEILING_CONSECUTIVE_ROUNDS: int = 3
+    # Cron skips loops dispatched within this window
+    EVAL_ITERATION_DISPATCH_COOLDOWN_MINUTES: int = 10
+    # Loops stalled longer are reaped; must exceed 25 hard-cap rounds worst-case time
+    EVAL_ITERATION_STALL_THRESHOLD_HOURS: int = 48
+
+    EVAL_JUDGE_MODEL: str = "gpt-5.6-luna"
+
+    # One of: none | minimal | low | medium | high | xhigh.
+    EVAL_JUDGE_REASONING_EFFORT: str = "medium"
+
+    EVAL_SUMMARY_MODEL: str = "claude-sonnet-4-6"
+
+    # Judge runs alone in the single aggregate task (no response calls competing),
+    # so it uses a larger pool than the response stage to finish the max dataset
+    # (EVAL_FAST_MAX_UNIQUE_ROWS x duplication) well under CELERY_TASK_SOFT_TIME_LIMIT.
+    # Threads are network-bound (idle-waiting on OpenAI), so a high count is cheap.
+    EVAL_JUDGE_CONCURRENCY: int = 50
 
     @computed_field  # type: ignore[prop-decorator]
     @property

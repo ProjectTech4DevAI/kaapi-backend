@@ -2,7 +2,7 @@
 
 import logging
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.util import now
 from app.models.file import File, FileType
@@ -117,7 +117,7 @@ def get_files_by_ids(
         return []
 
     statement = select(File).where(
-        File.id.in_(file_ids),
+        col(File.id).in_(file_ids),
         File.organization_id == organization_id,
         File.project_id == project_id,
     )

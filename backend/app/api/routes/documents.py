@@ -33,7 +33,7 @@ from app.services.collections.helpers import MAX_DOC_SIZE_MB
 from app.services.documents.helpers import (
     calculate_file_size,
     schedule_transformation,
-    pre_transform_validation,
+    validate_upload,
     build_document_schema,
     build_document_schemas,
 )
@@ -82,7 +82,14 @@ def list_docs(
     include_url: bool = Query(
         False, description="Include a signed URL to access each document"
     ),
-):
+    download: bool = Query(
+        False,
+        description=(
+            "When true the signed URL forces a download under the document's "
+            "original filename; when false it opens inline in the browser"
+        ),
+    ),
+) -> APIResponse[list[Union[DocumentPublic, TransformedDocumentPublic]]]:
     crud = DocumentCrud(session, current_user.project_.id)
     documents, has_more = crud.read_many(skip, limit)
 
@@ -96,8 +103,11 @@ def list_docs(
         documents=documents,
         include_url=include_url,
         storage=storage,
+        download=download,
     )
-    return APIResponse.success_response(results, metadata=dict(has_more=has_more))
+    return APIResponse[
+        list[Union[DocumentPublic, TransformedDocumentPublic]]
+    ].success_response(results, metadata=dict(has_more=has_more))
 
 
 @router.post(
@@ -122,12 +132,15 @@ async def upload_doc(
     ),
     callback_url: str
     | None = Form(None, description="URL to call to report doc transformation status"),
-):
+) -> APIResponse[DocumentUploadResponse]:
     if callback_url:
         validate_callback_url(callback_url)
 
-    source_format, actual_transformer = pre_transform_validation(
-        src_filename=src.filename,
+    if src.filename is None:
+        raise HTTPException(status_code=400, detail="Uploaded file has no filename")
+
+    source_format, actual_transformer = validate_upload(
+        src=src,
         target_format=target_format,
         transformer=transformer,
     )
@@ -156,6 +169,7 @@ async def upload_doc(
         fname=src.filename,
         file_size_kb=file_size_kb,
         object_store_url=str(object_store_url),
+        project_id=current_user.project_.id,
     )
     source_document = crud.update(document)
 
@@ -180,7 +194,7 @@ async def upload_doc(
         **document_schema.model_dump(),
         transformation_job=job_info,
     )
-    return APIResponse.success_response(response)
+    return APIResponse[DocumentUploadResponse].success_response(response)
 
 
 @router.delete(
@@ -193,7 +207,7 @@ def remove_doc(
     session: SessionDep,
     current_user: AuthContextDep,
     doc_id: UUID = FastPath(description="Document to delete"),
-):
+) -> APIResponse[Message]:
     client = get_openai_client(
         session, current_user.organization_.id, current_user.project_.id
     )
@@ -210,7 +224,7 @@ def remove_doc(
         f_crud.delete(openai_file_id)
     d_crud.delete(doc_id)
 
-    return APIResponse.success_response(
+    return APIResponse[Message].success_response(
         Message(message="Document Deleted Successfully")
     )
 
@@ -225,7 +239,7 @@ def permanent_delete_doc(
     session: SessionDep,
     current_user: AuthContextDep,
     doc_id: UUID = FastPath(description="Document to permanently delete"),
-):
+) -> APIResponse[Message]:
     client = get_openai_client(
         session, current_user.organization_.id, current_user.project_.id
     )
@@ -244,7 +258,7 @@ def permanent_delete_doc(
     storage.delete(document.object_store_url)
     d_crud.delete(doc_id)
 
-    return APIResponse.success_response(
+    return APIResponse[Message].success_response(
         Message(message="Document permanently deleted successfully")
     )
 
@@ -262,7 +276,14 @@ def doc_info(
     include_url: bool = Query(
         False, description="Include a signed URL to access the document"
     ),
-):
+    download: bool = Query(
+        False,
+        description=(
+            "When true the signed URL forces a download under the document's "
+            "original filename; when false it opens inline in the browser"
+        ),
+    ),
+) -> APIResponse[Union[DocumentPublic, TransformedDocumentPublic]]:
     crud = DocumentCrud(session, current_user.project_.id)
     document = crud.read_one(doc_id)
 
@@ -276,6 +297,9 @@ def doc_info(
         document=document,
         include_url=include_url,
         storage=storage,
+        download=download,
     )
 
-    return APIResponse.success_response(doc_schema)
+    return APIResponse[
+        Union[DocumentPublic, TransformedDocumentPublic]
+    ].success_response(doc_schema)

@@ -4,10 +4,12 @@ from typing import Any
 from google import genai
 from google.genai import errors as genai_errors
 from google.genai.types import (
+    FileSearch,
     GenerateContentResponse,
     GenerateContentConfig,
     ThinkingConfig,
     SpeechConfig,
+    Tool,
     VoiceConfig,
     PrebuiltVoiceConfig,
 )
@@ -167,10 +169,6 @@ class GoogleAIProvider(BaseProvider):
         else:
             merged_instruction = f"{lang_instruction}. {forced_transcription_text}"
 
-        logger.info(
-            f"The merged instructions is {merged_instruction} and output language is {output_language} and input language is {input_language}"
-        )
-
         # Materialize the AudioRef to a temp file so the genai SDK can upload it.
         with resolved_input.to_path() as audio_path:
             gemini_file = self.client.files.upload(file=audio_path)
@@ -183,7 +181,7 @@ class GoogleAIProvider(BaseProvider):
         response: GenerateContentResponse = self.client.models.generate_content(
             model=model,
             contents=contents,
-            # switch back default thinking configs for reasoning supported models in future
+            # TODO switch back default thinking configs for reasoning supported models in future
             config=GenerateContentConfig(
                 thinking_config=ThinkingConfig(
                     include_thoughts=True, thinking_budget=1000
@@ -238,7 +236,11 @@ class GoogleAIProvider(BaseProvider):
                 provider_response_id=response.response_id,
                 model=response.model_version or model,
                 provider=provider,
-                output=TextOutput(content=TextContent(value=response.text)),
+                output=TextOutput(
+                    content=TextContent(
+                        value=response.text, language_code=output_language
+                    )
+                ),
             ),
             usage=Usage(
                 input_tokens=input_tokens,
@@ -328,10 +330,10 @@ class GoogleAIProvider(BaseProvider):
             config_kwargs["system_instruction"] = director_notes
 
         config = GenerateContentConfig(**config_kwargs)
-
+        decorated_resolved_input = f"<transcript>{resolved_input}</transcript>"
         # Execute TTS
         response: GenerateContentResponse = self.client.models.generate_content(
-            model=model, contents=resolved_input, config=config
+            model=model, contents=decorated_resolved_input, config=config
         )
         if not response.response_id:
             error_message = (
@@ -498,6 +500,7 @@ class GoogleAIProvider(BaseProvider):
         instructions = completion_config.params.get("instructions", "")
         temperature = completion_config.params.get("temperature", None)
         thinking_level = completion_config.params.get("reasoning", None)
+        knowledge_base_ids = completion_config.params.get("knowledge_base_ids", None)
 
         generation_kwargs = {}
         if instructions:
@@ -510,6 +513,11 @@ class GoogleAIProvider(BaseProvider):
             generation_kwargs["thinking_config"] = ThinkingConfig(
                 include_thoughts=False, thinking_level=thinking_level
             )
+
+        if knowledge_base_ids:
+            generation_kwargs["tools"] = [
+                Tool(file_search=FileSearch(file_search_store_names=knowledge_base_ids))
+            ]
 
         response = self.client.models.generate_content(
             model=model,

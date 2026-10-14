@@ -42,6 +42,7 @@ class Diagnostics(SQLModel):
 class FileResultChunk(SQLModel):
     score: float
     text: str
+    filename: str | None = None
 
 
 class CallbackResponse(SQLModel):

@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from langfuse import Langfuse
+from langfuse.api.commons.types.score_v1 import ScoreV1_Text
 
 from app.core.langfuse.langfuse import format_langfuse_error, set_trace_attributes
 from app.crud.evaluations.merge import compute_summary_scores
@@ -88,13 +89,18 @@ def create_langfuse_dataset_run(
         model: Model name used for evaluation (for cost calculation by Langfuse)
 
     Returns:
-        dict[str, str]: Mapping of item_id to Langfuse trace_id. Empty when
-            tracing is disabled (langfuse is None).
+        dict[str, str]: Mapping of item_id to Langfuse trace_id
 
     Raises:
         Exception: If Langfuse operations fail
     """
+    # v2 native (judged) runs and tracing-opted-out projects pass langfuse=None:
+    # no traces are created, and callers fall back to keying scores by item_id.
     if langfuse is None:
+        logger.info(
+            "[create_langfuse_dataset_run] No Langfuse client; skipping trace "
+            f"creation | run_name={run_name} | dataset={dataset_name}"
+        )
         return {}
 
     logger.info(
@@ -275,6 +281,8 @@ def update_traces_with_cosine_scores(
             comment = f"Cannot compute: {reason}"
         else:
             value = score_item.get("cosine_similarity")
+            if value is None:
+                continue
             comment = COSINE_SCORE_COMMENT
 
         try:
@@ -302,11 +310,11 @@ def update_traces_with_cosine_scores(
 
 
 def upload_dataset_to_langfuse(
-    langfuse: Langfuse | None,
+    langfuse: Langfuse,
     items: list[dict[str, str]],
     dataset_name: str,
     duplication_factor: int,
-) -> tuple[str | None, int]:
+) -> tuple[str, int]:
     """
     Upload a dataset to Langfuse from pre-parsed items.
 
@@ -317,15 +325,11 @@ def upload_dataset_to_langfuse(
         duplication_factor: Number of times to duplicate each item
 
     Returns:
-        Tuple of (langfuse_dataset_id, total_items_uploaded). Returns
-        (None, 0) when tracing is disabled (langfuse is None).
+        Tuple of (langfuse_dataset_id, total_items_uploaded)
 
     Raises:
         Exception: If Langfuse operations fail
     """
-    if langfuse is None:
-        return None, 0
-
     logger.info(
         f"[upload_dataset_to_langfuse] Uploading dataset to Langfuse | "
         f"dataset={dataset_name} | items={len(items)} | "
@@ -516,7 +520,7 @@ def fetch_trace_scores_from_langfuse(
                 "question": "",
                 "llm_answer": "",
                 "ground_truth_answer": "",
-                "question_id": "",
+                "question_id": None,
                 "scores": [],
             }
 
@@ -551,7 +555,11 @@ def fetch_trace_scores_from_langfuse(
             if trace.scores:
                 for score in trace.scores:
                     score_name = score.name
-                    score_value = score.value
+                    score_value = (
+                        score.string_value
+                        if isinstance(score, ScoreV1_Text)
+                        else score.value
+                    )
                     score_comment = score.comment
                     # Get data_type from Langfuse score, default to NUMERIC
                     data_type = getattr(score, "data_type", None) or "NUMERIC"

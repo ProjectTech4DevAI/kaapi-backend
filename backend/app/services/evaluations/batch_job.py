@@ -11,10 +11,10 @@ from app.crud.evaluations import (
     resolve_evaluation_config,
     start_evaluation_batch,
 )
-from app.crud.evaluations.batch import use_langfuse_client
 from app.crud.evaluations.core import update_evaluation_run
 from app.models.evaluation import EvaluationRunUpdate
-from app.utils import get_tracing_client
+from app.services.llm.mappers import kaapi_params_as_dict
+from app.utils import get_langfuse_client
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,7 @@ def execute_evaluation_batch_submission(
         )
         if not run:
             return {"success": False, "error": "Run not found"}
+        confirmed_run = run
         try:
             config, error = resolve_evaluation_config(
                 session=session,
@@ -49,25 +50,30 @@ def execute_evaluation_batch_submission(
                 config_version=config_version,
                 project_id=project_id,
             )
-            if error:
+
+            def _fail(msg: str) -> dict:
                 update_evaluation_run(
                     session=session,
-                    eval_run=run,
-                    update=EvaluationRunUpdate(status="failed", error_message=error),
+                    eval_run=confirmed_run,
+                    update=EvaluationRunUpdate(status="failed", error_message=msg),
                 )
-                return {"success": False, "error": error}
+                return {"success": False, "error": msg}
 
-            langfuse = get_tracing_client(
+            if error or config is None:
+                return _fail(error or "Config could not be resolved")
+
+            provider = config.completion.provider
+            if provider is None:
+                return _fail("Config has no resolvable provider")
+
+            langfuse = get_langfuse_client(
                 session=session, org_id=organization_id, project_id=project_id
-            )
-            langfuse = use_langfuse_client(
-                session=session, eval_run=run, langfuse=langfuse
             )
             run = start_evaluation_batch(
                 langfuse=langfuse,
                 session=session,
                 eval_run=run,
-                params=config.completion.params,
+                params=kaapi_params_as_dict(config.completion.params),
                 provider=config.completion.provider,
             )
             return {"success": True, "batch_job_id": run.batch_job_id}
