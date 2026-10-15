@@ -355,8 +355,7 @@ class ValidatorGroup(NamedTuple):
     types: tuple[str, ...]
 
 
-# Grouped by the question a reader arrives with; rendering keeps only
-# EXPOSED_VALIDATOR_TYPES.
+# Rendering keeps only EXPOSED_VALIDATOR_TYPES.
 GROUPS: tuple[ValidatorGroup, ...] = (
     ValidatorGroup(
         "Abuse, profanity and unsafe content",
