@@ -5,7 +5,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import UploadFile
 
-from app.core.exception_handlers import HTTPException
+from fastapi import HTTPException
+
 from app.services.stt_evaluations.audio import (
     _resolve_extension,
     _validate_audio_file,
@@ -185,8 +186,8 @@ class TestUploadAudioFile:
                 organization_id=1,
                 project_id=1,
             )
-        assert exc_info.value.status_code == 500
-        assert "Failed to upload audio file" in str(exc_info.value.detail)
+        assert exc_info.value.status_code == 502
+        assert "Object storage could not accept" in str(exc_info.value.detail)
 
     @patch("app.services.stt_evaluations.audio.create_file")
     @patch("app.services.stt_evaluations.audio.get_cloud_storage")

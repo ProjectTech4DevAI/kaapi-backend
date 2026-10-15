@@ -626,7 +626,7 @@ class TestTTSEvaluationRun:
             headers=user_api_key_header,
         )
 
-        assert response.status_code == 500
+        assert response.status_code == 503
         assert "queue" in response.json()["error"].lower()
 
     def test_start_evaluation_invalid_dataset(
@@ -674,7 +674,7 @@ class TestTTSEvaluationRun:
             headers=user_api_key_header,
         )
 
-        assert response.status_code == 400
+        assert response.status_code == 422
         assert "no samples" in response.json()["error"].lower()
 
     def test_start_evaluation_unsupported_model(

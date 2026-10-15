@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+
 from sqlmodel import Session, select
 
 from app.models import Job, JobStatus, JobType
@@ -143,7 +144,7 @@ def test_start_job_happy_path_creates_row_and_enqueues(
     assert kwargs["job_id"] == str(job.id)
 
 
-def test_start_job_celery_failure_marks_failed_and_raises_500(
+def test_start_job_celery_failure_marks_failed_and_raises_503(
     db: Session, user_api_key: TestAuthContext
 ) -> None:
     with patch("app.services.guardrails.jobs.start_guardrails_job") as mock_enqueue:
@@ -156,7 +157,7 @@ def test_start_job_celery_failure_marks_failed_and_raises_500(
                 organization_id=user_api_key.organization_id,
             )
 
-    assert exc.value.status_code == 500
+    assert exc.value.status_code == 503
 
     rows = db.exec(select(Job).where(Job.project_id == user_api_key.project_id)).all()
     failed = [r for r in rows if r.status == JobStatus.FAILED]

@@ -1,16 +1,45 @@
+import logging
 import re
 from collections import defaultdict
 
 import sentry_sdk
-from fastapi import FastAPI, Request, HTTPException
+from asgi_correlation_id import correlation_id
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DataError, IntegrityError, OperationalError, SQLAlchemyError
 from starlette.status import (
+    HTTP_409_CONFLICT,
     HTTP_422_UNPROCESSABLE_CONTENT,
     HTTP_500_INTERNAL_SERVER_ERROR,
+    HTTP_503_SERVICE_UNAVAILABLE,
 )
 
 from app.utils import APIResponse
+
+logger = logging.getLogger(__name__)
+
+GENERIC_ERROR_DETAIL = "An unexpected error occurred."
+DB_ERROR_DETAIL = "Database error: request could not be completed."
+
+# Subclasses of SQLAlchemyError, so the first isinstance match wins.
+_DB_ERROR_HINTS: tuple[tuple[type[SQLAlchemyError], int, str], ...] = (
+    (
+        IntegrityError,
+        HTTP_409_CONFLICT,
+        "Database error: request conflicts with existing data.",
+    ),
+    (
+        DataError,
+        HTTP_422_UNPROCESSABLE_CONTENT,
+        "Database error: a value is invalid or too long.",
+    ),
+    (
+        OperationalError,
+        HTTP_503_SERVICE_UNAVAILABLE,
+        "Database error: service temporarily unavailable, please retry.",
+    ),
+)
 
 _BRANCH_PATTERN = re.compile(r"^[A-Z]|[\[\]()]")
 
@@ -85,6 +114,14 @@ def _sanitize_validation_errors(errors: list[dict]) -> list[dict]:
         return errors
 
 
+def _db_error_response(exc: SQLAlchemyError) -> tuple[int, str]:
+    """Map a DB exception to a status and a client-safe hint; SQL and parameters stay server-side."""
+    for exc_type, status_code, hint in _DB_ERROR_HINTS:
+        if isinstance(exc, exc_type):
+            return status_code, hint
+    return HTTP_500_INTERNAL_SERVER_ERROR, DB_ERROR_DETAIL
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(
@@ -103,17 +140,48 @@ def register_exception_handlers(app: FastAPI) -> None:
         detail = exc.detail
         if isinstance(detail, list):
             detail = _sanitize_validation_errors(detail)
+
+        # Tag at the boundary: the status is only known here, and call-site logs
+        # fire before it. 5xx is a server fault (error event); 4xx is the caller's.
+        if sentry_sdk.get_client().is_active():
+            sentry_sdk.set_tag("http.status_code", str(exc.status_code))
+            sentry_sdk.set_tag(
+                "error.class", "server" if exc.status_code >= 500 else "client"
+            )
+        if exc.status_code >= 500:
+            logger.error(
+                f"[http_exception] {request.method} {request.url.path} "
+                f"-> {exc.status_code}",
+                exc_info=exc,
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content=APIResponse.failure_response(detail).model_dump(),
         )
 
+    @app.exception_handler(SQLAlchemyError)
+    async def db_error_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
+        logger.error(
+            f"[db_error_handler] Unhandled DB error | path: {request.url.path}, "
+            f"type: {type(exc).__name__}, trace_id: {correlation_id.get() or 'N/A'}",
+            exc_info=exc,
+        )
+        status_code, hint = _db_error_response(exc)
+        return JSONResponse(
+            status_code=status_code,
+            content=APIResponse.failure_response(hint).model_dump(),
+        )
+
     @app.exception_handler(Exception)
     async def generic_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        # Fixed detail: str(exc) here leaked provider bodies and DB text to callers.
         sentry_sdk.capture_exception(exc)
+        logger.error(
+            f"[generic_error_handler] Unhandled exception | "
+            f"path: {request.url.path}, trace_id: {correlation_id.get() or 'N/A'}",
+            exc_info=True,
+        )
         return JSONResponse(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            content=APIResponse.failure_response(
-                str(exc) or "An unexpected error occurred."
-            ).model_dump(),
+            content=APIResponse.failure_response(GENERIC_ERROR_DETAIL).model_dump(),
         )

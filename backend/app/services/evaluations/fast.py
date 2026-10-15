@@ -58,6 +58,17 @@ ERR_CONFIG_TEMPLATE_MISSING_INPUT = "config_template_missing_input"
 PROMPT_TEMPLATE_INPUT_PLACEHOLDER = "{{input}}"
 
 
+def _fail_run(*, session: Session, eval_run: EvaluationRun, reason: str) -> None:
+    update_evaluation_run(
+        session=session,
+        eval_run=eval_run,
+        update=EvaluationRunUpdate(
+            status="failed",
+            error_message=f"Failed to start fast eval: {reason}",
+        ),
+    )
+
+
 def is_dataset_fast_eligible(*, original_items_count: int) -> bool:
     """A dataset is eligible for fast mode when its unique-row count is within cap."""
     return original_items_count <= settings.EVAL_FAST_MAX_UNIQUE_ROWS
@@ -314,7 +325,9 @@ def validate_and_start_fast_evaluation(
     )
     total_items = original_items * max(1, effective_factor)
     if total_items == 0:
-        raise ValueError(f"Dataset '{dataset.name}' has no items")
+        raise HTTPException(
+            status_code=422, detail=f"Dataset '{dataset.name}' has no items"
+        )
     n_chunks = math.ceil(total_items / settings.EVAL_FAST_CHUNK_SIZE)
 
     # v2 markers (is_judge_run, callback_url, duplication_factor) land in one INSERT.
@@ -349,20 +362,22 @@ def validate_and_start_fast_evaluation(
             f"eval_run_id={eval_run.id} | total_items={total_items} | "
             f"n_chunks={n_chunks}"
         )
+    except HTTPException as exc:
+        log = logger.error if exc.status_code >= 500 else logger.warning
+        log(
+            f"[validate_and_start_fast_evaluation] Failed to start run | "
+            f"eval_run_id={eval_run.id} | code={exc.status_code}",
+            exc_info=True,
+        )
+        _fail_run(session=session, eval_run=eval_run, reason=exc.detail)
+        raise
     except Exception as exc:
         logger.error(
             f"[validate_and_start_fast_evaluation] Failed to start run | "
             f"eval_run_id={eval_run.id} | error={exc}",
             exc_info=True,
         )
-        update_evaluation_run(
-            session=session,
-            eval_run=eval_run,
-            update=EvaluationRunUpdate(
-                status="failed",
-                error_message=f"Failed to start fast eval: {exc}",
-            ),
-        )
+        _fail_run(session=session, eval_run=eval_run, reason=str(exc))
         raise HTTPException(
             status_code=500,
             detail="Failed to start fast evaluation",

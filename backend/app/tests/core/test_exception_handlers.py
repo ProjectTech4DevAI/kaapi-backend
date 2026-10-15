@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.exception_handlers import (
+    GENERIC_ERROR_DETAIL,
     _sanitize_validation_errors,
     register_exception_handlers,
 )
@@ -203,3 +204,23 @@ class TestValidationErrorResponse:
         for error in response.json()["errors"]:
             assert "openai-native" not in error["message"]
             assert "NativeCompletionConfig" not in error["field"]
+
+
+def _app_raising(exc: Exception) -> TestClient:
+    app = FastAPI()
+    register_exception_handlers(app)
+
+    @app.get("/boom")
+    def boom() -> None:
+        raise exc
+
+    return TestClient(app, raise_server_exceptions=False)
+
+
+class TestGenericErrorHandler:
+    def test_does_not_leak_exception_text(self) -> None:
+        response = _app_raising(ValueError("secret arn:aws:kms:key/abc")).get("/boom")
+
+        assert response.status_code == 500
+        assert response.json()["error"] == GENERIC_ERROR_DETAIL
+        assert "arn:aws:kms" not in response.text
