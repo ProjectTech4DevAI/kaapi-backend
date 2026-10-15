@@ -23,6 +23,25 @@ GUARDRAILS_PROXY_TIMEOUT_SECONDS = 30.0
 GUARDRAIL_STAGE_INPUT = "input"
 GUARDRAIL_STAGE_OUTPUT = "output"
 
+# Upstream supports more; only these are productised for tenants.
+EXPOSED_VALIDATOR_TYPES = frozenset(
+    {"topic_relevance_llm", "uli_slur_match", "gender_assumption_bias", "pii_remover"}
+)
+
+
+def filter_exposed_validator_types(payload: Any) -> Any:
+    """Keep only exposed types; non-catalogue payloads (errors, 204) pass through."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("validators"), list):
+        return payload
+    return {
+        **payload,
+        "validators": [
+            validator
+            for validator in payload["validators"]
+            if isinstance(validator, dict)
+            and validator.get("type") in EXPOSED_VALIDATOR_TYPES
+        ],
+    }
 
 def _guardrails_headers(
     organization_id: int | None, project_id: int | None
