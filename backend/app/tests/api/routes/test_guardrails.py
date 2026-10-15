@@ -331,6 +331,30 @@ class TestProxyPassthrough:
         assert resp.status_code == status_code
         assert resp.json() == body
 
+    def test_list_validator_types_hides_non_exposed_types(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        upstream_types = [
+            "topic_relevance_llm",
+            "content_safety",
+            "gender_assumption_bias",
+            "pii_remover",
+            "ban_list",
+            "llm_critic",
+            "nsfw_text",
+        ]
+        body = {"validators": [{"type": t, "config": {}} for t in upstream_types]}
+        with _mock_upstream(status_code=200, json_body=body):
+            resp = client.get("api/v1/guardrails", headers=user_api_key_header)
+
+        assert resp.status_code == 200
+        assert [v["type"] for v in resp.json()["validators"]] == [
+            "topic_relevance_llm",
+            "content_safety",
+            "gender_assumption_bias",
+            "pii_remover",
+        ]
+
     def test_empty_upstream_body_returns_status_with_no_body(
         self, client: TestClient, user_api_key_header: dict[str, str]
     ) -> None:

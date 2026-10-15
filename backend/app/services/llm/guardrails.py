@@ -19,6 +19,28 @@ tracer = trace.get_tracer(__name__)
 
 GUARDRAILS_PROXY_TIMEOUT_SECONDS = 30.0
 
+# v1.0 surface: upstream supports more types, but only these are offered to
+# tenants until the rest are productised.
+EXPOSED_VALIDATOR_TYPES = frozenset(
+    {"topic_relevance_llm", "content_safety", "gender_assumption_bias", "pii_remover"}
+)
+
+
+def filter_exposed_validator_types(payload: Any) -> Any:
+    """Drop non-exposed types from the upstream catalogue; anything not shaped
+    like a catalogue (error bodies, empty 204s) passes through untouched."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("validators"), list):
+        return payload
+    return {
+        **payload,
+        "validators": [
+            validator
+            for validator in payload["validators"]
+            if isinstance(validator, dict)
+            and validator.get("type") in EXPOSED_VALIDATOR_TYPES
+        ],
+    }
+
 
 def _guardrails_headers(
     organization_id: int | None, project_id: int | None

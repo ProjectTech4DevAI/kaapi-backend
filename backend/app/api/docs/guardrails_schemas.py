@@ -15,6 +15,7 @@ import json
 from typing import Any, NamedTuple
 
 from app.api.openapi_docs import ResponseDoc, ref
+from app.services.llm.guardrails import EXPOSED_VALIDATOR_TYPES
 
 _UUID_EXAMPLE = "0b9f1a4c-2d3e-4f50-8a6b-7c8d9e0f1a2b"
 _TIMESTAMP_EXAMPLE = "2026-10-14T09:30:00"
@@ -354,8 +355,9 @@ class ValidatorGroup(NamedTuple):
     types: tuple[str, ...]
 
 
-# Three questions a reader actually arrives with, rather than one flat list of
-# twelve. Each group leads with the type to reach for first.
+# Three questions a reader actually arrives with, rather than one flat list.
+# Each group leads with the type to reach for first. Groups list every upstream
+# type; rendering keeps only `EXPOSED_VALIDATOR_TYPES`.
 GROUPS: tuple[ValidatorGroup, ...] = (
     ValidatorGroup(
         "Abuse, profanity and unsafe content",
@@ -372,13 +374,13 @@ GROUPS: tuple[ValidatorGroup, ...] = (
     ),
     ValidatorGroup(
         "Personal data and banned words",
-        "Both redact rather than block, so the conversation carries on with "
+        "These redact rather than block, so the conversation carries on with "
         "the sensitive words removed.",
         ("pii_remover", "ban_list"),
     ),
     ValidatorGroup(
         "Staying on topic, and answer quality",
-        "All four call an LLM, so each adds a little latency per message. "
+        "These call an LLM, so each adds a little latency per message. "
         "Reach for `topic_relevance_llm` first.",
         (
             "topic_relevance_llm",
@@ -859,9 +861,14 @@ def _by_type() -> dict[str, ValidatorType]:
 
 
 def _ordered_types() -> list[ValidatorType]:
-    """Catalogue in reading order: grouped, groups in `GROUPS` order."""
+    """Exposed catalogue in reading order: grouped, groups in `GROUPS` order."""
     catalogued = _by_type()
-    return [catalogued[name] for group in GROUPS for name in group.types]
+    return [
+        catalogued[name]
+        for group in GROUPS
+        for name in group.types
+        if name in EXPOSED_VALIDATOR_TYPES
+    ]
 
 
 def _render_validator(validator: ValidatorType) -> list[str]:
@@ -900,13 +907,16 @@ def render_validator_reference() -> str:
         "",
         "## The validator types",
         "",
-        "Twelve of them, grouped by the problem they solve. Every one also "
-        "takes the shared fields above.",
+        "Grouped by the problem they solve. Every one also takes the shared "
+        "fields above.",
     ]
     catalogued = _by_type()
     for group in GROUPS:
+        exposed = [name for name in group.types if name in EXPOSED_VALIDATOR_TYPES]
+        if not exposed:
+            continue
         lines += ["", "<br>", "", f"### {group.title}", "", group.blurb]
-        for name in group.types:
+        for name in exposed:
             lines += ["", "---", ""]
             lines += _render_validator(catalogued[name])
     return "\n".join(lines) + "\n"
