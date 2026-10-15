@@ -359,7 +359,13 @@ REDACT_LLM_CALLS_SQL = text(
             ELSE content
         END
     WHERE updated_at <= :cutoff
-      AND (input <> :redacted_sentinel OR content -> 'content' ->> 'value' IS DISTINCT FROM :redacted_sentinel)
+      AND (
+        input <> :redacted_sentinel
+        OR (
+            jsonb_typeof(content) = 'object'
+            AND content #>> '{content,value}' <> :redacted_sentinel
+        )
+      )
     """
 )
 

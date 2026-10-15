@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def redact_aged_llm_calls(*, session: Session) -> LlmCallRedactionResult:
-    cutoff = now() - settings.DELETE_ROLLING_WINDOW_TIMEDELTA
+    cutoff = now() - settings.LLM_CALL_RETENTION_TIMEDELTA
 
     logger.info(
         f"[redact_aged_llm_calls] Starting redaction | cutoff: {cutoff.isoformat()}"

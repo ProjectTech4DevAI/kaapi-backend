@@ -205,12 +205,12 @@ class Settings(BaseSettings):
     EVAL_FAST_STALL_THRESHOLD_MINUTES: int = 15
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
-    DELETE_ROLLING_WINDOW_HOURS: int = 168
+    LLM_CALL_RETENTION_HOURS: int = 168
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def DELETE_ROLLING_WINDOW_TIMEDELTA(self) -> timedelta:
-        return timedelta(hours=self.DELETE_ROLLING_WINDOW_HOURS)
+    def LLM_CALL_RETENTION_TIMEDELTA(self) -> timedelta:
+        return timedelta(hours=self.LLM_CALL_RETENTION_HOURS)
 
     ANTHROPIC_API_KEY: str = ""
     PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"

@@ -1,25 +1,19 @@
 from datetime import datetime
 from typing import Any
 from uuid import UUID
-from typing import Any
 
 from sqlmodel import Session
 
 from app.crud import JobCrud
 from app.crud.llm import create_llm_call, update_llm_call_response
-from app.models import JobType, Job
-from app.models.llm import LlmCall
-from app.models.llm.response import LLMCallResponse
 from app.models import Job, JobType
-from app.models.llm import LLMCallRequest
+from app.models.llm import LlmCall, LLMCallRequest
 from app.models.llm.request import (
     ConfigBlob,
     LLMCallConfig,
     QueryParams,
     build_kaapi_completion_config,
 )
-from app.tests.utils.utils import get_project, get_organization
-from app.models.llm import LLMCallRequest
 from app.models.llm.response import (
     LLMCallResponse,
     LLMResponse,
@@ -27,6 +21,7 @@ from app.models.llm.response import (
     TextOutput,
     Usage,
 )
+from app.tests.utils.utils import get_organization, get_project
 
 
 def create_aged_llm_call(

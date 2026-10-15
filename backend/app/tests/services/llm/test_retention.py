@@ -58,7 +58,7 @@ def test_cutoff_trails_now_by_the_configured_rolling_window(
 ) -> None:
     frozen = datetime(2026, 3, 1, 12, 0, 0)
     monkeypatch.setattr(retention, "now", lambda: frozen)
-    monkeypatch.setattr(settings, "DELETE_ROLLING_WINDOW_HOURS", 168)
+    monkeypatch.setattr(settings, "LLM_CALL_RETENTION_HOURS", 168)
 
     redact_aged_llm_calls(session=db)
 
@@ -72,4 +72,4 @@ def test_passes_session_to_crud(db: Session, redact_calls: list[dict]) -> None:
 
 
 def test_default_rolling_window_is_one_week() -> None:
-    assert settings.DELETE_ROLLING_WINDOW_TIMEDELTA == timedelta(days=7)
+    assert settings.LLM_CALL_RETENTION_TIMEDELTA == timedelta(days=7)

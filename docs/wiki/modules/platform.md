@@ -13,7 +13,7 @@ All paths relative to `backend/app/`.
 | Credentials | `api/routes/credentials.py` | `credential` (`models/credentials.py`) | `crud/credentials.py`; provider keys per org/project; envelope encryption (KMS-wrapped data key + AES-GCM), prefix-versioned ciphertexts |
 | Model config | `api/routes/model_config.py` | `model_config` (`models/model_config.py`) | `crud/model_config.py`; cost: `estimate_model_cost` (single lookup) vs `list_active_model_pricing` + `compute_cost_from_pricing` (one batched lookup — use in loops/aggregations, e.g. `services/analytics/aggregation.py`) |
 | Bucket providers | — | reuses `credential` (`google-gcp`) | `services/buckets/` — global registry + resolver (`providers/`), GCS V4 signed + bulk-signed URLs with a 24h expiry cap (`providers/gcs.py`, cap in `providers/base.py`), attachment path selection + URL resolution (`attachments.py`) |
-| Cron | `api/routes/cron.py` | — | triggers batch polling (`crud/evaluations/cron.py`, `crud/assessment/cron.py` — the latter polls `method == RUN` assessments only; API-client BATCH runs are driven by their own Celery self-re-enqueue) |
+| Cron | `api/routes/cron.py` | — | triggers batch polling (`crud/evaluations/cron.py`, `crud/assessment/cron.py` — the latter polls `method == RUN` assessments only; API-client BATCH runs are driven by their own Celery self-re-enqueue); `llm_call` retention redaction (`services/llm/retention.py`, see [llm-call.md](llm-call.md)) |
 | Jobs | — | `job` (`models/job.py`), `batch_job` (`models/batch_job.py`) | `crud/jobs.py`, `crud/job/`, `services/job_monitoring.py` |
 
 ## Credential contracts

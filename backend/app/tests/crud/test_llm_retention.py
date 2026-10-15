@@ -18,18 +18,11 @@ TEXT_CONTENT = {"type": "text", "content": {"format": "text", "value": "hello"}}
 
 @pytest.fixture
 def job(db: Session) -> Job:
-    # The statement targets llm_call_2, a copy table that only exists in the
-    # deployed databases; an auto-updatable view over llm_call gives the tests
-    # that name while keeping the real column types and the ORM factories.
-    db.exec(text("DROP VIEW IF EXISTS llm_call_2"))
     # Other llm_call rows (seed data, sibling fixtures) would also match the
     # cutoff and skew the rowcount assertions, so start from an empty table.
     db.exec(text("DELETE FROM llm_call"))
-    db.exec(text("CREATE VIEW llm_call_2 AS SELECT * FROM llm_call"))
     db.commit()
-    yield create_llm_job(db)
-    db.exec(text("DROP VIEW IF EXISTS llm_call_2"))
-    db.commit()
+    return create_llm_job(db)
 
 
 def _reload(db: Session, llm_call: LlmCall) -> LlmCall:
@@ -147,3 +140,22 @@ def test_redacts_content_value_of_row_whose_input_is_already_sentinel(
 
     assert redact_llm_calls(session=db, cutoff=CUTOFF) == 1
     assert _reload(db, llm_call).content["content"]["value"] == REDACTED_SENTINEL
+
+
+def test_second_run_skips_redacted_row_with_null_content(db: Session, job: Job) -> None:
+    create_aged_llm_call(db, updated_at=AGED, job_id=job.id, content=None)
+
+    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 1
+    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 0
+
+
+def test_second_run_skips_redacted_row_without_content_value(
+    db: Session, job: Job
+) -> None:
+    llm_call = create_aged_llm_call(
+        db, updated_at=AGED, job_id=job.id, content={"type": "text"}
+    )
+
+    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 1
+    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 0
+    assert _reload(db, llm_call).content == {"type": "text"}
