@@ -232,8 +232,8 @@ GUARDRAILS_COMPONENT_SCHEMAS: dict[str, dict[str, Any]] = {
         "type": "object",
         "description": (
             "Extra keys are the validator's tuning config — e.g. "
-            "`entity_types` for `pii_remover`, `slur_severity` for "
-            "`content_safety`. Call GET /api/v1/guardrails for each type's "
+            "`entity_types` for `pii_remover`, `severity` for "
+            "`uli_slur_match`. Call GET /api/v1/guardrails for each type's "
             "accepted keys. `organization_id`/`project_id` must not be sent: "
             "the guardrails service derives the tenant from the authenticated "
             "context and rejects those keys with a 422."
@@ -359,7 +359,7 @@ class ValidatorGroup(NamedTuple):
 GROUPS: tuple[ValidatorGroup, ...] = (
     ValidatorGroup(
         "Abuse, profanity and unsafe content",
-        "Start with `content_safety`. The rest are narrower checks to add "
+        "Start with `uli_slur_match`. The rest are narrower checks to add "
         "when it is not enough on its own.",
         (
             "content_safety",
@@ -1001,15 +1001,15 @@ VALIDATOR_CONFIG_CREATE_EXAMPLES: dict[str, tuple[str, Any]] = {
             "entity_types": ["EMAIL_ADDRESS", "PHONE_NUMBER", "IN_AADHAAR"],
         },
     ),
-    "content_safety": (
-        "Slur redaction plus profanity check",
+    "uli_slur_match": (
+        "Slur redaction",
         {
-            "name": "Content Safety Input",
-            "type": "content_safety",
+            "name": "Slur Match Input",
+            "type": "uli_slur_match",
             "stage": "input",
             "on_fail_action": "fix",
-            "slur_severity": "all",
-            "profanity_threshold": 0.9,
+            "languages": ["en", "hi"],
+            "severity": "all",
         },
     ),
     "ban_list": (

@@ -21,7 +21,7 @@ GUARDRAILS_PROXY_TIMEOUT_SECONDS = 30.0
 
 # Upstream supports more; only these are productised for tenants.
 EXPOSED_VALIDATOR_TYPES = frozenset(
-    {"topic_relevance_llm", "content_safety", "gender_assumption_bias", "pii_remover"}
+    {"topic_relevance_llm", "uli_slur_match", "gender_assumption_bias", "pii_remover"}
 )
 
 

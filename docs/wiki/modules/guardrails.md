@@ -104,7 +104,7 @@ Opt-in flag on `LLMCallRequest`, default `False`. Gated on `outcome.applied`, so
 
 Thin pass-throughs over the upstream management API, all under `require_permission(Permission.REQUIRE_PROJECT)`:
 
-- `GET /guardrails` — validator catalogue, filtered to `EXPOSED_VALIDATOR_TYPES` (`services/llm/guardrails.py`; v1.0: `topic_relevance_llm`, `content_safety`, `gender_assumption_bias`, `pii_remover`). Only the list hides types — validator-config writes still forward any type upstream accepts.
+- `GET /guardrails` — validator catalogue, filtered to `EXPOSED_VALIDATOR_TYPES` (`services/llm/guardrails.py`; v1.0: `topic_relevance_llm`, `uli_slur_match`, `gender_assumption_bias`, `pii_remover`). Only the list hides types — validator-config writes still forward any type upstream accepts.
 - `/guardrails/ban_lists` — POST, GET (`domain`, `offset`, `limit`); `/{id}` GET/PATCH/DELETE
 - `/guardrails/llm_prompt_configs` — POST, GET (`validator_name`, `offset`, `limit`); `/{id}` GET/PATCH/DELETE
 - `/guardrails/validators/configs` — POST, GET (`ids`, `stage`, `type`); `/{id}` GET/PATCH/DELETE
