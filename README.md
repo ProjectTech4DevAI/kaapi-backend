@@ -1,7 +1,7 @@
 # KAAPI
 
-[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-![](https://github.com/ProjectTech4DevAI/kaapi-backend/workflows/Continuous%20Integration/badge.svg)
+[![License: AGPL v3](<https://img.shields.io/badge/License-AGPL%20v3-blue.svg>)](https://www.gnu.org/licenses/agpl-3.0)
+![](<https://github.com/ProjectTech4DevAI/kaapi-backend/workflows/Continuous%20Integration/badge.svg>)
 [![Code coverage badge](https://img.shields.io/codecov/c/github/ProjectTech4DevAI/kaapi-backend/staging.svg)](https://codecov.io/gh/ProjectTech4DevAI/kaapi-backend/branch/staging)
 ![GitHub issues](https://img.shields.io/github/issues-raw/ProjectTech4DevAI/kaapi-backend)
 [![codebeat badge](https://codebeat.co/badges/dd951390-5f51-4c98-bddc-0b618bdb43fd)](https://codebeat.co/projects/github-com-ProjectTech4DevAI/kaapi-backend-staging)
@@ -33,24 +33,24 @@ You can then update configs in the `.env` files to customize your configurations
 
 ### Generate Secret Keys
 
-
 You have to change them with a secret key, to generate secret keys you can run the following command:
 
 ```bash
 
 python -c "import secrets; print(secrets.token_urlsafe(32))"
-
-````
+```
 
 Copy the content and use that as password / secret key. And run that again to generate another secure key.
 
 ## Bootstrap & development mode
 
 You have two options to start this dockerized setup, depending on whether you want to reset the database:
+
 ### Option A: Run migrations & seed data (will reset DB)
 
 Use the prestart profile to automatically run database migrations and seed data.
 This profile also resets the database, so use it only when you want a fresh start.
+
 ```bash
 docker compose --profile prestart up
 ```
@@ -58,9 +58,11 @@ docker compose --profile prestart up
 ### Option B: Start normally without resetting DB
 
 If you don't want to reset the database, start the project directly:
+
 ```bash
 docker compose watch
 ```
+
 This will start all services in watch mode for development — ideal for local iterations.
 
 ### Rebuilding Images
@@ -72,6 +74,7 @@ docker compose up --build
 ```
 
 This is also necessary when:
+
 - Dependencies change in `pyproject.toml` or `uv.lock`
 - You modify Dockerfile configurations
 - Changes aren't being reflected in the running containers
@@ -97,3 +100,7 @@ Check the file [release-notes.md](./release-notes.md).
 ## Credits
 
 This project was created using [full-stack-fastapi-template](https://github.com/fastapi/full-stack-fastapi-template). A big thank you to the team for creating and maintaining the template!!!
+
+## License
+
+This project is licensed under the GNU AGPL v3.0 or later — see [LICENSE](./LICENSE).

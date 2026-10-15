@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from app.services.assessment.mappers import _ensure_openai_strict_schema
+from app.services.llm.mappers import _ensure_openai_strict_schema
 from app.services.assessment.prefilter import constants
 
 

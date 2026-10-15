@@ -30,11 +30,13 @@ from app.crud.evaluations.judge import (
     build_judge_params,
     judge_row,
 )
-from app.crud.evaluations.score import (
+from app.crud.evaluations.judge_prompts import (
     GROUND_TRUTH_JUDGE_PROMPT,
-    GROUND_TRUTH_SCORE_NAME,
     JUDGE_SYSTEM_PREAMBLE,
     KNOWLEDGE_BASE_JUDGE_PROMPT,
+)
+from app.crud.evaluations.score import (
+    GROUND_TRUTH_SCORE_NAME,
     KNOWLEDGE_BASE_SCORE_NAME,
     PROMPT_SCORE_NAME,
 )

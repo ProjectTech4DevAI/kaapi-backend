@@ -163,5 +163,5 @@ GET /api/analytics/monthly?metric=eval_cost&modality=STT&from_month=2026-01-01
   only to the `requests` metric (via the chain count), never to `cost` —
   its dollars come from the underlying `llm_call` rows.
 - **Cost computed on summed tokens per (provider, model) group**, which is
-  equivalent to per-row pricing because `estimate_model_cost` is linear in
+  equivalent to per-row pricing because the pricing function is linear in
   token counts.

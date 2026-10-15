@@ -369,7 +369,7 @@ class TestValidateAndStartBatchEvaluation:
 
     @patch(f"{_MODULE}.update_evaluation_run")
     @patch(f"{_MODULE}.start_evaluation_batch_submission")
-    @patch(f"{_MODULE}.create_evaluation_run_or_409")
+    @patch(f"{_MODULE}.create_evaluation_run")
     @patch(f"{_MODULE}.resolve_evaluation_config")
     @patch(f"{_MODULE}.get_dataset_by_id")
     def test_queue_failure_marks_run_failed(
@@ -406,7 +406,7 @@ class TestValidateAndStartBatchEvaluation:
         assert "Failed to queue batch submission" in update_arg.error_message
 
     @patch(f"{_MODULE}.start_evaluation_batch_submission")
-    @patch(f"{_MODULE}.create_evaluation_run_or_409")
+    @patch(f"{_MODULE}.create_evaluation_run")
     @patch(f"{_MODULE}.resolve_evaluation_config")
     @patch(f"{_MODULE}.get_dataset_by_id")
     def test_success_returns_run(
