@@ -723,7 +723,13 @@ class TestGuardrailsOutcomeBlocked:
         config_response.raise_for_status.return_value = None
         config_response.json.return_value = {
             "success": True,
-            "data": [{"type": "uli_slur_match", "stage": "input"}],
+            "data": [
+                {
+                    "id": str(self.VALIDATORS[0].validator_config_id),
+                    "type": "uli_slur_match",
+                    "stage": "input",
+                }
+            ],
         }
 
         client = MagicMock()

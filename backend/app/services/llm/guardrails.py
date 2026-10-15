@@ -43,6 +43,7 @@ def filter_exposed_validator_types(payload: Any) -> Any:
         ],
     }
 
+
 def _guardrails_headers(
     organization_id: int | None, project_id: int | None
 ) -> dict[str, str]:
