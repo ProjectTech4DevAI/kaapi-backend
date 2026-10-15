@@ -3,7 +3,7 @@
 All paths relative to `backend/app/`.
 
 ## Global handlers
-- `core/exception_handlers.py` — registered on the FastAPI app; maps exception types to HTTP responses. The `Exception` catch-all returns a fixed message, never `str(exc)`, so provider bodies and DB text don't reach callers.
+- `core/exception_handlers.py` — registered on the FastAPI app; maps exception types to HTTP responses. The `Exception` catch-all returns a fixed message, never `str(exc)`, so provider bodies and DB text don't reach callers. Unhandled `SQLAlchemyError` gets its own handler: a "Database error: ..." hint with 409 (`IntegrityError`), 422 (`DataError`), 503 (`OperationalError`) or 500 (any other); SQL and parameters only go to logs.
 - `core/middleware.py` — request-level middleware.
 
 ## Status-code selection

@@ -4,12 +4,15 @@ from collections import defaultdict
 
 import sentry_sdk
 from asgi_correlation_id import correlation_id
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DataError, IntegrityError, OperationalError, SQLAlchemyError
 from starlette.status import (
+    HTTP_409_CONFLICT,
     HTTP_422_UNPROCESSABLE_CONTENT,
     HTTP_500_INTERNAL_SERVER_ERROR,
+    HTTP_503_SERVICE_UNAVAILABLE,
 )
 
 from app.utils import APIResponse
@@ -17,6 +20,26 @@ from app.utils import APIResponse
 logger = logging.getLogger(__name__)
 
 GENERIC_ERROR_DETAIL = "An unexpected error occurred."
+DB_ERROR_DETAIL = "Database error: request could not be completed."
+
+# Subclasses of SQLAlchemyError, so the first isinstance match wins.
+_DB_ERROR_HINTS: tuple[tuple[type[SQLAlchemyError], int, str], ...] = (
+    (
+        IntegrityError,
+        HTTP_409_CONFLICT,
+        "Database error: request conflicts with existing data.",
+    ),
+    (
+        DataError,
+        HTTP_422_UNPROCESSABLE_CONTENT,
+        "Database error: a value is invalid or too long.",
+    ),
+    (
+        OperationalError,
+        HTTP_503_SERVICE_UNAVAILABLE,
+        "Database error: service temporarily unavailable, please retry.",
+    ),
+)
 
 _BRANCH_PATTERN = re.compile(r"^[A-Z]|[\[\]()]")
 
@@ -91,6 +114,14 @@ def _sanitize_validation_errors(errors: list[dict]) -> list[dict]:
         return errors
 
 
+def _db_error_response(exc: SQLAlchemyError) -> tuple[int, str]:
+    """Map a DB exception to a status and a client-safe hint; SQL and parameters stay server-side."""
+    for exc_type, status_code, hint in _DB_ERROR_HINTS:
+        if isinstance(exc, exc_type):
+            return status_code, hint
+    return HTTP_500_INTERNAL_SERVER_ERROR, DB_ERROR_DETAIL
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(
@@ -126,6 +157,19 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.status_code,
             content=APIResponse.failure_response(detail).model_dump(),
+        )
+
+    @app.exception_handler(SQLAlchemyError)
+    async def db_error_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
+        logger.error(
+            f"[db_error_handler] Unhandled DB error | path: {request.url.path}, "
+            f"type: {type(exc).__name__}, trace_id: {correlation_id.get() or 'N/A'}",
+            exc_info=exc,
+        )
+        status_code, hint = _db_error_response(exc)
+        return JSONResponse(
+            status_code=status_code,
+            content=APIResponse.failure_response(hint).model_dump(),
         )
 
     @app.exception_handler(Exception)
