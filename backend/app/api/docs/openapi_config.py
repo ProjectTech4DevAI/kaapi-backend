@@ -5,6 +5,14 @@ This module contains tag metadata and custom OpenAPI extensions
 for organizing and enhancing the API documentation.
 """
 
+from app.api.docs.guardrails_schemas import GUARDRAILS_COMPONENT_SCHEMAS
+from app.api.openapi_docs import inject_component_schemas, register_component_schemas
+
+# Schemas for routes that document a contract they do not validate (the
+# guardrails proxy). Registered at import so they are in `components` before
+# any `$ref` to them is resolved.
+register_component_schemas(GUARDRAILS_COMPONENT_SCHEMAS)
+
 # Tag metadata for organizing endpoints in documentation
 tags_metadata = [
     {
@@ -26,6 +34,13 @@ tags_metadata = [
     {
         "name": "LLM",
         "description": "Large Language Model inference and interaction endpoints",
+    },
+    {
+        "name": "Guardrails",
+        "description": (
+            "Text safety validation: applying guardrails to text, and managing "
+            "the validator configs, ban lists and LLM prompts they run on"
+        ),
     },
     {
         "name": "Evaluation",
@@ -89,6 +104,7 @@ tag_groups = [
             "Collections",
             "Config Management",
             "LLM",
+            "Guardrails",
             "Evaluation",
             "Fine Tuning",
             "Model Evaluation",
@@ -122,6 +138,7 @@ def customize_openapi_schema(openapi_schema: dict) -> dict:
     Returns:
         The customized OpenAPI schema with x-tagGroups and other extensions
     """
+    openapi_schema = inject_component_schemas(openapi_schema)
     openapi_schema["x-tagGroups"] = tag_groups
     deprecated_tags = ["Assistants", "Threads"]
 
