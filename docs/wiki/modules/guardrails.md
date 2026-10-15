@@ -104,7 +104,7 @@ Opt-in flag on `LLMCallRequest`, default `False`. Gated on `outcome.applied`, so
 
 Thin pass-throughs over the upstream management API, all under `require_permission(Permission.REQUIRE_PROJECT)`:
 
-- `GET /guardrails` — validator catalogue
+- `GET /guardrails` — validator catalogue, filtered to `EXPOSED_VALIDATOR_TYPES` (`services/llm/guardrails.py`; v1.0: `topic_relevance_llm`, `uli_slur_match`, `gender_assumption_bias`, `pii_remover`). Only the list hides types — validator-config writes still forward any type upstream accepts.
 - `/guardrails/ban_lists` — POST, GET (`domain`, `offset`, `limit`); `/{id}` GET/PATCH/DELETE
 - `/guardrails/llm_prompt_configs` — POST, GET (`validator_name`, `offset`, `limit`); `/{id}` GET/PATCH/DELETE
 - `/guardrails/validators/configs` — POST, GET (`ids`, `stage`, `type`); `/{id}` GET/PATCH/DELETE
@@ -113,7 +113,7 @@ These do **not** fail open: upstream status codes and bodies (including its 422s
 
 **Bodies are not validated here.** Each write route takes a `ProxyBody` (`Annotated[Any, Body(...)]`) and forwards it verbatim; the guardrails service owns validation. Mirroring its schemas as Pydantic models was tried and abandoned: the mirror rejected payloads upstream accepts as soon as the two drifted — a `content_safety` validator type added upstream was a gateway 422 while the enum here lagged behind.
 
-`GET /guardrails` carries a third thing: `VALIDATOR_TYPES` in `api/docs/guardrails_schemas.py`, a catalogue of all 12 validator types with their tuning keys, defaults and gotchas. It renders *both* the example response and the per-type reference appended to the route description (`render_validator_reference()`), so those two cannot disagree with each other. They can still fall behind the guardrails service — that is the one piece of this module that needs re-checking when upstream adds a validator or a key. Re-verify by diffing against the live schemas:
+`GET /guardrails` carries a third thing: `VALIDATOR_TYPES` in `api/docs/guardrails_schemas.py`, a catalogue of all 12 validator types with their tuning keys, defaults and gotchas. It renders *both* the example response and the per-type reference appended to the route description (`render_validator_reference()`), so those two cannot disagree with each other. Both render only `EXPOSED_VALIDATOR_TYPES`; the catalogue itself stays complete so exposing a type is a one-line change. They can still fall behind the guardrails service — that is the one piece of this module that needs re-checking when upstream adds a validator or a key. Re-verify by diffing against the live schemas:
 
 ```python
 # in kaapi-guardrails
