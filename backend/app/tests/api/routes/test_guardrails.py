@@ -16,11 +16,31 @@ from app.tests.utils.auth import TestAuthContext
 
 VALIDATOR_ID = str(uuid4())
 
+# The proxy routes validate their bodies against the mirrored guardrails
+# schemas, so these have to be complete payloads, not stubs.
+BAN_LIST_CREATE_BODY = {
+    "name": "Safety Banned Terms",
+    "description": "Terms not allowed for this tenant policy",
+    "domain": "abuse",
+    "banned_words": ["slur_a", "slur_b"],
+}
+LLM_PROMPT_CONFIG_CREATE_BODY = {
+    "validator_name": "topic_relevance",
+    "name": "Maternal Health Scope",
+    "description": "Topic guard for maternal health support bot",
+    "llm_prompt": "Only answer questions about maternal health.",
+}
+VALIDATOR_CONFIG_CREATE_BODY = {
+    "name": "PII Redaction Input",
+    "type": "pii_remover",
+    "stage": "input",
+}
+
 # (client method, kaapi path, request body, upstream path) — "{id}" is filled
 # with a freshly generated UUID by the tests that consume this table.
 PROXY_ROUTES = [
     ("GET", "/guardrails", None, "/"),
-    ("POST", "/guardrails/ban_lists", {"name": "slurs"}, "/ban_lists/"),
+    ("POST", "/guardrails/ban_lists", BAN_LIST_CREATE_BODY, "/ban_lists/"),
     ("GET", "/guardrails/ban_lists", None, "/ban_lists/"),
     ("GET", "/guardrails/ban_lists/{id}", None, "/ban_lists/{id}"),
     ("PATCH", "/guardrails/ban_lists/{id}", {"name": "renamed"}, "/ban_lists/{id}"),
@@ -28,7 +48,7 @@ PROXY_ROUTES = [
     (
         "POST",
         "/guardrails/llm_prompt_configs",
-        {"validator_name": "toxicity", "prompt": "be nice"},
+        LLM_PROMPT_CONFIG_CREATE_BODY,
         "/llm_prompt_configs/",
     ),
     ("GET", "/guardrails/llm_prompt_configs", None, "/llm_prompt_configs/"),
@@ -41,7 +61,7 @@ PROXY_ROUTES = [
     (
         "PATCH",
         "/guardrails/llm_prompt_configs/{id}",
-        {"prompt": "be nicer"},
+        {"llm_prompt": "be nicer"},
         "/llm_prompt_configs/{id}",
     ),
     (
@@ -53,7 +73,7 @@ PROXY_ROUTES = [
     (
         "POST",
         "/guardrails/validators/configs",
-        {"type": "pii", "stage": "input"},
+        VALIDATOR_CONFIG_CREATE_BODY,
         "/validators/configs/",
     ),
     ("GET", "/guardrails/validators/configs", None, "/validators/configs/"),
@@ -325,21 +345,18 @@ class TestProxyPassthrough:
     def test_create_echoes_upstream_status_and_body(
         self, client: TestClient, user_api_key_header: dict[str, str]
     ) -> None:
-        created = {"id": str(uuid4()), "validator_name": "toxicity"}
+        created = {"id": str(uuid4()), "validator_name": "topic_relevance"}
         # Upstream create routes return FastAPI's default 200.
         with _mock_upstream(status_code=200, json_body=created) as calls:
             resp = client.post(
                 "api/v1/guardrails/llm_prompt_configs",
-                json={"validator_name": "toxicity", "prompt": "be nice"},
+                json=LLM_PROMPT_CONFIG_CREATE_BODY,
                 headers=user_api_key_header,
             )
 
         assert resp.status_code == 200
         assert resp.json() == created
-        assert calls[0]["kwargs"]["json"] == {
-            "validator_name": "toxicity",
-            "prompt": "be nice",
-        }
+        assert calls[0]["kwargs"]["json"] == LLM_PROMPT_CONFIG_CREATE_BODY
 
     def test_connect_error_returns_502(
         self, client: TestClient, user_api_key_header: dict[str, str]
@@ -440,12 +457,12 @@ class TestProxyForwardedRequest:
     ) -> None:
         with _mock_upstream(json_body={"data": []}) as calls:
             client.get(
-                "api/v1/guardrails/llm_prompt_configs?validator_name=toxicity&limit=50",
+                "api/v1/guardrails/llm_prompt_configs?validator_name=topic_relevance&limit=50",
                 headers=user_api_key_header,
             )
 
         assert calls[0]["kwargs"]["params"] == {
-            "validator_name": "toxicity",
+            "validator_name": "topic_relevance",
             "offset": 0,
             "limit": 50,
         }
@@ -455,11 +472,14 @@ class TestProxyForwardedRequest:
     ) -> None:
         with _mock_upstream(json_body={"data": []}) as calls:
             client.get(
-                "api/v1/guardrails/validators/configs?stage=output&type=pii",
+                "api/v1/guardrails/validators/configs?stage=output&type=pii_remover",
                 headers=user_api_key_header,
             )
 
-        assert calls[0]["kwargs"]["params"] == {"stage": "output", "type": "pii"}
+        assert calls[0]["kwargs"]["params"] == {
+            "stage": "output",
+            "type": "pii_remover",
+        }
 
     def test_ids_are_normalised_to_canonical_uuid_strings(
         self, client: TestClient, user_api_key_header: dict[str, str]
@@ -497,7 +517,11 @@ class TestProxyForwardedRequest:
         with _mock_upstream(status_code=200, json_body={"id": str(uuid4())}) as calls:
             client.post(
                 "api/v1/guardrails/ban_lists?organization_id=999",
-                json={"name": "slurs", "organization_id": 999, "project_id": 888},
+                json={
+                    **BAN_LIST_CREATE_BODY,
+                    "organization_id": 999,
+                    "project_id": 888,
+                },
                 headers=user_api_key_header,
             )
 
@@ -653,3 +677,61 @@ def _seed_guardrails_job(
         job_id=job.id,
         job_update=JobUpdate(status=status, error_message=error_message),
     )
+
+
+class TestOpenAPIDocumentation:
+    """Every guardrails operation must stay testable from the Swagger UI."""
+
+    @staticmethod
+    def _guardrails_operations() -> list[tuple[str, str, dict[str, Any]]]:
+        from app.main import app
+
+        schema = app.openapi()
+        return [
+            (path, method, operation)
+            for path, item in schema["paths"].items()
+            if path.startswith("/api/v1/guardrails")
+            for method, operation in item.items()
+            if method in ("get", "post", "patch", "delete")
+        ]
+
+    def test_every_operation_is_documented(self) -> None:
+        for path, method, operation in self._guardrails_operations():
+            assert operation.get("summary"), f"{method.upper()} {path} has no summary"
+            assert operation.get(
+                "description"
+            ), f"{method.upper()} {path} has no description"
+
+    def test_every_operation_declares_a_response_schema(self) -> None:
+        for path, method, operation in self._guardrails_operations():
+            schema = (
+                operation["responses"]["200"]
+                .get("content", {})
+                .get("application/json", {})
+                .get("schema", {})
+            )
+            assert schema, f"{method.upper()} {path} documents no 200 schema"
+
+    def test_write_operations_declare_a_typed_request_body(self) -> None:
+        """An untyped body renders an empty box in Swagger, which is untestable."""
+        for path, method, operation in self._guardrails_operations():
+            if method not in ("post", "patch"):
+                continue
+            schema = operation["requestBody"]["content"]["application/json"]["schema"]
+            assert schema.get("$ref"), f"{method.upper()} {path} has an untyped body"
+
+    def test_apply_guardrails_publishes_its_webhook_contract(self) -> None:
+        from app.main import app
+
+        operation = app.openapi()["paths"]["/api/v1/guardrails"]["post"]
+        callback = operation["callbacks"]["guardrails_callback"]["{$callback_url}"]
+        schema = callback["post"]["requestBody"]["content"]["application/json"][
+            "schema"
+        ]
+        assert schema.get("$ref"), "webhook payload contract is not published"
+
+    def test_guardrails_tag_is_described_and_grouped(self) -> None:
+        from app.api.docs.openapi_config import tag_groups, tags_metadata
+
+        assert any(tag["name"] == "Guardrails" for tag in tags_metadata)
+        assert any("Guardrails" in group["tags"] for group in tag_groups)
