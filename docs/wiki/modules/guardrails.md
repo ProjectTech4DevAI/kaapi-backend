@@ -21,7 +21,8 @@ Both funnel into `apply_guardrails()` in `services/llm/guardrails.py`. That modu
 | Standalone job orchestration (dedupe, warnings, callbacks) | `services/guardrails/jobs.py` |
 | Routes: async job + poll + management proxies | `api/routes/guardrails.py` |
 | Public endpoint contract (rendered into OpenAPI) | `api/docs/guardrails/apply_guardrails.md` |
-| Request/response schemas | `models/guardrails/request.py`, `models/guardrails/response.py` |
+| Request/response schemas for the **job** routes (validated) | `models/guardrails/request.py`, `models/guardrails/response.py` |
+| Documented-but-not-validated contract for the **proxy** routes | `api/docs/guardrails_schemas.py` (JSON Schemas + examples), `api/openapi_docs.py` (`doc()`/`ref()` helpers, component registry) |
 | Inline adapters + call sites | `services/llm/jobs.py`, `services/llm/chain/chain.py` |
 | Celery task + enqueue helper | `celery/tasks/job_execution.py` (`run_guardrails_job`), `celery/utils.py` (`start_guardrails_job`) |
 | `JobType.LLM_GUARDRAILS`, `job.meta` | `models/job.py` |
@@ -110,13 +111,25 @@ Thin pass-throughs over the upstream management API, all under `require_permissi
 
 These do **not** fail open: upstream status codes and bodies (including its 422s) are returned unchanged. `_upstream_response` sets `Cache-Control: no-store` (tenant-scoped data must not sit in a shared cache, CWE-525) and keeps an empty upstream body empty, since a 204 cannot carry one. A non-JSON upstream body becomes a 502.
 
+**Bodies are not validated here.** Each write route takes a `ProxyBody` (`Annotated[Any, Body(...)]`) and forwards it verbatim; the guardrails service owns validation. Mirroring its schemas as Pydantic models was tried and abandoned: the mirror rejected payloads upstream accepts as soon as the two drifted — a `content_safety` validator type added upstream was a gateway 422 while the enum here lagged behind.
+
+`GET /guardrails` carries a third thing: `VALIDATOR_TYPES` in `api/docs/guardrails_schemas.py`, a catalogue of all 12 validator types with their tuning keys, defaults and gotchas. It renders *both* the example response and the per-type reference appended to the route description (`render_validator_reference()`), so those two cannot disagree with each other. They can still fall behind the guardrails service — that is the one piece of this module that needs re-checking when upstream adds a validator or a key. Re-verify by diffing against the live schemas:
+
+```python
+# in kaapi-guardrails
+from app.core.guardrail_controller import get_validator_config_models
+[m.model_json_schema() for m in get_validator_config_models()]
+```
+
+Swagger stays fully typed anyway. `api/docs/guardrails_schemas.py` holds hand-written JSON Schemas and examples; `register_component_schemas()` publishes them under `components.schemas` (injected by `customize_openapi_schema`), and each route `$ref`s them through `doc(request_schema=ref(...), responses={...})`. Docs metadata only — it cannot reject a request. Query params follow the same rule: filters are plain `str`, so an unknown-but-valid-upstream value is forwarded rather than 422'd. Pagination `ge`/`le` bounds are the one deliberate exception, since an out-of-range page is a client bug either way.
+
 ## 9. Invariants — do not break these
 
 1. Tenant identity travels in headers derived from the auth context. Never accept `organization_id`/`project_id` from a request body or query string.
 2. 401/403/422 fail closed; network/5xx fail open. Changing either side changes the security posture — say so explicitly in the PR.
 3. Client-visible error strings stay status-only, never `str(e)`.
 4. Fixed `/guardrails/*` paths stay declared **above** `GET /guardrails/{job_id}`. FastAPI matches in declaration order and will not fall through on a UUID parse failure.
-5. Management proxies return upstream status/body verbatim with `no-store`.
+5. Management proxies return upstream status/body verbatim with `no-store`, and validate **nothing** locally. A new field or validator type upstream must reach it without a change here; document it in `api/docs/guardrails_schemas.py` instead of enforcing it.
 6. Metadata emission stays gated on `outcome.applied`.
 7. Raw text persistence is intentional on the `/guardrails` job, not an oversight.
 8. `guardrail_outcome` marks content verdicts only. Never label a fail-closed auth/transport error `"blocked"` — a caller that treats blocks as benign (evaluation does) would silently swallow a broken deploy. It must not be retried either: the credentials are as broken on the third attempt as on the first, and an *output*-side failure re-charges the provider each time, because the completion is generated before output guardrails run. Hence `retryable` stays `False` on both guardrail error paths.
@@ -128,7 +141,8 @@ These do **not** fail open: upstream status codes and bodies (including its 422s
 | Add/modify an output guardrail behaviour | `apply_output_guardrails`, then `_run_output_guardrails` in `jobs.py` (shared by the proxy and provider paths) |
 | Change `apply_input_guardrails`' return | Add a field to `GuardrailResult` in `jobs.py`, then read it in `_run_input_guardrails` (`jobs.py`) |
 | Add a field to the `/guardrails` result | `models/guardrails/response.py` → `_build_callback_payload` (callback path) → `get_guardrails_job_status` (poll path, rebuilds independently) → `api/docs/guardrails/apply_guardrails.md` |
-| Add a management proxy route | `api/routes/guardrails.py` using `proxy_guardrails_request` + `_upstream_response`, declared above `/{job_id}` |
+| Add a management proxy route | `api/routes/guardrails.py` using `proxy_guardrails_request` + `_upstream_response`, declared above `/{job_id}`; body typed `ProxyBody`, docs via `**doc(...)` with schemas/examples added to `api/docs/guardrails_schemas.py` |
+| Upstream adds a field or validator type | Nothing is required for it to work — it already forwards. Update `VALIDATOR_TYPES` (and the relevant schema/example) in `api/docs/guardrails_schemas.py` so the docs stay honest |
 | Change upstream request/response shape | `run_guardrails_validation` and/or `list_validators_config`; check `summarize_validator_results` still finds `data.validator_results` |
 | Add a new warning | `_dedupe_validators` or `_outcome_warnings` in `services/guardrails/jobs.py`; document it in the api doc |
 | Change timeouts | `services/llm/guardrails.py` (three separate values, see §2) |
@@ -159,7 +173,7 @@ GET  /validators/configs/?ids=... -> {success, data: [ {...validator config...} 
 
 | File | Covers |
 |---|---|
-| `tests/api/routes/test_guardrails.py` | Routes, proxy behaviour, route ordering, poll |
+| `tests/api/routes/test_guardrails.py` | Routes, proxy behaviour, route ordering, poll, and `TestOpenAPIDocumentation` (every operation carries a summary, a 200 schema and a `$ref`'d request body) |
 | `tests/services/llm/test_guardrails.py` | Transport, fail-open/fail-closed matrix |
 | `tests/services/guardrails/test_jobs.py` | Standalone job worker, dedupe, warnings, callbacks |
 | `tests/services/llm/test_jobs.py` | Inline adapters, metadata emission |
