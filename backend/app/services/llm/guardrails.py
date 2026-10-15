@@ -193,7 +193,7 @@ def apply_guardrails(
 
     Args:
         text: Primary text to validate. Sent as `input` to the service.
-        validators: Config-ID references and/or inline specs, in run order.
+        validators: Config-ID references or inline specs.
             Entries with is_enabled=False are skipped; when nothing enabled
             remains the function short-circuits with a no-op outcome.
         output_text: When provided, sent as `output` to the service for
@@ -207,8 +207,15 @@ def apply_guardrails(
         )
 
     is_output = output_text is not None
+    stage = GUARDRAIL_STAGE_OUTPUT if is_output else GUARDRAIL_STAGE_INPUT
     references = [
         validator for validator in enabled if isinstance(validator, Validator)
+    ]
+    # The service's validator configs are extra="forbid", so is_enabled must go.
+    inline_specs = [
+        {**validator.model_dump(mode="json", exclude={"is_enabled"}), "stage": stage}
+        for validator in enabled
+        if isinstance(validator, InlineValidator)
     ]
 
     fetched: list[dict[str, Any]] = []
@@ -220,9 +227,15 @@ def apply_guardrails(
             output_validator_configs=references if is_output else None,
         )
         fetched = output_cfgs if is_output else input_cfgs
+        if not fetched:
+            logger.info(
+                f"[apply_guardrails] No validator configs resolved upstream | "
+                f"job_id={job_id}, is_output={is_output}, requested_ids="
+                f"{[str(v.validator_config_id) for v in references]}"
+            )
 
-    stage = GUARDRAIL_STAGE_OUTPUT if is_output else GUARDRAIL_STAGE_INPUT
-    resolved = _prepare_validators(enabled, fetched, stage, job_id)
+    # Blobs are all-refs or all-inline, so no interleaving or ordering is needed.
+    resolved = fetched + inline_specs
     if not resolved:
         return GuardrailsOutcome(
             safe_text=text, error=None, bypassed=False, rephrase_needed=False, raw={}
@@ -269,37 +282,6 @@ def apply_guardrails(
         rephrase_needed=False,
         raw=safe,
     )
-
-
-def _prepare_validators(
-    entries: Sequence[Validator | InlineValidator],
-    fetched_rows: list[dict[str, Any]],
-    stage: str,
-    job_id: UUID,
-) -> list[dict[str, Any]]:
-    """Build the POST `validators` list in blob order, since the service runs
-    them in the order received while the fetch returns rows by created_at."""
-    rows_by_id = {str(row.get("id")): row for row in fetched_rows}
-
-    prepared: list[dict[str, Any]] = []
-    for entry in entries:
-        if isinstance(entry, InlineValidator):
-            # The service's validator configs are extra="forbid", so is_enabled must go.
-            spec = entry.model_dump(mode="json", exclude={"is_enabled"})
-            spec["stage"] = stage
-            prepared.append(spec)
-            continue
-
-        config_id = str(entry.validator_config_id)
-        row = rows_by_id.get(config_id)
-        if row is None:
-            logger.warning(
-                f"[_prepare_validators] Validator config not returned upstream; "
-                f"dropping it | job_id={job_id}, validator_config_id={config_id}"
-            )
-            continue
-        prepared.append(row)
-    return prepared
 
 
 def summarize_validator_results(outcome: GuardrailsOutcome) -> list[dict[str, Any]]:

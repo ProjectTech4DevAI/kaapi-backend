@@ -85,7 +85,7 @@ def guardrails_http(*verdicts: dict[str, Any] | Exception) -> Iterator[MagicMock
     config_response.raise_for_status.return_value = None
     config_response.json.return_value = {
         "success": True,
-        "data": [{"id": str(VALIDATOR_CONFIG_ID), "type": "uli_slur_match"}],
+        "data": [{"type": "uli_slur_match"}],
     }
 
     responses = []
@@ -332,10 +332,7 @@ class TestGuardrailOutcome:
         with (
             patch(
                 "app.services.llm.guardrails.list_validators_config",
-                return_value=(
-                    [],
-                    [{"id": VALIDATOR_CONFIG_ID, "type": "pii_remover"}],
-                ),
+                return_value=([], [{"type": "pii_remover"}]),
             ),
             patch(
                 "app.services.llm.guardrails.run_guardrails_validation",

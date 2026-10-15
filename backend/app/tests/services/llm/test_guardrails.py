@@ -435,8 +435,7 @@ _PASS_RESPONSE = {"success": True, "data": {"safe_text": "clean"}}
 def _ref() -> tuple[Validator, dict[str, Any]]:
     config_id = uuid4()
     return Validator(validator_config_id=config_id), {
-        "id": str(config_id),
-        "type": f"fetched_{config_id.hex[:8]}",
+        "type": f"fetched_{config_id.hex[:8]}"
     }
 
 
@@ -516,28 +515,6 @@ class TestApplyGuardrails:
         assert mock_run.call_args.args[1] == [{"type": "pii_remover", "stage": "input"}]
         assert outcome.safe_text == "clean"
 
-    def test_posts_in_blob_order_not_fetch_order(self, mock_fetch, mock_run) -> None:
-        ref_x, row_x = _ref()
-        ref_y, row_y = _ref()
-        mock_fetch.return_value = ([row_y, row_x], [])
-        mock_run.return_value = _PASS_RESPONSE
-
-        _apply(
-            [
-                InlineValidator(type="profanity_free"),
-                ref_x,
-                InlineValidator(type="pii_remover"),
-                ref_y,
-            ]
-        )
-
-        assert mock_run.call_args.args[1] == [
-            {"type": "profanity_free", "stage": "input"},
-            row_x,
-            {"type": "pii_remover", "stage": "input"},
-            row_y,
-        ]
-
     def test_inline_spec_posted_shape(self, mock_fetch, mock_run) -> None:
         mock_run.return_value = _PASS_RESPONSE
 
@@ -575,16 +552,6 @@ class TestApplyGuardrails:
         ]
         assert mock_run.call_args.kwargs["output_text"] == "llm out"
 
-    def test_ref_missing_upstream_is_dropped(self, mock_fetch, mock_run) -> None:
-        found_ref, found_row = _ref()
-        missing_ref, _ = _ref()
-        mock_fetch.return_value = ([found_row], [])
-        mock_run.return_value = _PASS_RESPONSE
-
-        _apply([missing_ref, found_ref])
-
-        assert mock_run.call_args.args[1] == [found_row]
-
     def test_only_ref_missing_upstream_is_noop(self, mock_fetch, mock_run) -> None:
         ref, _ = _ref()
         mock_fetch.return_value = ([], [])
@@ -593,17 +560,6 @@ class TestApplyGuardrails:
 
         _assert_noop(outcome)
         mock_run.assert_not_called()
-
-    def test_fetch_failing_open_still_posts_inline_specs(
-        self, mock_fetch, mock_run
-    ) -> None:
-        ref, _ = _ref()
-        mock_fetch.return_value = ([], [])  # list_validators_config's fail-open shape
-        mock_run.return_value = _PASS_RESPONSE
-
-        _apply([ref, InlineValidator(type="pii_remover")])
-
-        assert mock_run.call_args.args[1] == [{"type": "pii_remover", "stage": "input"}]
 
 
 _SAFE_TEXT = "Please rephrase: content not allowed."
@@ -723,13 +679,7 @@ class TestGuardrailsOutcomeBlocked:
         config_response.raise_for_status.return_value = None
         config_response.json.return_value = {
             "success": True,
-            "data": [
-                {
-                    "id": str(self.VALIDATORS[0].validator_config_id),
-                    "type": "uli_slur_match",
-                    "stage": "input",
-                }
-            ],
+            "data": [{"type": "uli_slur_match", "stage": "input"}],
         }
 
         client = MagicMock()
