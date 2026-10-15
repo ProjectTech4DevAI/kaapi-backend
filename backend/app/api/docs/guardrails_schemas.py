@@ -355,9 +355,8 @@ class ValidatorGroup(NamedTuple):
     types: tuple[str, ...]
 
 
-# Three questions a reader actually arrives with, rather than one flat list.
-# Each group leads with the type to reach for first. Groups list every upstream
-# type; rendering keeps only `EXPOSED_VALIDATOR_TYPES`.
+# Grouped by the question a reader arrives with; rendering keeps only
+# EXPOSED_VALIDATOR_TYPES.
 GROUPS: tuple[ValidatorGroup, ...] = (
     ValidatorGroup(
         "Abuse, profanity and unsafe content",
@@ -861,7 +860,7 @@ def _by_type() -> dict[str, ValidatorType]:
 
 
 def _ordered_types() -> list[ValidatorType]:
-    """Exposed catalogue in reading order: grouped, groups in `GROUPS` order."""
+    """Exposed types in `GROUPS` order."""
     catalogued = _by_type()
     return [
         catalogued[name]
