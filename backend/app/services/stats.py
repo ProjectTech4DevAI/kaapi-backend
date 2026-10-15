@@ -1,6 +1,7 @@
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import TypedDict
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -18,6 +19,8 @@ DISCORD_EMBED_FIELD_VALUE_LIMIT = (
 DISCORD_EMBED_FIELD_COUNT_LIMIT = 25  # Discord embed field cap.
 DISCORD_EMBED_BORDER_COLOR = 0x3B82F6  # Blue left-border accent on the Discord embed.
 COLUMN_LABELS = {"24h": "Last 24hrs", "7d": "Last 7 days"}
+# Stats report date must match the cron's Asia/Kolkata schedule, not server-local time.
+STATS_TIMEZONE = ZoneInfo("Asia/Kolkata")
 
 
 class EmbedField(TypedDict):
@@ -121,7 +124,7 @@ def post_to_discord(fields: list[EmbedField], *, today: date | None = None) -> N
     if not url:
         return
 
-    stat_date = today or date.today()
+    stat_date = today or datetime.now(STATS_TIMEZONE).date()
     title = f"Date: {stat_date.day}/{stat_date.month}/{stat_date.year}"
     description = "Daily platform feature stats"
 

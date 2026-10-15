@@ -30,7 +30,10 @@ def create_evaluation_iteration_run(
     organization_id: int,
     project_id: int,
 ) -> EvaluationIterationRun:
-    """Create the thin tracking row, status=PROCESSING."""
+    """Create the thin tracking row, status=PROCESSING.
+
+    `last_dispatched_at` is stamped so the cron cooldown covers kickoff's first step.
+    """
     iteration_run = EvaluationIterationRun(
         dataset_id=dataset_id,
         experiment_name=experiment_name,
@@ -38,17 +41,13 @@ def create_evaluation_iteration_run(
         initial_config_version=initial_config_version,
         callback_url=callback_url,
         status=EvaluationIterationStatusEnum.PROCESSING,
+        last_dispatched_at=now(),
         organization_id=organization_id,
         project_id=project_id,
     )
     session.add(iteration_run)
     session.commit()
     session.refresh(iteration_run)
-    logger.info(
-        f"[create_evaluation_iteration_run] Created | "
-        f"iteration_run_id={iteration_run.id} | dataset_id={dataset_id} | "
-        f"org_id={organization_id} | project_id={project_id}"
-    )
     return iteration_run
 
 
@@ -83,11 +82,7 @@ def list_processing_evaluation_iteration_runs(
     statement = select(EvaluationIterationRun).where(
         EvaluationIterationRun.status == EvaluationIterationStatusEnum.PROCESSING
     )
-    runs = list(session.exec(statement).all())
-    logger.info(
-        f"[list_processing_evaluation_iteration_runs] Found {len(runs)} processing loops"
-    )
-    return runs
+    return list(session.exec(statement).all())
 
 
 def update_evaluation_iteration_run(

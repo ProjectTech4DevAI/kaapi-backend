@@ -86,6 +86,8 @@ from .document import (
     DocTransformationJobsPublic,
     Document,
     DocumentPublic,
+    DocumentUploadInitiateResponse,
+    DocumentUploadRequest,
     DocumentUploadResponse,
     TransformationJobInfo,
     TransformedDocumentPublic,
