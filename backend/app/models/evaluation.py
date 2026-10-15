@@ -212,7 +212,7 @@ class EvaluationDataset(SQLModel, table=True):
 class EvaluationRun(SQLModel, table=True):
     """Database table for evaluation runs."""
 
-    __tablename__ = "evaluation_run"
+    __tablename__ = "evaluation_run"  # pyright: ignore[reportAssignmentType]
     __table_args__ = (
         Index("idx_eval_run_status_org", "status", "organization_id"),
         Index("idx_eval_run_status_project", "status", "project_id"),

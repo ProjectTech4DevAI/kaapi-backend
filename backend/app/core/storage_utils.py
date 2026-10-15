@@ -8,6 +8,7 @@ to cloud object storage, abstracting away provider-specific details.
 import json
 import logging
 import mimetypes
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -109,7 +110,7 @@ def upload_to_object_store(
 
 def upload_jsonl_to_object_store(
     storage: CloudStorage,
-    results: list[dict],
+    results: Sequence[Mapping[str, object]],
     filename: str,
     subdirectory: str,
     format: Literal["json", "jsonl"] = "jsonl",

@@ -131,6 +131,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def generic_error_handler(request: Request, exc: Exception) -> JSONResponse:
         # Fixed detail: str(exc) here leaked provider bodies and DB text to callers.
+        sentry_sdk.capture_exception(exc)
         logger.error(
             f"[generic_error_handler] Unhandled exception | "
             f"path: {request.url.path}, trace_id: {correlation_id.get() or 'N/A'}",

@@ -29,14 +29,15 @@ from app.tests.utils.utils import random_lower_string
 def _config(db, project_id):
     blob = AssessmentConfigBlob.model_validate(
         {
+            "input_schema": {"a": {"type": "text"}},
             "assessment": {
                 "provider": "openai",
                 "type": "text",
                 "params": {
                     "model": "gpt-4o",
-                    "input_schema": {"a": {"type": "text"}},
+                    "submission": "assess {a}",
                 },
-            }
+            },
         }
     )
     return create_test_config(
@@ -56,7 +57,7 @@ class TestApiCrudRoundTrip:
         assessment = api.create_assessment(
             session=db,
             method=AssessmentMethod.BATCH,
-            input={"query": "q", "data": [{"a": "1"}]},
+            input={"data": [{"a": "1"}]},
             organization_id=auth.organization_id,
             project_id=auth.project_id,
         )
@@ -121,7 +122,7 @@ class TestApiCrudRoundTrip:
         assessment = api.create_assessment(
             session=db,
             method=AssessmentMethod.RESPONSE,
-            input={"query": "q"},
+            input={"attachments": []},
             organization_id=auth.organization_id,
             project_id=auth.project_id,
         )
@@ -139,7 +140,7 @@ class TestApiCrudRoundTrip:
         assessment = api.create_assessment(
             session=db,
             method=AssessmentMethod.BATCH,
-            input={"query": "q", "data": [{"a": "1"}]},
+            input={"data": [{"a": "1"}]},
             organization_id=auth.organization_id,
             project_id=auth.project_id,
         )
@@ -161,16 +162,70 @@ class TestApiCrudRoundTrip:
         assert [e.id for e in listed] == [first.id, second.id]
 
 
+class TestSetResultFiles:
+    def _assessment(self, db, auth):
+        return api.create_assessment(
+            session=db,
+            method=AssessmentMethod.BATCH,
+            input={"data": [{"a": "1"}]},
+            organization_id=auth.organization_id,
+            project_id=auth.project_id,
+        )
+
+    def test_second_kind_does_not_evict_the_first(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        assessment = self._assessment(db, auth)
+
+        api.set_result_files(
+            session=db,
+            assessment=assessment,
+            files={"results": {"url": "s3://b/out.jsonl", "count": 998}},
+        )
+        api.set_result_files(
+            session=db,
+            assessment=assessment,
+            files={"errors": {"url": "s3://b/errors.jsonl", "count": 389}},
+        )
+
+        db.refresh(assessment)
+        assert assessment.result_files == {
+            "results": {"url": "s3://b/out.jsonl", "count": 998},
+            "errors": {"url": "s3://b/errors.jsonl", "count": 389},
+        }
+
+    def test_rerecording_a_kind_replaces_only_that_kind(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        assessment = self._assessment(db, auth)
+
+        api.set_result_files(
+            session=db,
+            assessment=assessment,
+            files={
+                "results": {"url": "s3://b/stale.jsonl", "count": 1},
+                "errors": {"url": "s3://b/errors.jsonl", "count": 389},
+            },
+        )
+        api.set_result_files(
+            session=db,
+            assessment=assessment,
+            files={"results": {"url": "s3://b/fresh.jsonl", "count": 998}},
+        )
+
+        db.refresh(assessment)
+        assert assessment.result_files["results"] == {
+            "url": "s3://b/fresh.jsonl",
+            "count": 998,
+        }
+        assert assessment.result_files["errors"]["count"] == 389
+
+
 class TestDeriveMethod:
     def test_response_input(self) -> None:
-        assert (
-            derive_method(ResponseInput(query="hi"), None) == AssessmentMethod.RESPONSE
-        )
+        assert derive_method(ResponseInput(), None) == AssessmentMethod.RESPONSE
 
     def test_batch_input(self) -> None:
         assert (
-            derive_method(BatchInput(query="q", data=[{"a": "1"}]), None)
-            == AssessmentMethod.BATCH
+            derive_method(BatchInput(data=[{"a": "1"}]), None) == AssessmentMethod.BATCH
         )
 
     def test_dataset_only_is_run(self) -> None:
@@ -238,10 +293,16 @@ class TestPreFilterValidators:
         assert "effort" not in flt.params
 
 
-def _assessment_params(**extra) -> dict:
-    params = {"model": "gpt-4o", "input_schema": {"a": {"type": "text"}}}
+def _assessment_params(*, input_schema: dict | None = None, **extra) -> dict:
+    params = {
+        "model": "gpt-4o",
+        "submission": "Assess this submission.",
+    }
     params.update(extra)
-    return {"assessment": {"provider": "openai", "type": "text", "params": params}}
+    return {
+        "input_schema": input_schema or {"a": {"type": "text"}},
+        "assessment": {"provider": "openai", "type": "text", "params": params},
+    }
 
 
 class TestAssessmentCompletionConfigValidator:
@@ -253,16 +314,28 @@ class TestAssessmentCompletionConfigValidator:
         blob = AssessmentConfigBlob.model_validate(_assessment_params(temperature=0.4))
         assert blob.assessment.params["temperature"] == 0.4
 
+    def test_thinking_params_reach_the_stored_params(self) -> None:
+        # validate_params replaces params with the model dump, so a param the model
+        # does not declare is silently dropped before any mapper can see it.
+        thinking = {"type": "enabled", "budget_tokens": 4096}
+        blob = AssessmentConfigBlob.model_validate(
+            _assessment_params(thinking=thinking, thinking_level="high")
+        )
+        assert blob.assessment.params["thinking"] == thinking
+        assert blob.assessment.params["thinking_level"] == "high"
+
 
 class TestInputSchemaValidators:
     def test_missing_input_schema_rejected(self) -> None:
+        # No top-level input_schema; the rest of the blob is otherwise valid, so the
+        # only failure is the mandatory top-level input_schema field.
         with pytest.raises(ValidationError):
             AssessmentConfigBlob.model_validate(
                 {
                     "assessment": {
                         "provider": "openai",
                         "type": "text",
-                        "params": {"model": "gpt-4o"},
+                        "params": {"model": "gpt-4o", "submission": "assess it"},
                     }
                 }
             )
@@ -271,11 +344,12 @@ class TestInputSchemaValidators:
         with pytest.raises(ValidationError):
             AssessmentConfigBlob.model_validate(
                 {
+                    "input_schema": {},
                     "assessment": {
                         "provider": "openai",
                         "type": "text",
-                        "params": {"model": "gpt-4o", "input_schema": {}},
-                    }
+                        "params": {"model": "gpt-4o", "submission": "assess it"},
+                    },
                 }
             )
 
@@ -283,14 +357,12 @@ class TestInputSchemaValidators:
         with pytest.raises(ValidationError):
             AssessmentConfigBlob.model_validate(
                 {
+                    "input_schema": {"a": {"format": "url"}},
                     "assessment": {
                         "provider": "openai",
                         "type": "text",
-                        "params": {
-                            "model": "gpt-4o",
-                            "input_schema": {"a": {"format": "url"}},
-                        },
-                    }
+                        "params": {"model": "gpt-4o", "submission": "assess it"},
+                    },
                 }
             )
 
@@ -303,7 +375,115 @@ class TestInputSchemaValidators:
                 }
             )
         )
-        assert set(blob.assessment.params["input_schema"]) == {"name", "sheet"}
+        assert set(blob.input_schema) == {"name", "sheet"}
+
+
+def _blob_with_submissions(
+    *,
+    submission: str = "assess {a}",
+    input_schema: dict | None = None,
+    topic_submission: str | None = None,
+) -> dict:
+    params: dict = {
+        "model": "gpt-4o",
+        "submission": submission,
+    }
+    blob: dict = {
+        "input_schema": input_schema or {"a": {"type": "text"}},
+        "assessment": {"provider": "openai", "type": "text", "params": params},
+    }
+    if topic_submission is not None:
+        blob["pre_filters"] = {
+            "topic_relevance": {
+                "provider": "openai",
+                "params": {
+                    "model": "gpt-4o",
+                    "instructions": "on topic?",
+                    "submission": topic_submission,
+                },
+                "stop_on_fail": True,
+            }
+        }
+    return blob
+
+
+class TestSubmissionPlaceholderValidator:
+    def test_valid_assessment_and_prefilter_submission_passes(self) -> None:
+        blob = AssessmentConfigBlob.model_validate(
+            _blob_with_submissions(
+                input_schema={"a": {"type": "text"}, "b": {"type": "text"}},
+                submission="assess {a} and {b}",
+                topic_submission="rank {b}",
+            )
+        )
+        assert blob.assessment.params["submission"] == "assess {a} and {b}"
+        assert blob.pre_filters.topic_relevance.params["submission"] == "rank {b}"
+
+    def test_unknown_placeholder_in_assessment_submission_raises(self) -> None:
+        with pytest.raises(ValidationError, match="assessment submission.*unknown"):
+            AssessmentConfigBlob.model_validate(
+                _blob_with_submissions(submission="assess {missing}")
+            )
+
+    def test_unknown_placeholder_in_prefilter_submission_raises(self) -> None:
+        with pytest.raises(
+            ValidationError, match="pre_filter topic_relevance submission.*unknown"
+        ):
+            AssessmentConfigBlob.model_validate(
+                _blob_with_submissions(topic_submission="rank {missing}")
+            )
+
+    def test_missing_assessment_submission_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            AssessmentConfigBlob.model_validate(
+                {
+                    "input_schema": {"a": {"type": "text"}},
+                    "assessment": {
+                        "provider": "openai",
+                        "type": "text",
+                        "params": {"model": "gpt-4o"},
+                    },
+                }
+            )
+
+    def test_prefilter_submission_absent_is_accepted(self) -> None:
+        blob = AssessmentConfigBlob.model_validate(
+            {
+                "input_schema": {"a": {"type": "text"}},
+                "assessment": {
+                    "provider": "openai",
+                    "type": "text",
+                    "params": {
+                        "model": "gpt-4o",
+                        "submission": "assess {a}",
+                    },
+                },
+                "pre_filters": {
+                    "topic_relevance": {
+                        "provider": "openai",
+                        "params": {"model": "gpt-4o", "instructions": "on topic?"},
+                        "stop_on_fail": True,
+                    }
+                },
+            }
+        )
+        assert "submission" not in blob.pre_filters.topic_relevance.params
+
+
+class TestAssessmentInputExtraForbid:
+    def test_batch_input_rejects_query_key(self) -> None:
+        with pytest.raises(ValidationError):
+            BatchInput.model_validate({"query": "q", "data": [{"a": "1"}]})
+
+    def test_batch_input_without_query_accepted(self) -> None:
+        assert BatchInput.model_validate({"data": [{"a": "1"}]}).data == [{"a": "1"}]
+
+    def test_response_input_rejects_query_key(self) -> None:
+        with pytest.raises(ValidationError):
+            ResponseInput.model_validate({"query": "hi"})
+
+    def test_response_input_without_query_accepted(self) -> None:
+        assert ResponseInput.model_validate({"attachments": []}).attachments == []
 
 
 class TestInputColumn:
@@ -315,3 +495,11 @@ class TestInputColumn:
         col = InputColumn.model_validate({"type": "image", "format": "url"})
         assert col.type == "image"
         assert col.format == "url"
+
+    def test_video_base64_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            InputColumn.model_validate({"type": "video", "format": "base64"})
+
+    def test_video_url_accepted(self) -> None:
+        col = InputColumn.model_validate({"type": "video", "format": "url"})
+        assert col.type == "video"

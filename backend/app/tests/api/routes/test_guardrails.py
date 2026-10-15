@@ -1,15 +1,103 @@
-from unittest.mock import patch
+from contextlib import contextmanager
+from typing import Any
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import httpx
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+from app.core.config import settings
 from app.crud import JobCrud
 from app.models import Job, JobStatus, JobType, JobUpdate
 from app.tests.utils.auth import TestAuthContext
 
 
 VALIDATOR_ID = str(uuid4())
+
+# The proxy routes validate their bodies against the mirrored guardrails
+# schemas, so these have to be complete payloads, not stubs.
+BAN_LIST_CREATE_BODY = {
+    "name": "Safety Banned Terms",
+    "description": "Terms not allowed for this tenant policy",
+    "domain": "abuse",
+    "banned_words": ["slur_a", "slur_b"],
+}
+LLM_PROMPT_CONFIG_CREATE_BODY = {
+    "validator_name": "topic_relevance",
+    "name": "Maternal Health Scope",
+    "description": "Topic guard for maternal health support bot",
+    "llm_prompt": "Only answer questions about maternal health.",
+}
+VALIDATOR_CONFIG_CREATE_BODY = {
+    "name": "PII Redaction Input",
+    "type": "pii_remover",
+    "stage": "input",
+}
+
+# (client method, kaapi path, request body, upstream path) — "{id}" is filled
+# with a freshly generated UUID by the tests that consume this table.
+PROXY_ROUTES = [
+    ("GET", "/guardrails", None, "/"),
+    ("POST", "/guardrails/ban_lists", BAN_LIST_CREATE_BODY, "/ban_lists/"),
+    ("GET", "/guardrails/ban_lists", None, "/ban_lists/"),
+    ("GET", "/guardrails/ban_lists/{id}", None, "/ban_lists/{id}"),
+    ("PATCH", "/guardrails/ban_lists/{id}", {"name": "renamed"}, "/ban_lists/{id}"),
+    ("DELETE", "/guardrails/ban_lists/{id}", None, "/ban_lists/{id}"),
+    (
+        "POST",
+        "/guardrails/llm_prompt_configs",
+        LLM_PROMPT_CONFIG_CREATE_BODY,
+        "/llm_prompt_configs/",
+    ),
+    ("GET", "/guardrails/llm_prompt_configs", None, "/llm_prompt_configs/"),
+    (
+        "GET",
+        "/guardrails/llm_prompt_configs/{id}",
+        None,
+        "/llm_prompt_configs/{id}",
+    ),
+    (
+        "PATCH",
+        "/guardrails/llm_prompt_configs/{id}",
+        {"llm_prompt": "be nicer"},
+        "/llm_prompt_configs/{id}",
+    ),
+    (
+        "DELETE",
+        "/guardrails/llm_prompt_configs/{id}",
+        None,
+        "/llm_prompt_configs/{id}",
+    ),
+    (
+        "POST",
+        "/guardrails/validators/configs",
+        VALIDATOR_CONFIG_CREATE_BODY,
+        "/validators/configs/",
+    ),
+    ("GET", "/guardrails/validators/configs", None, "/validators/configs/"),
+    (
+        "GET",
+        "/guardrails/validators/configs/{id}",
+        None,
+        "/validators/configs/{id}",
+    ),
+    (
+        "PATCH",
+        "/guardrails/validators/configs/{id}",
+        {"stage": "output"},
+        "/validators/configs/{id}",
+    ),
+    (
+        "DELETE",
+        "/guardrails/validators/configs/{id}",
+        None,
+        "/validators/configs/{id}",
+    ),
+]
+
+PROXY_ROUTE_IDS = [f"{method} {path}" for method, path, _, _ in PROXY_ROUTES]
 
 
 def _payload(**overrides):
@@ -218,7 +306,347 @@ def test_get_guardrails_failed_returns_error_message(
     assert data["guardrails_response"] is None
 
 
+# ---------- management-API proxy routes ----------
+
+
+class TestProxyPassthrough:
+    @pytest.mark.parametrize(
+        "status_code, body",
+        [
+            (200, {"success": True, "data": [{"name": "pii"}]}),
+            (422, {"detail": [{"loc": ["body", "name"], "msg": "field required"}]}),
+            (404, {"detail": "Ban list not found"}),
+        ],
+    )
+    def test_upstream_status_and_body_echoed(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        status_code: int,
+        body: dict[str, Any],
+    ) -> None:
+        with _mock_upstream(status_code=status_code, json_body=body):
+            resp = client.get("api/v1/guardrails", headers=user_api_key_header)
+
+        assert resp.status_code == status_code
+        assert resp.json() == body
+
+    def test_empty_upstream_body_returns_status_with_no_body(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        with _mock_upstream(status_code=204, content=b""):
+            resp = client.delete(
+                f"api/v1/guardrails/ban_lists/{uuid4()}", headers=user_api_key_header
+            )
+
+        assert resp.status_code == 204
+        assert resp.content == b""
+
+    def test_create_echoes_upstream_status_and_body(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        created = {"id": str(uuid4()), "validator_name": "topic_relevance"}
+        # Upstream create routes return FastAPI's default 200.
+        with _mock_upstream(status_code=200, json_body=created) as calls:
+            resp = client.post(
+                "api/v1/guardrails/llm_prompt_configs",
+                json=LLM_PROMPT_CONFIG_CREATE_BODY,
+                headers=user_api_key_header,
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == created
+        assert calls[0]["kwargs"]["json"] == LLM_PROMPT_CONFIG_CREATE_BODY
+
+    def test_connect_error_returns_502(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        with _mock_upstream(raises=httpx.ConnectError("connection refused")):
+            resp = client.get("api/v1/guardrails", headers=user_api_key_header)
+
+        assert resp.status_code == 502
+        assert resp.json()["error"] == "Guardrails service unavailable"
+
+    def test_non_json_upstream_body_returns_502(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        with _mock_upstream(status_code=200, content=b"<html>gateway</html>"):
+            resp = client.get("api/v1/guardrails", headers=user_api_key_header)
+
+        assert resp.status_code == 502
+        assert resp.json()["error"] == "Guardrails service returned an invalid response"
+
+
+class TestProxyForwardedRequest:
+    @pytest.mark.parametrize(
+        "method, kaapi_path, body, upstream_path", PROXY_ROUTES, ids=PROXY_ROUTE_IDS
+    )
+    def test_route_forwards_method_path_body_and_tenant(
+        self,
+        client: TestClient,
+        user_api_key: TestAuthContext,
+        user_api_key_header: dict[str, str],
+        method: str,
+        kaapi_path: str,
+        body: dict[str, Any] | None,
+        upstream_path: str,
+    ) -> None:
+        resource_id = uuid4()
+        upstream_body = {"ok": True}
+        with _mock_upstream(json_body=upstream_body) as calls:
+            resp = client.request(
+                method,
+                f"api/v1{kaapi_path.format(id=resource_id)}",
+                json=body,
+                headers=user_api_key_header,
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == upstream_body
+        assert calls[0]["args"] == (
+            method,
+            f"{settings.KAAPI_GUARDRAILS_URL}{upstream_path.format(id=resource_id)}",
+        )
+        assert calls[0]["kwargs"]["json"] == body
+        headers = calls[0]["kwargs"]["headers"]
+        assert headers["X-ORGANIZATION-ID"] == str(user_api_key.organization_id)
+        assert headers["X-PROJECT-ID"] == str(user_api_key.project_id)
+
+    def test_unset_limit_is_dropped_from_forwarded_params(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        with _mock_upstream(json_body={"data": []}) as calls:
+            client.get("api/v1/guardrails/ban_lists", headers=user_api_key_header)
+
+        params = calls[0]["kwargs"]["params"]
+        assert params == {"offset": 0}
+
+    def test_ids_forwarded_as_list(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        first, second = str(uuid4()), str(uuid4())
+        with _mock_upstream(json_body={"data": []}) as calls:
+            client.get(
+                f"api/v1/guardrails/validators/configs?ids={first}&ids={second}"
+                "&stage=input",
+                headers=user_api_key_header,
+            )
+
+        assert calls[0]["kwargs"]["params"] == {
+            "ids": [first, second],
+            "stage": "input",
+        }
+
+    def test_ban_list_filters_forwarded(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        with _mock_upstream(json_body={"data": []}) as calls:
+            client.get(
+                "api/v1/guardrails/ban_lists?domain=email&offset=5&limit=10",
+                headers=user_api_key_header,
+            )
+
+        assert calls[0]["kwargs"]["params"] == {
+            "domain": "email",
+            "offset": 5,
+            "limit": 10,
+        }
+
+    def test_llm_prompt_config_filters_forwarded(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        with _mock_upstream(json_body={"data": []}) as calls:
+            client.get(
+                "api/v1/guardrails/llm_prompt_configs?validator_name=topic_relevance&limit=50",
+                headers=user_api_key_header,
+            )
+
+        assert calls[0]["kwargs"]["params"] == {
+            "validator_name": "topic_relevance",
+            "offset": 0,
+            "limit": 50,
+        }
+
+    def test_validator_config_filters_forwarded_without_ids(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        with _mock_upstream(json_body={"data": []}) as calls:
+            client.get(
+                "api/v1/guardrails/validators/configs?stage=output&type=pii_remover",
+                headers=user_api_key_header,
+            )
+
+        assert calls[0]["kwargs"]["params"] == {
+            "stage": "output",
+            "type": "pii_remover",
+        }
+
+    def test_ids_are_normalised_to_canonical_uuid_strings(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        """Upstream expects strings; UUID parsing also canonicalises the casing."""
+        config_id = uuid4()
+        with _mock_upstream(json_body={"data": []}) as calls:
+            client.get(
+                f"api/v1/guardrails/validators/configs?ids={str(config_id).upper()}",
+                headers=user_api_key_header,
+            )
+
+        assert calls[0]["kwargs"]["params"] == {"ids": [str(config_id)]}
+
+    @pytest.mark.parametrize(
+        "kaapi_path", ["/guardrails/ban_lists", "/guardrails/llm_prompt_configs"]
+    )
+    @pytest.mark.parametrize("query", ["limit=0", "limit=101", "offset=-1"])
+    def test_out_of_range_pagination_rejected(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        kaapi_path: str,
+        query: str,
+    ) -> None:
+        resp = client.get(f"api/v1{kaapi_path}?{query}", headers=user_api_key_header)
+        assert resp.status_code == 422
+
+    def test_tenant_headers_come_from_auth_context_not_request(
+        self,
+        client: TestClient,
+        user_api_key: TestAuthContext,
+        user_api_key_header: dict[str, str],
+    ) -> None:
+        with _mock_upstream(status_code=200, json_body={"id": str(uuid4())}) as calls:
+            client.post(
+                "api/v1/guardrails/ban_lists?organization_id=999",
+                json={
+                    **BAN_LIST_CREATE_BODY,
+                    "organization_id": 999,
+                    "project_id": 888,
+                },
+                headers=user_api_key_header,
+            )
+
+        headers = calls[0]["kwargs"]["headers"]
+        assert headers["X-ORGANIZATION-ID"] == str(user_api_key.organization_id)
+        assert headers["X-PROJECT-ID"] == str(user_api_key.project_id)
+
+    def test_ban_list_detail_path_forwarded(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        ban_list_id = uuid4()
+        with _mock_upstream(json_body={"id": str(ban_list_id)}) as calls:
+            resp = client.patch(
+                f"api/v1/guardrails/ban_lists/{ban_list_id}",
+                json={"name": "renamed"},
+                headers=user_api_key_header,
+            )
+
+        assert resp.status_code == 200
+        method, url = calls[0]["args"]
+        assert method == "PATCH"
+        assert url.endswith(f"/ban_lists/{ban_list_id}")
+
+
+class TestProxyRouteOrdering:
+    def test_ban_lists_list_route_wins_over_job_status_route(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        with _mock_upstream(json_body={"data": []}) as calls:
+            resp = client.get(
+                "api/v1/guardrails/ban_lists", headers=user_api_key_header
+            )
+
+        assert resp.status_code == 200
+        assert calls[0]["args"][1].endswith("/ban_lists/")
+
+    def test_validator_configs_list_and_detail_routes_do_not_collide(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        config_id = uuid4()
+        with _mock_upstream(json_body={"data": []}) as calls:
+            client.get(
+                "api/v1/guardrails/validators/configs", headers=user_api_key_header
+            )
+            client.get(
+                f"api/v1/guardrails/validators/configs/{config_id}",
+                headers=user_api_key_header,
+            )
+
+        assert calls[0]["args"][1].endswith("/validators/configs/")
+        assert calls[1]["args"][1].endswith(f"/validators/configs/{config_id}")
+
+    def test_llm_prompt_configs_list_route_wins_over_job_status_route(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        with _mock_upstream(json_body={"data": []}) as calls:
+            resp = client.get(
+                "api/v1/guardrails/llm_prompt_configs", headers=user_api_key_header
+            )
+
+        assert resp.status_code == 200
+        assert calls[0]["args"][1].endswith("/llm_prompt_configs/")
+
+
+def test_list_ban_lists_requires_auth(client: TestClient) -> None:
+    resp = client.get("api/v1/guardrails/ban_lists")
+    assert resp.status_code in (401, 403)
+
+
+@pytest.mark.parametrize(
+    "method, kaapi_path, body, _upstream_path", PROXY_ROUTES, ids=PROXY_ROUTE_IDS
+)
+def test_proxy_routes_require_auth(
+    client: TestClient,
+    method: str,
+    kaapi_path: str,
+    body: dict[str, Any] | None,
+    _upstream_path: str,
+) -> None:
+    with _mock_upstream(json_body={"data": []}) as calls:
+        resp = client.request(
+            method, f"api/v1{kaapi_path.format(id=uuid4())}", json=body
+        )
+
+    assert resp.status_code in (401, 403)
+    assert calls == []
+
+
 # ---------- helpers ----------
+
+
+@contextmanager
+def _mock_upstream(
+    *,
+    status_code: int = 200,
+    json_body: Any = None,
+    content: bytes | None = None,
+    raises: Exception | None = None,
+):
+    """Stub the guardrails HTTP boundary; yields the recorded client.request calls."""
+    calls: list[dict[str, Any]] = []
+
+    response = MagicMock()
+    response.status_code = status_code
+    if content is None:
+        import json as _json
+
+        response.content = _json.dumps(json_body).encode()
+        response.json.return_value = json_body
+    else:
+        response.content = content
+        response.json.side_effect = ValueError("not json")
+
+    def _request(*args: Any, **kwargs: Any):
+        calls.append({"args": args, "kwargs": kwargs})
+        if raises is not None:
+            raise raises
+        return response
+
+    client = MagicMock()
+    client.request.side_effect = _request
+
+    with patch("app.services.llm.guardrails.httpx.Client") as mock_client_cls:
+        mock_client_cls.return_value.__enter__.return_value = client
+        yield calls
 
 
 def _stub_job() -> Job:
@@ -249,3 +677,61 @@ def _seed_guardrails_job(
         job_id=job.id,
         job_update=JobUpdate(status=status, error_message=error_message),
     )
+
+
+class TestOpenAPIDocumentation:
+    """Every guardrails operation must stay testable from the Swagger UI."""
+
+    @staticmethod
+    def _guardrails_operations() -> list[tuple[str, str, dict[str, Any]]]:
+        from app.main import app
+
+        schema = app.openapi()
+        return [
+            (path, method, operation)
+            for path, item in schema["paths"].items()
+            if path.startswith("/api/v1/guardrails")
+            for method, operation in item.items()
+            if method in ("get", "post", "patch", "delete")
+        ]
+
+    def test_every_operation_is_documented(self) -> None:
+        for path, method, operation in self._guardrails_operations():
+            assert operation.get("summary"), f"{method.upper()} {path} has no summary"
+            assert operation.get(
+                "description"
+            ), f"{method.upper()} {path} has no description"
+
+    def test_every_operation_declares_a_response_schema(self) -> None:
+        for path, method, operation in self._guardrails_operations():
+            schema = (
+                operation["responses"]["200"]
+                .get("content", {})
+                .get("application/json", {})
+                .get("schema", {})
+            )
+            assert schema, f"{method.upper()} {path} documents no 200 schema"
+
+    def test_write_operations_declare_a_typed_request_body(self) -> None:
+        """An untyped body renders an empty box in Swagger, which is untestable."""
+        for path, method, operation in self._guardrails_operations():
+            if method not in ("post", "patch"):
+                continue
+            schema = operation["requestBody"]["content"]["application/json"]["schema"]
+            assert schema.get("$ref"), f"{method.upper()} {path} has an untyped body"
+
+    def test_apply_guardrails_publishes_its_webhook_contract(self) -> None:
+        from app.main import app
+
+        operation = app.openapi()["paths"]["/api/v1/guardrails"]["post"]
+        callback = operation["callbacks"]["guardrails_callback"]["{$callback_url}"]
+        schema = callback["post"]["requestBody"]["content"]["application/json"][
+            "schema"
+        ]
+        assert schema.get("$ref"), "webhook payload contract is not published"
+
+    def test_guardrails_tag_is_described_and_grouped(self) -> None:
+        from app.api.docs.openapi_config import tag_groups, tags_metadata
+
+        assert any(tag["name"] == "Guardrails" for tag in tags_metadata)
+        assert any("Guardrails" in group["tags"] for group in tag_groups)

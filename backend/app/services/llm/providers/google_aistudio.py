@@ -169,10 +169,6 @@ class GoogleAIProvider(BaseProvider):
         else:
             merged_instruction = f"{lang_instruction}. {forced_transcription_text}"
 
-        logger.info(
-            f"The merged instructions is {merged_instruction} and output language is {output_language} and input language is {input_language}"
-        )
-
         # Materialize the AudioRef to a temp file so the genai SDK can upload it.
         with resolved_input.to_path() as audio_path:
             gemini_file = self.client.files.upload(file=audio_path)
@@ -185,7 +181,7 @@ class GoogleAIProvider(BaseProvider):
         response: GenerateContentResponse = self.client.models.generate_content(
             model=model,
             contents=contents,
-            # switch back default thinking configs for reasoning supported models in future
+            # TODO switch back default thinking configs for reasoning supported models in future
             config=GenerateContentConfig(
                 thinking_config=ThinkingConfig(
                     include_thoughts=True, thinking_budget=1000
@@ -240,7 +236,11 @@ class GoogleAIProvider(BaseProvider):
                 provider_response_id=response.response_id,
                 model=response.model_version or model,
                 provider=provider,
-                output=TextOutput(content=TextContent(value=response.text)),
+                output=TextOutput(
+                    content=TextContent(
+                        value=response.text, language_code=output_language
+                    )
+                ),
             ),
             usage=Usage(
                 input_tokens=input_tokens,

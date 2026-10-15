@@ -19,7 +19,7 @@ router = APIRouter(tags=["Onboarding"])
 def onboard_project_route(
     onboard_in: OnboardingRequest,
     session: SessionDep,
-):
+) -> APIResponse[OnboardingResponse]:
     response = onboard_project(session=session, onboard_in=onboard_in)
 
     metadata = None

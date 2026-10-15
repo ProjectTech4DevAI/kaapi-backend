@@ -42,7 +42,11 @@ from app.models.evaluation import (
     PromptRecommendationJobPublic,
 )
 from app.models.job import Job, JobStatus, JobType, JobUpdate
-from app.services.llm.providers.claude import ClaudeProvider, log_anthropic_error
+from app.services.llm.providers.claude import (
+    STOP_REASON_COMPLETE,
+    ClaudeProvider,
+    log_anthropic_error,
+)
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
@@ -395,6 +399,9 @@ def execute_prompt_improvement(
             params = blob.get("completion", {}).get("params", {}) or {}
             current_instructions = params.get("instructions") or ""
 
+            if not run.score_trace_url:
+                raise RuntimeError("trace_download_failed: run has no score_trace_url")
+
             storage = get_cloud_storage(session=session, project_id=project_id)
             traces = load_json_from_object_store(
                 storage=storage, url=run.score_trace_url
@@ -529,6 +536,25 @@ def _target_config_from_params(config_params: dict) -> dict:
     }
 
 
+_UPSTREAM_ERROR_DETAIL_MAX_LENGTH = 500
+
+
+def _anthropic_error_detail(exc: Exception) -> str:
+    """Return what Anthropic actually sent back, for the operator-facing message."""
+    detail = ""
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            detail = (response.text or "").strip()
+        except Exception:  # httpx raises if the body was never read
+            detail = ""
+    if not detail:
+        detail = str(exc).strip()
+    if len(detail) > _UPSTREAM_ERROR_DETAIL_MAX_LENGTH:
+        detail = detail[:_UPSTREAM_ERROR_DETAIL_MAX_LENGTH] + "..."
+    return detail or type(exc).__name__
+
+
 def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
     """Run the Anthropic structured-output call shared by both draft variants and
     return (improved_instructions, rationale).
@@ -554,6 +580,13 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
             messages=[{"role": "user", "content": user_message_text}],
             output_config={"format": {"type": "json_schema", "schema": _OUTPUT_SCHEMA}},
         )
+        # A max_tokens cut-off still parses under the schema, so stop_reason is
+        # the only signal — never persist a half-written prompt as a version.
+        if response.stop_reason != STOP_REASON_COMPLETE:
+            raise RuntimeError(
+                "prompt_generation_failed: the model stopped before finishing "
+                f"the draft (stop_reason={response.stop_reason}) — retry"
+            )
         text = next(b.text for b in response.content if b.type == "text")
         data = json.loads(text)
         return data[_LLM_KEY_INSTRUCTIONS], data[_LLM_KEY_RATIONALE]
@@ -562,44 +595,55 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic authentication failed — "
-            "verify the platform API key is valid and not expired"
-        )
+            "verify the platform API key is valid and not expired | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
     except anthropic.RateLimitError as exc:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic rate limit exceeded — "
-            "wait at least 1 minute and retry"
-        )
+            "wait at least 1 minute and retry | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
     except anthropic.APITimeoutError as exc:
         # Must come before APIConnectionError — APITimeoutError is a subclass.
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic request timed out — "
-            "retry. If persistent, contact Kaapi"
-        )
+            "retry. If persistent, contact Kaapi | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
     except anthropic.APIConnectionError as exc:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: network error reaching Anthropic — "
-            "check connectivity. If persistent, contact Kaapi"
-        )
+            "check connectivity. If persistent, contact Kaapi | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
     except anthropic.APIStatusError as exc:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             f"prompt_generation_failed: Anthropic returned HTTP {exc.status_code} — "
-            "retry or contact Kaapi if persistent"
-        )
+            "retry or contact Kaapi if persistent | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
+
+    # The truncation guard above already raised a precise message; without this
+    # re-raise the generic handler below flattens it.
+    except RuntimeError:
+        raise
 
     except Exception as exc:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: unexpected error during prompt generation — "
-            "contact Kaapi if persistent"
-        )
+            "contact Kaapi if persistent | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
 
 def _draft_improved_prompt(
@@ -630,18 +674,35 @@ def _draft_improved_prompt(
             "the number, to understand *why* a row failed."
         )
         task_steps = [
-            f"1. Focus on rows where `{PROMPT_SCORE_NAME}` or "
-            f"`{GROUND_TRUTH_SCORE_NAME}` is low. Use BOTH the `value` and the "
-            "`comment` of each metric: the score tells you how bad it is, the "
-            "reasoning tells you what went wrong.\n",
-            "2. Rewrite the system prompt to fix those failures while keeping what "
-            "already works well.\n",
-            f"3. A low `{KNOWLEDGE_BASE_SCORE_NAME}` usually reflects a retrieval / "
+            f"1. `{GROUND_TRUTH_SCORE_NAME}` is the primary signal — it measures "
+            "whether the answer is actually correct. Focus first on rows where it is "
+            "low, using BOTH the `value` and the `comment` to see why the answer "
+            "diverged from the golden answer.\n",
+            f"2. Treat `{PROMPT_SCORE_NAME}` as secondary and diagnostic only. A row "
+            f"with high `{PROMPT_SCORE_NAME}` but low `{GROUND_TRUTH_SCORE_NAME}` is a "
+            "warning sign, not a success — it usually means the model is being scored "
+            "well for literally following a rule (e.g. a refusal or fallback "
+            "instruction) instead of answering. If that row's `comment` says the model "
+            "correctly triggered a refusal/fallback per the current prompt's own rule, "
+            "but the golden answer has real substantive content, the rule's trigger "
+            "condition is too broad — narrow it so the model only refuses/falls back "
+            "when it truly should, rather than tightening the rule further.\n",
+            "3. Rewrite the system prompt to fix the Ground-Truth failures while "
+            f"keeping what already works well. Do not make changes whose only effect "
+            f"is raising `{PROMPT_SCORE_NAME}` (tone, format, exact wording) without "
+            f"also improving `{GROUND_TRUTH_SCORE_NAME}`.\n",
+            f"4. A low `{KNOWLEDGE_BASE_SCORE_NAME}` usually reflects a retrieval / "
             "knowledge-base gap, NOT a prompt problem — do not try to fix grounding "
             "by editing the prompt. You may add a light instruction to avoid "
             "unsupported claims, but do not attempt to change the model, knowledge "
             "base, or config.\n",
-            "4. Change ONLY the prompt text.\n",
+            "5. If adding a few-shot example would help, write a NEW, generic example "
+            "that illustrates the desired behavior — never copy a `question`, "
+            "`ground_truth_answer`, or `llm_answer` from these traces into the prompt "
+            "verbatim or near-verbatim. Copying eval questions into the prompt leaks "
+            "the eval set into the model's context, inflating future scores on this "
+            "same dataset without a real capability improvement.\n",
+            "6. Change ONLY the prompt text.\n",
         ]
     else:
         trace_description = (
@@ -654,7 +715,13 @@ def _draft_improved_prompt(
             "where `llm_answer` diverges significantly from `ground_truth_answer`.\n",
             "2. Rewrite the system prompt to improve those low-performing answers "
             "while keeping what already works well.\n",
-            "3. Change ONLY the prompt text — do not alter the model, knowledge base, "
+            "3. If adding a few-shot example would help, write a NEW, generic example "
+            "that illustrates the desired behavior — never copy a `question`, "
+            "`ground_truth_answer`, or `llm_answer` from these traces into the prompt "
+            "verbatim or near-verbatim. Copying eval questions into the prompt leaks "
+            "the eval set into the model's context, inflating future scores on this "
+            "same dataset without a real capability improvement.\n",
+            "4. Change ONLY the prompt text — do not alter the model, knowledge base, "
             "or any other configuration.\n",
         ]
 
