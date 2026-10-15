@@ -11,13 +11,17 @@ from fastapi import HTTPException
 from opentelemetry import trace
 
 from app.core.config import settings
-from app.models.llm.request import Validator
+from app.models.llm.request import InlineValidator, Validator
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
 
 GUARDRAILS_PROXY_TIMEOUT_SECONDS = 30.0
+
+# The service logs validator_log.stage from the spec and defaults to input.
+GUARDRAIL_STAGE_INPUT = "input"
+GUARDRAIL_STAGE_OUTPUT = "output"
 
 # Upstream supports more; only these are productised for tenants.
 EXPOSED_VALIDATOR_TYPES = frozenset(
@@ -74,7 +78,7 @@ def proxy_guardrails_request(
     url = f"{settings.KAAPI_GUARDRAILS_URL}{path}"
     headers = _guardrails_headers(organization_id, project_id)
     # Unset query params must be omitted, not sent as empty values.
-    query = {k: v for k, v in (params or {}).items() if v is not None}
+    query = {key: value for key, value in (params or {}).items() if value is not None}
 
     try:
         with (
@@ -173,7 +177,7 @@ class GuardrailsOutcome:
 def apply_guardrails(
     *,
     text: str,
-    validators: list[Validator] | None,
+    validators: Sequence[Validator | InlineValidator] | None,
     job_id: UUID,
     project_id: int | None,
     organization_id: int | None,
@@ -189,32 +193,50 @@ def apply_guardrails(
 
     Args:
         text: Primary text to validate. Sent as `input` to the service.
-        validators: Validator references (config IDs). When None/empty the
-            function short-circuits with a no-op outcome.
+        validators: Config-ID references or inline specs.
+            Entries with is_enabled=False are skipped; when nothing enabled
+            remains the function short-circuits with a no-op outcome.
         output_text: When provided, sent as `output` to the service for
             output-guardrail validators that compare input/output pairs.
             Also routes the IDs through the output-config fetch path.
     """
-    if not validators:
+    enabled = [validator for validator in validators or [] if validator.is_enabled]
+    if not enabled:
         return GuardrailsOutcome(
             safe_text=text, error=None, bypassed=False, rephrase_needed=False, raw={}
         )
 
     is_output = output_text is not None
-    input_cfgs, output_cfgs = list_validators_config(
-        organization_id=organization_id,
-        project_id=project_id,
-        input_validator_configs=None if is_output else validators,
-        output_validator_configs=validators if is_output else None,
-    )
-    resolved = output_cfgs if is_output else input_cfgs
-    if not resolved:
-        logger.info(
-            f"[apply_guardrails] No validator configs resolved upstream; skipping "
-            f"POST /guardrails. job_id={job_id}, requested_ids="
-            f"{[str(v.validator_config_id) for v in validators]}, "
-            f"is_output={is_output}"
+    stage = GUARDRAIL_STAGE_OUTPUT if is_output else GUARDRAIL_STAGE_INPUT
+    references = [
+        validator for validator in enabled if isinstance(validator, Validator)
+    ]
+    # The service's validator configs are extra="forbid", so is_enabled must go.
+    inline_specs = [
+        {**validator.model_dump(mode="json", exclude={"is_enabled"}), "stage": stage}
+        for validator in enabled
+        if isinstance(validator, InlineValidator)
+    ]
+
+    fetched: list[dict[str, Any]] = []
+    if references:
+        input_cfgs, output_cfgs = list_validators_config(
+            organization_id=organization_id,
+            project_id=project_id,
+            input_validator_configs=None if is_output else references,
+            output_validator_configs=references if is_output else None,
         )
+        fetched = output_cfgs if is_output else input_cfgs
+        if not fetched:
+            logger.info(
+                f"[apply_guardrails] No validator configs resolved upstream | "
+                f"job_id={job_id}, is_output={is_output}, requested_ids="
+                f"{[str(v.validator_config_id) for v in references]}"
+            )
+
+    # Blobs are all-refs or all-inline, so no interleaving or ordering is needed.
+    resolved = fetched + inline_specs
+    if not resolved:
         return GuardrailsOutcome(
             safe_text=text, error=None, bypassed=False, rephrase_needed=False, raw={}
         )
@@ -307,10 +329,11 @@ def run_guardrails_validation(
     Returns:
         JSON response from the guardrails service with validation results.
     """
+    # is_enabled is unknown to the service's extra="forbid" validator schemas.
     validators = [
-        validator.model_dump(mode="json")
-        if isinstance(validator, Validator)
-        else validator
+        validator
+        if isinstance(validator, dict)
+        else validator.model_dump(mode="json", exclude={"is_enabled"})
         for validator in guardrail_config
     ]
 
