@@ -24,7 +24,9 @@ GUARDRAIL_STAGE_INPUT = "input"
 GUARDRAIL_STAGE_OUTPUT = "output"
 
 # Upstream supports more; only these are productised for tenants.
-EXPOSED_VALIDATOR_TYPES = frozenset(t.value for t in InlineValidatorTypeEnum)
+EXPOSED_VALIDATOR_TYPES = frozenset(
+    validator_type.value for validator_type in InlineValidatorTypeEnum
+)
 
 
 def filter_exposed_validator_types(payload: Any) -> Any:
