@@ -13,6 +13,7 @@ from app.crud.llm import save_rephrase_guardrail_call
 from app.models import Job, JobType
 from app.models.llm.request import (
     ConfigBlob,
+    InlineValidator,
     LLMCallConfig,
     LlmCall,
     NativeCompletionConfig,
@@ -426,6 +427,139 @@ def test_summarize_validator_results_empty_when_raw_has_no_validator_results() -
     )
 
     assert summarize_validator_results(outcome) == []
+
+
+_PASS_RESPONSE = {"success": True, "data": {"safe_text": "clean"}}
+
+
+def _ref() -> tuple[Validator, dict[str, Any]]:
+    config_id = uuid4()
+    return Validator(validator_config_id=config_id), {
+        "type": f"fetched_{config_id.hex[:8]}"
+    }
+
+
+def _apply(validators: list, output_text: str | None = None) -> GuardrailsOutcome:
+    return apply_guardrails(
+        text=TEST_TEXT,
+        validators=validators,
+        job_id=TEST_JOB_ID,
+        project_id=TEST_PROJECT_ID,
+        organization_id=TEST_ORGANIZATION_ID,
+        output_text=output_text,
+    )
+
+
+def _assert_noop(outcome: GuardrailsOutcome) -> None:
+    assert outcome.safe_text == TEST_TEXT
+    assert outcome.error is None
+    assert outcome.bypassed is False
+    assert outcome.raw == {}
+    assert outcome.applied is False
+
+
+@patch("app.services.llm.guardrails.run_guardrails_validation")
+@patch("app.services.llm.guardrails.list_validators_config")
+class TestApplyGuardrails:
+    def test_disabled_entries_are_neither_fetched_nor_posted(
+        self, mock_fetch, mock_run
+    ) -> None:
+        enabled_ref, enabled_row = _ref()
+        disabled_ref, _ = _ref()
+        disabled_ref.is_enabled = False
+        mock_fetch.return_value = ([enabled_row], [])
+        mock_run.return_value = _PASS_RESPONSE
+
+        _apply(
+            [
+                disabled_ref,
+                enabled_ref,
+                InlineValidator(type="profanity_free", is_enabled=False),
+            ]
+        )
+
+        fetched_ids = [
+            v.validator_config_id
+            for v in mock_fetch.call_args.kwargs["input_validator_configs"]
+        ]
+        assert fetched_ids == [enabled_ref.validator_config_id]
+        assert mock_run.call_args.args[1] == [enabled_row]
+
+    @pytest.mark.parametrize(
+        "validators",
+        [
+            [],
+            None,
+            [
+                Validator(validator_config_id=uuid4(), is_enabled=False),
+                InlineValidator(type="pii_remover", is_enabled=False),
+            ],
+        ],
+        ids=["empty", "none", "all_disabled"],
+    )
+    def test_nothing_enabled_is_noop_without_http(
+        self, mock_fetch, mock_run, validators
+    ) -> None:
+        outcome = _apply(validators)
+
+        _assert_noop(outcome)
+        mock_fetch.assert_not_called()
+        mock_run.assert_not_called()
+
+    def test_inline_only_skips_fetch_and_posts(self, mock_fetch, mock_run) -> None:
+        mock_run.return_value = _PASS_RESPONSE
+
+        outcome = _apply([InlineValidator(type="pii_remover")])
+
+        mock_fetch.assert_not_called()
+        assert mock_run.call_args.args[1] == [{"type": "pii_remover", "stage": "input"}]
+        assert outcome.safe_text == "clean"
+
+    def test_inline_spec_posted_shape(self, mock_fetch, mock_run) -> None:
+        mock_run.return_value = _PASS_RESPONSE
+
+        _apply(
+            [
+                InlineValidator(
+                    type="gender_assumption_bias",
+                    stage="output",
+                    categories=["healthcare"],
+                ),
+                InlineValidator(type="pii_remover", on_fail="exception"),
+            ]
+        )
+
+        assert mock_run.call_args.args[1] == [
+            {
+                "type": "gender_assumption_bias",
+                "stage": "input",
+                "categories": ["healthcare"],
+            },
+            {"type": "pii_remover", "on_fail": "exception", "stage": "input"},
+        ]
+
+    def test_output_path_sets_output_stage(self, mock_fetch, mock_run) -> None:
+        ref, row = _ref()
+        mock_fetch.return_value = ([], [row])
+        mock_run.return_value = _PASS_RESPONSE
+
+        _apply([ref, InlineValidator(type="pii_remover")], output_text="llm out")
+
+        assert mock_fetch.call_args.kwargs["input_validator_configs"] is None
+        assert mock_run.call_args.args[1] == [
+            row,
+            {"type": "pii_remover", "stage": "output"},
+        ]
+        assert mock_run.call_args.kwargs["output_text"] == "llm out"
+
+    def test_only_ref_missing_upstream_is_noop(self, mock_fetch, mock_run) -> None:
+        ref, _ = _ref()
+        mock_fetch.return_value = ([], [])
+
+        outcome = _apply([ref])
+
+        _assert_noop(outcome)
+        mock_run.assert_not_called()
 
 
 _SAFE_TEXT = "Please rephrase: content not allowed."
