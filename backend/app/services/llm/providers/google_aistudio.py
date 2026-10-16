@@ -2,7 +2,7 @@ import base64
 import io
 import logging
 import wave
-from typing import Any, cast
+from typing import Any
 
 from google import genai
 from google.genai import errors as genai_errors
@@ -104,6 +104,65 @@ class GoogleAIProvider(BaseProvider):
             reasoning_tokens=usage.total_thought_tokens or 0,
         )
 
+    @staticmethod
+    def create_interaction(
+        client: genai.Client, request: dict[str, Any]
+    ) -> Interaction:
+        interaction = client.interactions.create(**request)
+        # create() is typed Interaction | Stream; we never pass stream=True.
+        if not isinstance(interaction, Interaction):
+            raise RuntimeError(
+                f"[GoogleAIProvider.create_interaction] Expected an Interaction, "
+                f"got {type(interaction).__name__}"
+            )
+        return interaction
+
+    @classmethod
+    def build_text_request(
+        cls,
+        params: dict[str, Any],
+        model: str,
+        resolved_input: str | list[ContentPart] | MultiModalInput,
+    ) -> dict[str, Any]:
+        """Build the Interactions request shared by the AI Studio and GCP text paths."""
+        if isinstance(resolved_input, MultiModalInput):
+            content = cls.format_parts(resolved_input.parts)
+        elif isinstance(resolved_input, list):
+            content = cls.format_parts(resolved_input)
+        else:
+            content = [{"type": "text", "text": resolved_input}]
+
+        request: dict[str, Any] = {
+            "model": model,
+            "input": [{"type": "user_input", "content": content}],
+        }
+
+        instructions = params.get("instructions")
+        if instructions:
+            request["system_instruction"] = instructions
+
+        # Kaapi configs carry thinking_config.thinking_level; native configs use reasoning.
+        thinking_level = (params.get("thinking_config") or {}).get(
+            "thinking_level"
+        ) or params.get("reasoning")
+        max_output_tokens = params.get("max_output_tokens")
+        generation_config: dict[str, Any] = {}
+        if thinking_level:
+            generation_config["thinking_level"] = thinking_level
+        if max_output_tokens is not None:
+            generation_config["max_output_tokens"] = max_output_tokens
+        if generation_config:
+            request["generation_config"] = generation_config
+
+        # The bare-schema form is enforced on Gemini 2.5 and 3; the typed
+        # {"type": "text", "schema": ...} wrapper is silently ignored on 2.5.
+        output_schema = params.get("output_schema")
+        if output_schema:
+            request["response_mime_type"] = "application/json"
+            request["response_format"] = output_schema
+
+        return request
+
     def _execute_stt(
         self,
         completion_config: NativeCompletionConfig,
@@ -163,11 +222,11 @@ class GoogleAIProvider(BaseProvider):
         with resolved_input.to_path() as audio_path:
             gemini_file = self.client.files.upload(file=audio_path)
 
-        interaction = cast(
-            Interaction,
-            self.client.interactions.create(
-                model=model,
-                input=[
+        interaction = self.create_interaction(
+            self.client,
+            {
+                "model": model,
+                "input": [
                     {
                         "type": "user_input",
                         "content": [
@@ -180,8 +239,8 @@ class GoogleAIProvider(BaseProvider):
                         ],
                     }
                 ],
-                generation_config={"thinking_level": thinking_level},
-            ),
+                "generation_config": {"thinking_level": thinking_level},
+            },
         )
 
         response_id = interaction.id
@@ -297,14 +356,14 @@ class GoogleAIProvider(BaseProvider):
         if language:
             speech_config["language"] = language
 
-        interaction = cast(
-            Interaction,
-            self.client.interactions.create(
-                model=model,
-                input=[{"type": "user_input", "content": [transcript]}],
-                generation_config={"speech_config": [speech_config]},
-                response_format={"type": "audio"},
-            ),
+        interaction = self.create_interaction(
+            self.client,
+            {
+                "model": model,
+                "input": [{"type": "user_input", "content": [transcript]}],
+                "generation_config": {"speech_config": [speech_config]},
+                "response_format": {"type": "audio"},
+            },
         )
 
         response_id = interaction.id
@@ -432,43 +491,14 @@ class GoogleAIProvider(BaseProvider):
         params = completion_config.params
         model = params.get("model") or DEFAULT_TEXT_MODELS["google"]
 
-        if isinstance(resolved_input, MultiModalInput):
-            content = self.format_parts(resolved_input.parts)
-        elif isinstance(resolved_input, list):
-            content = self.format_parts(resolved_input)
-        else:
-            content = [{"type": "text", "text": resolved_input}]
-
-        instructions = params.get("instructions")
-        # Kaapi configs carry thinking_config.thinking_level; native configs use reasoning.
-        thinking_level = (params.get("thinking_config") or {}).get(
-            "thinking_level"
-        ) or params.get("reasoning")
-        max_output_tokens = params.get("max_output_tokens")
+        request = self.build_text_request(params, model, resolved_input)
         knowledge_base_ids = params.get("knowledge_base_ids")
-
-        request: dict[str, Any] = {
-            "model": model,
-            "input": [{"type": "user_input", "content": content}],
-        }
-        if instructions:
-            request["system_instruction"] = instructions
-
-        generation_config: dict[str, Any] = {}
-        if thinking_level:
-            generation_config["thinking_level"] = thinking_level
-        if max_output_tokens is not None:
-            generation_config["max_output_tokens"] = max_output_tokens
-        if generation_config:
-            request["generation_config"] = generation_config
-
         if knowledge_base_ids:
             request["tools"] = [
                 {"type": "file_search", "file_search_store_names": knowledge_base_ids}
             ]
 
-        # create() is typed Interaction | Stream; we never pass stream=True.
-        interaction = cast(Interaction, self.client.interactions.create(**request))
+        interaction = self.create_interaction(self.client, request)
 
         response_id = interaction.id
         if not response_id or interaction.status != "completed":

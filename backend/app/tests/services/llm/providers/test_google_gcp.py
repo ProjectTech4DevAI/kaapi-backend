@@ -721,6 +721,18 @@ class TestText:
         provider.execute(_text_config(max_output_tokens=256), query, "hi")
         assert create_kwargs(client)["generation_config"] == {"max_output_tokens": 256}
 
+    def test_forwards_output_schema_as_json_response_format(
+        self, provider, client, query
+    ):
+        schema = {"type": "OBJECT", "properties": {"band": {"type": "STRING"}}}
+        client.genai.interactions.create.return_value = make_interaction(
+            text='{"band": "high"}'
+        )
+        provider.execute(_text_config(output_schema=schema), query, "hi")
+        kwargs = create_kwargs(client)
+        assert kwargs["response_format"] == schema
+        assert kwargs["response_mime_type"] == "application/json"
+
     def test_thinking_config_takes_precedence_over_reasoning(
         self, provider, client, query
     ):

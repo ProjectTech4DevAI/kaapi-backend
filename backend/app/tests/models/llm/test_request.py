@@ -7,6 +7,7 @@ from app.models.llm.request import (
     ConfigBlob,
     InlineValidator,
     NativeCompletionConfig,
+    TextLLMParams,
     Validator,
     build_kaapi_completion_config,
 )
@@ -88,6 +89,8 @@ class TestTextLLMParamsThinkingLevel:
     def test_rejects_unknown_thinking_level(self) -> None:
         with pytest.raises(ValidationError):
             TextLLMParams(thinking_level="extreme")
+
+
 def _blob(input_guardrails: list) -> ConfigBlob:
     return ConfigBlob(
         completion=NativeCompletionConfig(

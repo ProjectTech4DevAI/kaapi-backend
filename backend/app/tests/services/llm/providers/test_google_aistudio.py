@@ -129,6 +129,32 @@ class TestGoogleAIProviderText:
 
         assert set(create_kwargs(mock_client)) == {"model", "input"}
 
+    def test_text_output_schema_forwarded_as_json_response_format(
+        self, provider, mock_client, text_config, query_params
+    ):
+        schema = {"type": "OBJECT", "properties": {"band": {"type": "STRING"}}}
+        text_config.params["output_schema"] = schema
+        mock_client.interactions.create.return_value = make_interaction(
+            text='{"band": "high"}'
+        )
+
+        result, error = provider.execute(text_config, query_params, "Ping")
+
+        assert error is None
+        kwargs = create_kwargs(mock_client)
+        assert kwargs["response_format"] == schema
+        assert kwargs["response_mime_type"] == "application/json"
+
+    def test_text_non_interaction_return_is_reported_as_error(
+        self, provider, mock_client, text_config, query_params
+    ):
+        mock_client.interactions.create.return_value = iter(())
+
+        result, error = provider.execute(text_config, query_params, "Ping")
+
+        assert result is None
+        assert "[KAAPI] Unexpected error" in error
+
     def test_text_thinking_config_takes_precedence_over_reasoning(
         self, provider, mock_client, text_config, query_params
     ):

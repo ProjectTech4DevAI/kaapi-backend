@@ -4,16 +4,15 @@ import json
 import logging
 import uuid
 import wave
-from typing import Any, cast
+from typing import Any
 
 from google import genai
-from google.genai import types as genai_types
 from google.auth import exceptions as google_auth_errors
+from google.genai import types as genai_types
 
 # Interactions raises its own error hierarchy, not google.genai.errors; in
 # google-genai 2.29 this private module is the only path that exports it.
 from google.genai._gaos.lib import compat_errors as interactions_errors
-from google.genai.interactions import Interaction
 
 from app.core.audio_utils import (
     AudioRef,
@@ -259,11 +258,11 @@ class GoogleGCPProvider(BaseProvider):
         else:
             prompt = f"{lang_instruction}. {forced}"
 
-        interaction = cast(
-            Interaction,
-            self.client.genai.interactions.create(
-                model=model,
-                input=[
+        interaction = GoogleAIProvider.create_interaction(
+            self.client.genai,
+            {
+                "model": model,
+                "input": [
                     {
                         "type": "user_input",
                         "content": [
@@ -272,11 +271,11 @@ class GoogleGCPProvider(BaseProvider):
                         ],
                     }
                 ],
-                generation_config={
+                "generation_config": {
                     "thinking_level": thinking_level,
                     "max_output_tokens": max_output_tokens,
                 },
-            ),
+            },
         )
 
         # Vertex may not persist interactions, so the id can come back empty.
@@ -370,14 +369,14 @@ class GoogleGCPProvider(BaseProvider):
         if language:
             speech_config["language"] = language
 
-        interaction = cast(
-            Interaction,
-            self.client.genai.interactions.create(
-                model=model,
-                input=[{"type": "user_input", "content": [transcript]}],
-                generation_config={"speech_config": [speech_config]},
-                response_format={"type": "audio"},
-            ),
+        interaction = GoogleAIProvider.create_interaction(
+            self.client.genai,
+            {
+                "model": model,
+                "input": [{"type": "user_input", "content": [transcript]}],
+                "generation_config": {"speech_config": [speech_config]},
+                "response_format": {"type": "audio"},
+            },
         )
 
         response_id = interaction.id or f"google-gcp-{uuid.uuid4().hex}"
@@ -491,38 +490,8 @@ class GoogleGCPProvider(BaseProvider):
         params = completion_config.params
         model = params.get("model") or DEFAULT_TEXT_MODELS["google-gcp"]
 
-        if isinstance(resolved_input, MultiModalInput):
-            content = GoogleAIProvider.format_parts(resolved_input.parts)
-        elif isinstance(resolved_input, list):
-            content = GoogleAIProvider.format_parts(resolved_input)
-        else:
-            content = [{"type": "text", "text": resolved_input}]
-
-        instructions = params.get("instructions")
-        max_output_tokens = params.get("max_output_tokens")
-        thinking_level = (params.get("thinking_config") or {}).get(
-            "thinking_level"
-        ) or params.get("reasoning")
-
-        request: dict[str, Any] = {
-            "model": model,
-            "input": [{"type": "user_input", "content": content}],
-        }
-        if instructions:
-            request["system_instruction"] = instructions
-
-        generation_config: dict[str, Any] = {}
-        if thinking_level:
-            generation_config["thinking_level"] = thinking_level
-        if max_output_tokens is not None:
-            generation_config["max_output_tokens"] = max_output_tokens
-        if generation_config:
-            request["generation_config"] = generation_config
-
-        # create() is typed Interaction | Stream; we never pass stream=True.
-        interaction = cast(
-            Interaction, self.client.genai.interactions.create(**request)
-        )
+        request = GoogleAIProvider.build_text_request(params, model, resolved_input)
+        interaction = GoogleAIProvider.create_interaction(self.client.genai, request)
 
         response_id = interaction.id or f"google-gcp-{uuid.uuid4().hex}"
         if interaction.status != "completed" or not interaction.output_text:
