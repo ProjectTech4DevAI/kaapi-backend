@@ -61,7 +61,7 @@ from app.models.llm.request import (
     TextInput,
 )
 from app.core.cloud.storage import get_cloud_storage
-from app.core.storage_utils import upload_audio_bytes_to_s3
+from app.core.storage_utils import LlmAudioKindEnum, upload_audio_bytes_to_s3
 from app.models.llm.response import (
     AudioOutput,
     LLMCallResponse,
@@ -1082,13 +1082,12 @@ def _upload_stt_input(session: Session, query: QueryParams, ctx: _CallContext) -
             stt_bytes = base64.b64decode(query.input.content.value)
 
         storage = get_cloud_storage(session, ctx.project_id)
-        subfolder_path = f"orgs/{ctx.organization_id}/{ctx.project_id}/audio/stt"
         s3_url = upload_audio_bytes_to_s3(
             storage,
             stt_bytes,
             ctx.llm_call_id,
             query.input.content.mime_type,
-            subfolder_path,
+            LlmAudioKindEnum.STT,
         )
         if s3_url:
             stt_input_record = json.dumps(
@@ -1121,13 +1120,12 @@ def _upload_tts_output(output: AudioOutput, ctx: _CallContext) -> dict | None:
         with Session(engine) as s3_session:
             storage = get_cloud_storage(s3_session, ctx.project_id)
         tts_bytes = base64.b64decode(output.content.value)
-        subfolder_path = f"orgs/{ctx.organization_id}/{ctx.project_id}/audio/tts"
         s3_url = upload_audio_bytes_to_s3(
             storage,
             tts_bytes,
             ctx.llm_call_id,
             output.content.mime_type,
-            subfolder_path,
+            LlmAudioKindEnum.TTS,
         )
         if s3_url:
             output.content.uri = s3_url

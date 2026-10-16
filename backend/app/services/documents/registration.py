@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.core.cloud import get_cloud_storage
-from app.core.cloud.storage import ObjectNotFoundError
+from app.core.cloud.storage import PENDING_PREFIX, ObjectNotFoundError
 from app.crud import DocumentCrud
 from app.models import Document
 from app.services.doctransform.registry import get_file_format
@@ -47,7 +47,9 @@ def register_uploaded_document(
         raise HTTPException(status_code=409, detail=DUPLICATE_DOCUMENT_DETAIL)
 
     storage = get_cloud_storage(session=session, project_id=project_id)
-    pending_url = str(storage.url_for(Path(str(document_id)), is_pending=True))
+    pending_url = str(
+        storage.url_for(Path(str(document_id)), root_prefix=PENDING_PREFIX)
+    )
 
     # Copy first, then read the frozen final key: the pending object stays writable
     # through its ticket, so measuring it directly would race the copy.

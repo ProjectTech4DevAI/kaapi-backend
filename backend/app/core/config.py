@@ -204,10 +204,8 @@ class Settings(BaseSettings):
     EVAL_FAST_STALL_THRESHOLD_MINUTES: int = 15
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
-    # AI-assisted prompt improvement settings.
-    # See docs/srd-ai-prompt-improvement.md for the full design rationale.
-    # Platform-owned Anthropic key shared by every org/project for this feature,
-    # so prompt improvement works without per-project credentials.
+    LLM_CALL_RETENTION_HOURS: int = Field(default=168, ge=1)
+
     ANTHROPIC_API_KEY: str = ""
     PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"
 
