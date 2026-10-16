@@ -1,9 +1,10 @@
 from datetime import datetime, timedelta
 
 import pytest
+from pydantic import ValidationError
 from sqlmodel import Session
 
-from app.core.config import settings
+from app.core.config import Settings, settings
 from app.services.llm import retention
 from app.services.llm.retention import redact_aged_llm_calls
 
@@ -72,4 +73,10 @@ def test_passes_session_to_crud(db: Session, redact_calls: list[dict]) -> None:
 
 
 def test_default_rolling_window_is_one_week() -> None:
-    assert settings.LLM_CALL_RETENTION_TIMEDELTA == timedelta(days=7)
+    assert timedelta(hours=settings.LLM_CALL_RETENTION_HOURS) == timedelta(days=7)
+
+
+@pytest.mark.parametrize("hours", [0, -1])
+def test_rejects_window_that_would_redact_recent_rows(hours: int) -> None:
+    with pytest.raises(ValidationError):
+        Settings(LLM_CALL_RETENTION_HOURS=hours)

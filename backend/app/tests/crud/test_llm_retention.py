@@ -110,7 +110,8 @@ def test_row_with_null_content_is_redacted_without_error(db: Session, job: Job) 
     assert row.content is None
 
 
-def test_returns_zero_when_no_rows_match(db: Session, job: Job) -> None:
+@pytest.mark.usefixtures("job")
+def test_returns_zero_when_no_rows_match(db: Session) -> None:
     assert redact_llm_calls(session=db, cutoff=CUTOFF) == 0
 
 

@@ -1,4 +1,4 @@
-import logging
+from datetime import timedelta
 
 from sqlmodel import Session
 
@@ -7,21 +7,8 @@ from app.core.util import now
 from app.crud.llm import redact_llm_calls
 from app.models.llm.response import LlmCallRedactionResult
 
-logger = logging.getLogger(__name__)
-
 
 def redact_aged_llm_calls(*, session: Session) -> LlmCallRedactionResult:
-    cutoff = now() - settings.LLM_CALL_RETENTION_TIMEDELTA
-
-    logger.info(
-        f"[redact_aged_llm_calls] Starting redaction | cutoff: {cutoff.isoformat()}"
-    )
-
+    cutoff = now() - timedelta(hours=settings.LLM_CALL_RETENTION_HOURS)
     rows_redacted = redact_llm_calls(session=session, cutoff=cutoff)
-
-    logger.info(
-        f"[redact_aged_llm_calls] Completed | rows_redacted: {rows_redacted} | "
-        f"cutoff: {cutoff.isoformat()}"
-    )
-
     return LlmCallRedactionResult(rows_redacted=rows_redacted, cutoff=cutoff)

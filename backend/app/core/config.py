@@ -2,7 +2,6 @@ import multiprocessing
 import os
 import secrets
 import warnings
-from datetime import timedelta
 from typing import Any, Literal, Self
 
 from pydantic import (
@@ -205,12 +204,7 @@ class Settings(BaseSettings):
     EVAL_FAST_STALL_THRESHOLD_MINUTES: int = 15
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
-    LLM_CALL_RETENTION_HOURS: int = 168
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def LLM_CALL_RETENTION_TIMEDELTA(self) -> timedelta:
-        return timedelta(hours=self.LLM_CALL_RETENTION_HOURS)
+    LLM_CALL_RETENTION_HOURS: int = Field(default=168, ge=1)
 
     ANTHROPIC_API_KEY: str = ""
     PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"

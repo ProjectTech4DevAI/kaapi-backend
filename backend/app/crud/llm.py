@@ -377,11 +377,6 @@ def redact_llm_calls(*, session: Session, cutoff: datetime) -> int:
     )
     session.commit()
 
-    logger.info(
-        f"[redact_llm_calls] Redacted rows | rows: {result.rowcount} | "
-        f"cutoff: {cutoff.isoformat()}"
-    )
-
     return result.rowcount
 
 
