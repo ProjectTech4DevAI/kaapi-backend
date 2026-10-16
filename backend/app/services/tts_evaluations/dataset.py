@@ -5,9 +5,11 @@ import io
 import logging
 from typing import Any
 
+from celery.exceptions import SoftTimeLimitExceeded
 from sqlmodel import Session
 
 from app.core.cloud import get_cloud_storage
+from app.core.cloud.storage import CloudStorage
 from app.core.storage_utils import (
     generate_timestamped_filename,
     upload_to_object_store,
@@ -163,16 +165,16 @@ def _samples_to_csv(samples: list[TTSSampleCreate]) -> bytes:
 
 
 def get_sample_texts_from_dataset(
-    session: Session,
+    storage: CloudStorage,
     dataset: "EvaluationDataset",
-    project_id: int,
 ) -> list[str]:
     """Extract sample texts from a TTS dataset's CSV in S3.
 
+    Takes storage rather than a session so callers can read S3 with no DB session open.
+
     Args:
-        session: Database session
+        storage: Cloud storage for the dataset's project
         dataset: The evaluation dataset record
-        project_id: Project ID
 
     Returns:
         List of text strings
@@ -185,10 +187,12 @@ def get_sample_texts_from_dataset(
         return []
 
     try:
-        storage = get_cloud_storage(session=session, project_id=project_id)
         csv_bytes = storage.stream(dataset.object_store_url).read()
         samples = parse_tts_samples_from_csv(csv_bytes)
         return [s["text"] for s in samples]
+    except SoftTimeLimitExceeded:
+        # Let the task's timeout handler report it instead of "No samples found".
+        raise
     except Exception as e:
         logger.error(
             f"[get_sample_texts_from_dataset] Failed to load CSV | "
