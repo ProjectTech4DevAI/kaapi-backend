@@ -2780,10 +2780,10 @@ class TestResolveConfigBlob:
         assert error is None
         assert resolved_blob is not None
         assert [v.model_dump() for v in (resolved_blob.input_guardrails or [])] == [
-            {"validator_config_id": UUID(VALIDATOR_CONFIG_ID_1)}
+            {"validator_config_id": UUID(VALIDATOR_CONFIG_ID_1), "is_enabled": True}
         ]
         assert [v.model_dump() for v in (resolved_blob.output_guardrails or [])] == [
-            {"validator_config_id": UUID(VALIDATOR_CONFIG_ID_2)}
+            {"validator_config_id": UUID(VALIDATOR_CONFIG_ID_2), "is_enabled": True}
         ]
 
     def test_resolve_config_blob_version_not_found(self, db: Session):

@@ -43,7 +43,10 @@ from app.models.guardrails import (
     GuardrailsRequest,
 )
 from app.services.guardrails.jobs import start_job
-from app.services.llm.guardrails import proxy_guardrails_request
+from app.services.llm.guardrails import (
+    filter_exposed_validator_types,
+    proxy_guardrails_request,
+)
 from app.utils import APIResponse, load_description, validate_callback_url
 
 logger = logging.getLogger(__name__)
@@ -180,14 +183,14 @@ def _upstream_response(status_code: int, payload: Any) -> Response:
     **doc(responses={200: VALIDATOR_TYPE_LIST_OK, **PROXY_READ_RESPONSES}),
 )
 def list_guardrails_validator_types(_current_user: AuthContextDep) -> Response:
-    """List the validator types supported upstream and their JSON schemas."""
+    """List the exposed validator types and their JSON schemas."""
     status_code, payload = proxy_guardrails_request(
         "GET",
         "/",
         organization_id=_current_user.organization_.id,
         project_id=_current_user.project_.id,
     )
-    return _upstream_response(status_code, payload)
+    return _upstream_response(status_code, filter_exposed_validator_types(payload))
 
 
 @router.post(
