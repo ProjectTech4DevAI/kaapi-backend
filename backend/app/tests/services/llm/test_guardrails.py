@@ -474,7 +474,7 @@ class TestApplyGuardrails:
             [
                 disabled_ref,
                 enabled_ref,
-                InlineValidator(type="profanity_free", is_enabled=False),
+                InlineValidator(type="uli_slur_match", is_enabled=False),
             ]
         )
 
