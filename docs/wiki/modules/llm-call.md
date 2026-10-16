@@ -29,7 +29,7 @@ All paths relative to `backend/app/`.
 - `LLMCallConfig` — one-of: saved reference (`id` + `version`) XOR ad-hoc `blob` (validator-enforced)
 - `ConfigBlob` — `completion` + optional `prompt_template` (`PromptTemplate.template`, plain string; `{{input}}` interpolation is llm-chain-only) + `input_guardrails`/`output_guardrails`. Each guardrail entry is either a `Validator` reference (`{validator_config_id}`) or an `InlineValidator` spec (`{type, on_fail, ...per-type params}`, `type` limited to `InlineValidatorTypeEnum`: gender_assumption_bias, pii_remover, profanity_free, topic_relevance_llm); tagged union `GuardrailEntry`. Both carry `is_enabled` (default true). Disabled entries are never fetched or sent. `services/llm/guardrails.apply_guardrails` POSTs fetched reference rows plus inline specs (a blob is all-refs or all-inline), with `is_enabled` stripped and `stage` stamped on inline specs.
 - `CompletionConfig` — discriminated union on `provider`: `KaapiCompletionConfig` (standardized params: `TextLLMParams`/`STTLLMParams`/`TTSLLMParams`), `NativeCompletionConfig` (pass-through), `ProxyCompletionConfig` (client's own endpoint)
-- `TextLLMParams` reasoning knobs: `reasoning` + `effort` (OpenAI-style), `thinking` (Anthropic adaptive-thinking container, forwarded as-is) and `thinking_level` (Gemini). A knob must be **declared here** to survive config save — pydantic's default extra policy is ignore, so an undeclared key is dropped silently at validation with no error.
+- `TextLLMParams` reasoning knobs: `reasoning` + `effort` (OpenAI-style), `thinking` (Anthropic adaptive-thinking container, forwarded as-is) and `thinking_level` (Gemini: `minimal`/`low`/`medium`/`high`; `minimal` is flash-only). A knob must be **declared here** to survive config save — pydantic's default extra policy is ignore, so an undeclared key is dropped silently at validation with no error.
 - `QueryParams` — per-call input + `ConversationConfig`
 - `models/guardrails/` — validator config shapes
 
@@ -45,6 +45,7 @@ All paths relative to `backend/app/`.
 
 ## External
 - OpenAI / Gemini / Anthropic (via `services/llm/providers/`), proxy endpoints, Langfuse tracing.
+- Both Gemini providers call the **Interactions API** (`client.interactions.create`; TTS strips the WAV header when present — 3.8 models return WAV, preview models return raw 24 kHz PCM and reject `audio/l16` — then Kaapi re-wraps to wav/mp3/ogg). AI Studio (`providers/google_aistudio.py`) uses an API key and `files.upload` for STT audio; Vertex (`providers/google_gcp.py`) uses `genai.Client(vertexai=True)` and stages STT audio in GCS as a `gs://` URI. Vertex auth: each credential field falls back to platform settings independently; the SA key (+ project, defaulting to the key's own `project_id`) is preferred, else the API key in express mode — the SDK rejects both together. A malformed SA key is logged and skipped, not raised. Vertex may return an empty interaction id, so it falls back to `google-gcp-<uuid>`. Thinking level resolves the same way in both: `thinking_config.thinking_level` → `reasoning`, omitted if neither; STT defaults to `low`. Interactions errors come from `google.genai._gaos.lib.compat_errors`, not `google.genai.errors` (which `files.upload` still raises).
 
 ## Gotchas
 - Saved config resolution = `config_id` + `version` pinned; ad-hoc blob never persisted.

@@ -267,8 +267,9 @@ def map_kaapi_to_google_params(
     Supported Mapping:
         - model → model
         - instructions → instructions (for STT prompts, if available)
-        - temperature -> temperature parameter (0-2)
-        - top_p / max_output_tokens → same name (text only)
+        - temperature / top_p → not sent (deprecated by Gemini)
+        - max_output_tokens → same name (text only)
+        - language → full Gemini locale via BCP47_LOCALE_TO_GEMINI_LANG; unsupported → auto-detect (TTS only)
         - thinking_level → thinking_config.thinking_level (text only)
         - output_schema → output_schema, converted to Gemini's shape (text only)
         - knowledge_base_ids → FileSearch tool store names (text only)
@@ -296,18 +297,10 @@ def map_kaapi_to_google_params(
     google_params["model"] = model
 
     if completion_type == CompletionType.TEXT:
-        # Text completion - instructions, temperature, reasoning, knowledge_base_ids
+        # Text completion - instructions, reasoning, knowledge_base_ids
         instructions = params.get("instructions")
         if instructions:
             google_params["instructions"] = instructions
-
-        temperature = params.get("temperature")
-        if temperature is not None:
-            google_params["temperature"] = temperature
-
-        top_p = params.get("top_p")
-        if top_p is not None:
-            google_params["top_p"] = top_p
 
         max_output_tokens = params.get("max_output_tokens")
         if max_output_tokens is not None:
@@ -353,7 +346,7 @@ def map_kaapi_to_google_params(
         # Language: Only set if explicitly provided (None/missing = auto-detect)
         language = params.get("language")
         if language:
-            google_lang = BCP47_LOCALE_TO_GEMINI_LANG.get(language) or None
+            google_lang = BCP47_LOCALE_TO_GEMINI_LANG.get(language)
             if not google_lang:
                 warnings.append(
                     f"Unsupported language '{language}' for Gemini TTS, using auto-detect"
@@ -362,7 +355,7 @@ def map_kaapi_to_google_params(
                 google_params["language"] = google_lang
 
     elif completion_type == CompletionType.STT:
-        # STT mode - instructions, temperature, input_language, output_language, response_format
+        # STT mode - instructions, input_language, output_language, response_format
         # Apply smart default for input_language
         input_language = params.get("input_language") or "auto"
         google_params["input_language"] = input_language
@@ -371,10 +364,6 @@ def map_kaapi_to_google_params(
         instructions = params.get("instructions")
         if instructions:
             google_params["instructions"] = instructions
-
-        temperature = params.get("temperature")
-        if temperature is not None:
-            google_params["temperature"] = temperature
 
         output_language = params.get("output_language")
         if output_language:
