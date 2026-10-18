@@ -2,6 +2,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.crud.config import ConfigCrud
@@ -569,3 +570,49 @@ def test_config_tag_is_immutable(db: Session) -> None:
 
     with pytest.raises(ValueError, match="tag is immutable"):
         config.tag = ConfigTag.ASSESSMENT
+
+
+def test_create_config_concurrent_duplicate_raises_409(
+    db: Session, example_config_blob: ConfigBlob, monkeypatch
+) -> None:
+    """A unique violation on commit (lost race past the name pre-check) is a 409."""
+    project = create_test_project(db)
+    config_crud = ConfigCrud(session=db, project_id=project.id)
+
+    def _fail_commit() -> None:
+        raise IntegrityError("INSERT", {}, Exception("duplicate key"))
+
+    monkeypatch.setattr(db, "commit", _fail_commit)
+
+    with pytest.raises(HTTPException) as exc:
+        config_crud.create_or_raise(
+            ConfigCreate(
+                name=f"test-config-{random_lower_string()}",
+                config_blob=example_config_blob,
+            )
+        )
+
+    assert exc.value.status_code == 409
+
+
+def test_create_config_http_exception_propagates(
+    db: Session, example_config_blob: ConfigBlob, monkeypatch
+) -> None:
+    """A typed HTTPException inside the write keeps its status, not a 500."""
+    project = create_test_project(db)
+    config_crud = ConfigCrud(session=db, project_id=project.id)
+
+    def _fail_add(*_: object, **__: object) -> None:
+        raise HTTPException(status_code=503, detail="unavailable")
+
+    monkeypatch.setattr(db, "add", _fail_add)
+
+    with pytest.raises(HTTPException) as exc:
+        config_crud.create_or_raise(
+            ConfigCreate(
+                name=f"test-config-{random_lower_string()}",
+                config_blob=example_config_blob,
+            )
+        )
+
+    assert exc.value.status_code == 503

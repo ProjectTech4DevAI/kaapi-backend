@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.crud import (
@@ -472,3 +473,57 @@ def test_duplicate_provider_raises_409(db: Session) -> None:
 
     assert exc.value.status_code == 409
     assert "already exist" in exc.value.detail
+
+
+def test_non_duplicate_integrity_error_raises_500(db: Session, monkeypatch) -> None:
+    """An IntegrityError that is not the unique constraint is a server fault."""
+    project = create_test_project(db)
+
+    def _fail_commit() -> None:
+        raise IntegrityError("INSERT", {}, Exception("foreign key violation"))
+
+    monkeypatch.setattr(db, "commit", _fail_commit)
+
+    with pytest.raises(HTTPException) as exc:
+        set_creds_for_org(
+            session=db,
+            creds_add=CredsCreate(
+                is_active=True, credential={"openai": {"api_key": "sk-test"}}
+            ),
+            organization_id=project.organization_id,
+            project_id=project.id,
+        )
+
+    assert exc.value.status_code == 500
+
+
+def test_update_creds_without_provider_raises_400(db: Session) -> None:
+    project = create_test_project(db)
+
+    with pytest.raises(HTTPException) as exc:
+        update_creds_for_org(
+            session=db,
+            org_id=project.organization_id,
+            project_id=project.id,
+            creds_in=CredsUpdate.model_construct(provider=None, credential=None),
+        )
+
+    assert exc.value.status_code == 400
+
+
+def test_remove_creds_for_org_race_deletes_nothing_raises_404(
+    db: Session, monkeypatch
+) -> None:
+    """Rows vanish between the existence check and the delete: 404, not 500."""
+    _, project = create_test_credential(db)
+    monkeypatch.setattr(
+        "app.crud.credentials.get_creds_by_org", lambda **k: [MagicMock()]
+    )
+    monkeypatch.setattr(db, "exec", lambda *a, **k: MagicMock(rowcount=0))
+
+    with pytest.raises(HTTPException) as exc:
+        remove_creds_for_org(
+            session=db, org_id=project.organization_id, project_id=project.id
+        )
+
+    assert exc.value.status_code == 404

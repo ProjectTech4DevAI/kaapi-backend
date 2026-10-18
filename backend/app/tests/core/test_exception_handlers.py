@@ -1,12 +1,19 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
+from sqlalchemy.exc import (
+    DataError,
+    IntegrityError,
+    OperationalError,
+    ProgrammingError,
+)
 
 from app.core.config import settings
 from app.core.exception_handlers import (
+    DB_ERROR_DETAIL,
     GENERIC_ERROR_DETAIL,
     _sanitize_validation_errors,
     register_exception_handlers,
@@ -224,3 +231,57 @@ class TestGenericErrorHandler:
         assert response.status_code == 500
         assert response.json()["error"] == GENERIC_ERROR_DETAIL
         assert "arn:aws:kms" not in response.text
+
+
+class TestDbErrorHandler:
+    @pytest.mark.parametrize(
+        ("exc", "status_code"),
+        [
+            (IntegrityError("INSERT", {"input": "9876543210"}, Exception("dup")), 409),
+            (DataError("INSERT", {}, Exception("too long")), 422),
+            (OperationalError("SELECT", {}, Exception("conn refused")), 503),
+            (ProgrammingError("SELECT", {}, Exception("bad sql")), 500),
+        ],
+    )
+    def test_maps_status_without_leaking_sql(
+        self, exc: Exception, status_code: int
+    ) -> None:
+        response = _app_raising(exc).get("/boom")
+
+        assert response.status_code == status_code
+        assert response.json()["error"].startswith("Database error:")
+        assert "INSERT" not in response.text
+        assert "9876543210" not in response.text
+
+    def test_unmapped_db_error_uses_default_detail(self) -> None:
+        response = _app_raising(ProgrammingError("SELECT", {}, Exception("x"))).get(
+            "/boom"
+        )
+
+        assert response.json()["error"] == DB_ERROR_DETAIL
+
+
+class TestHttpExceptionHandler:
+    def test_server_error_is_logged(self) -> None:
+        with patch("app.core.exception_handlers.logger.error") as log_error:
+            response = _app_raising(
+                HTTPException(status_code=502, detail="upstream failed")
+            ).get("/boom")
+
+        assert response.status_code == 502
+        log_error.assert_called_once()
+
+    def test_tags_status_class_when_sentry_active(self) -> None:
+        client = MagicMock()
+        client.is_active.return_value = True
+        with (
+            patch(
+                "app.core.exception_handlers.sentry_sdk.get_client",
+                return_value=client,
+            ),
+            patch("app.core.exception_handlers.sentry_sdk.set_tag") as set_tag,
+        ):
+            _app_raising(HTTPException(status_code=404, detail="nope")).get("/boom")
+
+        set_tag.assert_any_call("http.status_code", "404")
+        set_tag.assert_any_call("error.class", "client")
