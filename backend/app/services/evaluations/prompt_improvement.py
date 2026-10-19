@@ -649,7 +649,7 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
         ) from exc
 
 
-class BriefScore(TypedDict):
+class TraceScoreSummary(TypedDict):
     """One metric as the drafting brief sees it; data_type/verdict are UI-only."""
 
     name: str
@@ -658,32 +658,32 @@ class BriefScore(TypedDict):
     unscoreable: NotRequired[bool]
 
 
-class BriefAttempt(TypedDict):
+class TraceAttempt(TypedDict):
     """One run of a question: the answer it produced and how the judge scored it."""
 
     llm_answer: str
-    scores: list[BriefScore]
+    scores: list[TraceScoreSummary]
 
 
-class BriefQuestion(TypedDict):
+class TraceQuestion(TypedDict):
     """One dataset question with every repeat (duplication factor) nested under it."""
 
     question_id: int | str | None
     question: str
     ground_truth_answer: str
-    attempts: list[BriefAttempt]
+    attempts: list[TraceAttempt]
 
 
-def _brief_score(score: TraceScore) -> BriefScore:
-    brief: BriefScore = {"name": score["name"], "value": score["value"]}
+def _trace_score_summary(score: TraceScore) -> TraceScoreSummary:
+    summary: TraceScoreSummary = {"name": score["name"], "value": score["value"]}
     if "comment" in score:
-        brief["comment"] = score["comment"]
+        summary["comment"] = score["comment"]
     if "unscoreable" in score:
-        brief["unscoreable"] = score["unscoreable"]
-    return brief
+        summary["unscoreable"] = score["unscoreable"]
+    return summary
 
 
-def _format_traces_for_brief(traces: list[TraceData]) -> list[BriefQuestion]:
+def _format_traces_for_brief(traces: list[TraceData]) -> list[TraceQuestion]:
     """Group repeated attempts per question and keep only what the brief reads.
 
     A 500-row Hindi judge run blew past Claude's 1M-token context: every repeat
@@ -695,7 +695,7 @@ def _format_traces_for_brief(traces: list[TraceData]) -> list[BriefQuestion]:
     that is the export shape (keeps trace_ids/category, scores as parallel lists)
     and rejects v1 traces that have no question_id.
     """
-    grouped: dict[Any, BriefQuestion] = {}
+    grouped: dict[Any, TraceQuestion] = {}
     for trace in traces:
         question = trace.get("input_to_llm") or trace.get("question", "")
         ground_truth = trace.get("ground_truth_answer", "")
@@ -715,7 +715,9 @@ def _format_traces_for_brief(traces: list[TraceData]) -> list[BriefQuestion]:
             {
                 "llm_answer": trace.get("output_from_llm")
                 or trace.get("llm_answer", ""),
-                "scores": [_brief_score(score) for score in trace.get("scores", [])],
+                "scores": [
+                    _trace_score_summary(score) for score in trace.get("scores", [])
+                ],
             }
         )
     return list(grouped.values())
