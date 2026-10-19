@@ -95,7 +95,7 @@ def proxy_guardrails_request(
         ):
             # Status isn't raised, so only connect failures retry: safe for any method.
             response = retry(
-                stop=stop_after_attempt(3),
+                stop=stop_after_attempt(4),
                 wait=wait_exponential(max=10),
                 retry=retry_if_exception(is_transient),
                 reraise=True,
@@ -381,7 +381,7 @@ def run_guardrails_validation(
         ):
 
             @retry(
-                stop=stop_after_attempt(3),
+                stop=stop_after_attempt(4),
                 wait=wait_exponential(max=10),
                 retry=retry_if_exception(is_transient),
                 reraise=True,
@@ -477,7 +477,7 @@ def list_validators_config(
         ):
 
             @retry(
-                stop=stop_after_attempt(3),
+                stop=stop_after_attempt(4),
                 wait=wait_exponential(max=10),
                 retry=retry_if_exception(is_transient),
                 reraise=True,

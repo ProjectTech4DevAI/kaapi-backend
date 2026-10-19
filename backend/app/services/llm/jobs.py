@@ -863,7 +863,7 @@ def _run_output_guardrails(
 
 # ReadTimeout isn't retried: the proxy may already have run (and billed) the call.
 @retry(
-    stop=stop_after_attempt(3),
+    stop=stop_after_attempt(4),
     wait=wait_exponential(max=10),
     retry=retry_if_exception(is_transient),
     reraise=True,

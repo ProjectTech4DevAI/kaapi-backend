@@ -47,7 +47,7 @@ Returns `GuardrailsOutcome(safe_text, error, bypassed, rephrase_needed, raw)`. P
 
 `proxy_guardrails_request(method, path, ...)` is a separate, dumber path used only by the management CRUD routes: forwards verbatim, returns `(status_code, parsed_json_or_None)`.
 
-**Retries** (tenacity `@retry`, 3 attempts): validation POST and validator-config GETs retry on `is_transient` (5xx / connect failure); auth errors are never retried. The management proxy retries connect failures only, so a POST is never re-sent after it landed. After exhaustion each call falls into its §4 failure path.
+**Retries** (tenacity `@retry`, 3 retries): validation POST and validator-config GETs retry on `is_transient` (5xx / connect failure); auth errors are never retried. The management proxy retries connect failures only, so a POST is never re-sent after it landed. After exhaustion each call falls into its §4 failure path.
 
 ## 4. Failure semantics (the thing most changes get wrong)
 

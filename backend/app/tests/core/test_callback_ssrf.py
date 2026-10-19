@@ -405,14 +405,14 @@ class TestSendCallbackRetry:
         assert post.call_count == 3
 
     @pytest.mark.parametrize("status_code", [503, 404])
-    def test_gives_up_after_three_attempts(
+    def test_gives_up_after_four_attempts(
         self, _validate: Any, status_code: int
     ) -> None:
         with patch.object(
             requests.Session, "post", return_value=_callback_response(status_code)
         ) as post:
             assert send_callback(self.URL, {"status": "done"}) is False
-        assert post.call_count == 3
+        assert post.call_count == 4
 
     def test_each_attempt_is_signed_with_a_fresh_timestamp(
         self, _validate: Any
@@ -428,7 +428,7 @@ class TestSendCallbackRetry:
         timestamps = {
             c.kwargs["headers"]["X-Webhook-Timestamp"] for c in post.mock_calls
         }
-        assert len(timestamps) == 3
+        assert len(timestamps) == 4
 
     def test_invalid_url_is_never_posted(self, validate: Any) -> None:
         validate.side_effect = ValueError("private IP")

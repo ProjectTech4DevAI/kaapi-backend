@@ -618,7 +618,7 @@ def send_callback(
 
 
 @retry(
-    stop=stop_after_attempt(3),
+    stop=stop_after_attempt(4),
     wait=wait_exponential(max=10),
     retry=retry_if_exception_type(requests.RequestException),
     reraise=True,
