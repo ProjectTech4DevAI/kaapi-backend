@@ -8,7 +8,7 @@ persists the result as a new config_version.
 import copy
 import json
 import logging
-from typing import Any, NotRequired, TypedDict
+from typing import NotRequired, TypedDict, cast
 from uuid import UUID
 
 import anthropic
@@ -57,14 +57,12 @@ logger = logging.getLogger(__name__)
 # Headroom for a full prompt rewrite + JSON wrapper; too low truncates into invalid JSON.
 _LLM_MAX_TOKENS = 16384
 
-# JSON keys expected in the LLM's structured response.
 _LLM_KEY_INSTRUCTIONS = "improved_instructions"
 _LLM_KEY_RATIONALE = "rationale"
 
 # Cap the rationale so it stays a one-line summary in the commit_message.
 _RATIONALE_MAX_LENGTH = 200
 
-# Structured-output schema: guarantees the response is valid JSON with these fields.
 _OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -137,7 +135,6 @@ def validate_improve_prompt(
             detail=f"evaluation_not_completed: run status is '{run.status}', must be '{_COMPLETED_STATUS}'",
         )
     if not run.score_trace_url:
-        # Run exists but a precondition is unmet, so 422 rather than 404.
         raise HTTPException(
             status_code=422,
             detail=(
@@ -146,7 +143,6 @@ def validate_improve_prompt(
             ),
         )
     if run.config_id is None or run.config_version is None:
-        # Both FKs are nullable; without them there's no version to improve.
         raise HTTPException(
             status_code=422,
             detail="source_config_unavailable: run has no config_id/config_version reference",
@@ -409,9 +405,9 @@ def execute_prompt_improvement(
             traces = load_json_from_object_store(
                 storage=storage, url=run.score_trace_url
             )
-            if traces is None:
+            if not isinstance(traces, list):
                 raise RuntimeError(
-                    "trace_download_failed: could not retrieve trace file from storage"
+                    "trace_download_failed: could not retrieve trace list from storage"
                 )
 
             improved_instructions, rationale = _draft_improved_prompt(
@@ -487,8 +483,6 @@ def execute_prompt_improvement(
             )
             raise
         except Exception as exc:
-            # HTTPException (from re-validation) carries the clean detail; everything
-            # else falls back to str(exc).
             error_message = getattr(exc, "detail", None) or str(exc)
             logger.error(
                 f"[execute_prompt_improvement] Failed | job_id={job_id} "
@@ -568,7 +562,6 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
     per-cause log lines are kept so operators can still triage the fault.
     """
     if not settings.ANTHROPIC_API_KEY:
-        # Missing platform key is a server-side misconfiguration, not an upstream fault.
         raise RuntimeError(
             "prompt_generation_failed: the platform Anthropic key "
             "(ANTHROPIC_API_KEY) is not configured"
@@ -650,7 +643,7 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
 
 
 class TraceScoreSummary(TypedDict):
-    """One metric as the drafting brief sees it; data_type/verdict are UI-only."""
+    """A TraceScore without the UI-only fields (data_type, verdict)."""
 
     name: str
     value: float | str
@@ -659,14 +652,14 @@ class TraceScoreSummary(TypedDict):
 
 
 class TraceAttempt(TypedDict):
-    """One run of a question: the answer it produced and how the judge scored it."""
+    """One run of a question: its answer and scores."""
 
     llm_answer: str
     scores: list[TraceScoreSummary]
 
 
 class TraceQuestion(TypedDict):
-    """One dataset question with every repeat (duplication factor) nested under it."""
+    """A dataset question with one attempt per duplication-factor repeat."""
 
     question_id: int | str | None
     question: str
@@ -675,12 +668,10 @@ class TraceQuestion(TypedDict):
 
 
 def _trace_score_summary(score: TraceScore) -> TraceScoreSummary:
-    summary: TraceScoreSummary = {"name": score["name"], "value": score["value"]}
-    if "comment" in score:
-        summary["comment"] = score["comment"]
-    if "unscoreable" in score:
-        summary["unscoreable"] = score["unscoreable"]
-    return summary
+    return cast(
+        TraceScoreSummary,
+        {k: v for k, v in score.items() if k not in ("data_type", "verdict")},
+    )
 
 
 def _format_traces_for_brief(traces: list[TraceData]) -> list[TraceQuestion]:
@@ -695,7 +686,7 @@ def _format_traces_for_brief(traces: list[TraceData]) -> list[TraceQuestion]:
     that is the export shape (keeps trace_ids/category, scores as parallel lists)
     and rejects v1 traces that have no question_id.
     """
-    grouped: dict[Any, TraceQuestion] = {}
+    grouped: dict[int | str | tuple[str, str], TraceQuestion] = {}
     for trace in traces:
         question = trace.get("input_to_llm") or trace.get("question", "")
         ground_truth = trace.get("ground_truth_answer", "")
@@ -812,7 +803,6 @@ def _draft_improved_prompt(
         f"sentence (≤ {_RATIONALE_MAX_LENGTH} characters): what you changed and why."
     )
     target_config = _target_config_from_params(config_params)
-    # ensure_ascii=False: \uXXXX-escaping Devanagari inflates its token count several-fold.
     traces_json = json.dumps(
         _format_traces_for_brief(traces), ensure_ascii=False, separators=(",", ":")
     )
