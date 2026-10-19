@@ -12,7 +12,11 @@ from app.models.llm import (
     QueryParams,
 )
 from app.models.llm.constants import CompletionType
+from elevenlabs.core.api_error import ApiError
+
 from app.services.llm.providers.eleven_ai import ElevenlabsAIProvider
+
+pytestmark = pytest.mark.usefixtures("no_retry_backoff")
 
 
 def mock_elevenlabs_stt_response(
@@ -202,6 +206,33 @@ class TestElevenlabsProviderSTT:
         assert result.provider_raw_response is not None
         assert result.provider_raw_response["text"] == "Test transcript"
         assert result.provider_raw_response["transcription_id"] == "txn_stt_123"
+
+    def test_stt_retries_5xx_then_succeeds(
+        self, provider, mock_client, stt_config, query_params, temp_audio_file
+    ):
+        mock_client.speech_to_text.convert.side_effect = [
+            ApiError(status_code=503, body="down"),
+            mock_elevenlabs_stt_response(text="Hello"),
+        ]
+
+        result, error = provider.execute(stt_config, query_params, temp_audio_file)
+
+        assert error is None
+        assert result.response.output.content.value == "Hello"
+        assert mock_client.speech_to_text.convert.call_count == 2
+
+    def test_stt_does_not_retry_4xx(
+        self, provider, mock_client, stt_config, query_params, temp_audio_file
+    ):
+        mock_client.speech_to_text.convert.side_effect = ApiError(
+            status_code=400, body="bad"
+        )
+
+        result, error = provider.execute(stt_config, query_params, temp_audio_file)
+
+        assert result is None
+        assert error is not None
+        assert mock_client.speech_to_text.convert.call_count == 1
 
 
 class TestElevenlabsProviderTTS:
@@ -450,6 +481,37 @@ class TestElevenlabsProviderTTS:
         assert result.usage.input_tokens == 5
         assert result.usage.output_tokens == 0
         assert result.usage.total_tokens == 5
+
+    def test_tts_retries_5xx_raised_while_streaming(
+        self, provider, mock_client, tts_config, query_params
+    ):
+        def failing_stream():
+            raise ApiError(status_code=503, body="down")
+            yield b""
+
+        mock_client.text_to_speech.convert.side_effect = [
+            failing_stream(),
+            iter([b"audio"]),
+        ]
+
+        result, error = provider.execute(tts_config, query_params, "Namaste")
+
+        assert error is None
+        assert result is not None
+        assert mock_client.text_to_speech.convert.call_count == 2
+
+    def test_tts_gives_up_after_four_attempts(
+        self, provider, mock_client, tts_config, query_params
+    ):
+        mock_client.text_to_speech.convert.side_effect = ApiError(
+            status_code=502, body="bad gateway"
+        )
+
+        result, error = provider.execute(tts_config, query_params, "Namaste")
+
+        assert result is None
+        assert error is not None
+        assert mock_client.text_to_speech.convert.call_count == 4
 
 
 class TestElevenlabsProviderClientCreation:
