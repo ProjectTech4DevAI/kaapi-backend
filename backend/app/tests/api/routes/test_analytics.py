@@ -2,6 +2,7 @@ from datetime import date, datetime
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import event
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -210,6 +211,64 @@ class TestMonthlyAnalytics:
         )
         total = sum(float(p["value"]) for p in data)
         assert total == pytest.approx(2.0)
+
+    def test_metric_cost_fetches_pricing_in_single_query(
+        self,
+        client: TestClient,
+        db: Session,
+        user_api_key: TestAuthContext,
+        user_api_key_header: dict[str, str],
+        llm_job: Job,
+    ):
+        model_names = [f"gpt-analytics-n1-{uuid4().hex[:8]}" for _ in range(3)]
+        for name in model_names:
+            db.add(
+                ModelConfig(
+                    provider="openai",
+                    model_name=name,
+                    completion_type=["text"],
+                    pricing={
+                        "response": {"input_token_cost": 1.0, "output_token_cost": 2.0}
+                    },
+                    is_active=True,
+                )
+            )
+        db.commit()
+        for name in model_names:
+            _make_llm_call(
+                db,
+                job_id=llm_job.id,
+                project_id=user_api_key.project_id,
+                organization_id=user_api_key.organization_id,
+                provider="openai",
+                model=name,
+                input_tokens=1_000_000,
+                output_tokens=500_000,
+            )
+
+        model_config_queries: list[str] = []
+
+        def _capture(conn, cursor, statement, parameters, context, executemany):
+            if "model_config" in statement:
+                model_config_queries.append(statement)
+
+        engine = db.get_bind()
+        event.listen(engine, "before_cursor_execute", _capture)
+        try:
+            data = _ok(
+                client.get(
+                    MONTHLY_URL,
+                    params={"metric": "cost", "provider": "openai"},
+                    headers=user_api_key_header,
+                )
+            )
+        finally:
+            event.remove(engine, "before_cursor_execute", _capture)
+
+        total = sum(float(p["value"]) for p in data)
+        assert total == pytest.approx(6.0)
+        # One pricing lookup for llm_call + one DISTINCT ON subquery for evals.
+        assert len(model_config_queries) <= 2
 
     @pytest.mark.parametrize(
         "input_type,output_type,expected_modality",

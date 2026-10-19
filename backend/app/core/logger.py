@@ -8,6 +8,7 @@ from logging.handlers import RotatingFileHandler
 from asgi_correlation_id import correlation_id
 
 from app.core.config import settings
+from app.core.telemetry.context import LogContextFilter
 
 LOG_DIR = settings.LOG_DIR
 os.makedirs(LOG_DIR, exist_ok=True)
@@ -17,7 +18,7 @@ LOG_FILE_PATH = os.path.join(LOG_DIR, "app.log")
 LOGGING_LEVEL = logging.INFO
 LOGGING_FORMAT = (
     "%(asctime)s - [%(service_name)s] - [%(correlation_id)s] - "
-    "%(levelname)s - %(name)s - %(message)s"
+    "%(levelname)s - %(_log_location)s - %(message)s"
 )
 _service_name_context: ContextVar[str | None] = ContextVar(
     "kaapi_service_name", default=None
@@ -102,6 +103,7 @@ def configure_logging(service_name: str | None = None) -> None:
     stream_handler.setFormatter(formatter)
     stream_handler.addFilter(CorrelationIdFilter())
     stream_handler.addFilter(ServiceNameFilter(resolved_service_name))
+    stream_handler.addFilter(LogContextFilter())
 
     file_handler = RotatingFileHandler(
         LOG_FILE_PATH, maxBytes=10 * 1024 * 1024, backupCount=5
@@ -109,7 +111,9 @@ def configure_logging(service_name: str | None = None) -> None:
     file_handler.setFormatter(formatter)
     file_handler.addFilter(CorrelationIdFilter())
     file_handler.addFilter(ServiceNameFilter(resolved_service_name))
+    file_handler.addFilter(LogContextFilter())
 
+    root_logger.addFilter(LogContextFilter())
     root_logger.handlers.clear()
     root_logger.addHandler(stream_handler)
     root_logger.addHandler(file_handler)
