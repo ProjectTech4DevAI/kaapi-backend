@@ -8,7 +8,7 @@ persists the result as a new config_version.
 import copy
 import json
 import logging
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 from uuid import UUID
 
 import anthropic
@@ -29,6 +29,8 @@ from app.crud.evaluations.score import (
     GROUND_TRUTH_SCORE_NAME,
     KNOWLEDGE_BASE_SCORE_NAME,
     PROMPT_SCORE_NAME,
+    TraceData,
+    TraceScore,
 )
 from app.crud.jobs import JobCrud
 from app.models.config.config import ConfigTag
@@ -647,11 +649,41 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
         ) from exc
 
 
-# Score keys the drafting brief reads; data_type/verdict are UI bookkeeping.
-_BRIEF_SCORE_KEYS = ("name", "value", "comment", "unscoreable")
+class BriefScore(TypedDict):
+    """One metric as the drafting brief sees it; data_type/verdict are UI-only."""
+
+    name: str
+    value: float | str
+    comment: NotRequired[str]
+    unscoreable: NotRequired[bool]
 
 
-def _format_traces_for_brief(traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
+class BriefAttempt(TypedDict):
+    """One run of a question: the answer it produced and how the judge scored it."""
+
+    llm_answer: str
+    scores: list[BriefScore]
+
+
+class BriefQuestion(TypedDict):
+    """One dataset question with every repeat (duplication factor) nested under it."""
+
+    question_id: int | str | None
+    question: str
+    ground_truth_answer: str
+    attempts: list[BriefAttempt]
+
+
+def _brief_score(score: TraceScore) -> BriefScore:
+    brief: BriefScore = {"name": score["name"], "value": score["value"]}
+    if "comment" in score:
+        brief["comment"] = score["comment"]
+    if "unscoreable" in score:
+        brief["unscoreable"] = score["unscoreable"]
+    return brief
+
+
+def _format_traces_for_brief(traces: list[TraceData]) -> list[BriefQuestion]:
     """Group repeated attempts per question and keep only what the brief reads.
 
     A 500-row Hindi judge run blew past Claude's 1M-token context: every repeat
@@ -663,7 +695,7 @@ def _format_traces_for_brief(traces: list[dict[str, Any]]) -> list[dict[str, Any
     that is the export shape (keeps trace_ids/category, scores as parallel lists)
     and rejects v1 traces that have no question_id.
     """
-    grouped: dict[Any, dict[str, Any]] = {}
+    grouped: dict[Any, BriefQuestion] = {}
     for trace in traces:
         question = trace.get("input_to_llm") or trace.get("question", "")
         ground_truth = trace.get("ground_truth_answer", "")
@@ -683,10 +715,7 @@ def _format_traces_for_brief(traces: list[dict[str, Any]]) -> list[dict[str, Any
             {
                 "llm_answer": trace.get("output_from_llm")
                 or trace.get("llm_answer", ""),
-                "scores": [
-                    {k: score[k] for k in _BRIEF_SCORE_KEYS if k in score}
-                    for score in trace.get("scores", [])
-                ],
+                "scores": [_brief_score(score) for score in trace.get("scores", [])],
             }
         )
     return list(grouped.values())
@@ -696,7 +725,7 @@ def _draft_improved_prompt(
     *,
     current_instructions: str,
     config_params: dict,
-    traces: list[dict[str, Any]],
+    traces: list[TraceData],
     is_judge_run: bool = False,
 ) -> tuple[str, str]:
     """Rewrite the prompt from a run's score traces.
