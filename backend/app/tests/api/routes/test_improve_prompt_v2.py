@@ -42,7 +42,7 @@ from app.models.config.config import ConfigTag
 from app.models.job import Job, JobStatus, JobType
 from app.services.evaluations.prompt_improvement import (
     AI_GENERATED_MARKER,
-    _compact_traces_for_brief,
+    _format_traces_for_brief,
     execute_prompt_improvement,
 )
 from app.services.llm.providers.claude import STOP_REASON_COMPLETE
@@ -684,7 +684,7 @@ def _score(name: str, value: int | str, comment: str) -> dict:
     }
 
 
-class TestCompactTracesForBrief:
+class TestFormatTracesForBrief:
     """Pure-function checks on the trace projection fed to the drafting LLM."""
 
     def test_groups_repeats_per_question_and_drops_bookkeeping(self) -> None:
@@ -723,7 +723,7 @@ class TestCompactTracesForBrief:
             },
         ]
 
-        compact = _compact_traces_for_brief(traces)
+        compact = _format_traces_for_brief(traces)
 
         assert compact == [
             {
@@ -787,7 +787,7 @@ class TestCompactTracesForBrief:
             },
         ]
 
-        compact = _compact_traces_for_brief(traces)
+        compact = _format_traces_for_brief(traces)
 
         assert compact[0]["question"] == "user text masked"
         assert compact[0]["attempts"][0]["llm_answer"] == "raw model answer"
@@ -827,7 +827,7 @@ class TestCompactTracesForBrief:
             },
         ]
 
-        compact = _compact_traces_for_brief(traces)
+        compact = _format_traces_for_brief(traces)
 
         assert [entry["question"] for entry in compact] == ["Q", "Other"]
         assert compact[0]["question_id"] is None

@@ -651,7 +651,7 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
 _BRIEF_SCORE_KEYS = ("name", "value", "comment", "unscoreable")
 
 
-def _compact_traces_for_brief(traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _format_traces_for_brief(traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Group repeated attempts per question and keep only what the brief reads.
 
     A 500-row Hindi judge run blew past Claude's 1M-token context: every repeat
@@ -659,7 +659,9 @@ def _compact_traces_for_brief(traces: list[dict[str, Any]]) -> list[dict[str, An
     data_type / verdict / guardrail bookkeeping rode along for nothing. Rows the
     guardrails rewrote substitute `input_to_llm` / `output_from_llm`, since the
     prompt under repair acts on what the LLM actually saw and produced, not on
-    the user-facing text.
+    the user-facing text. Not `crud.evaluations.core.group_traces_by_question_id`:
+    that is the export shape (keeps trace_ids/category, scores as parallel lists)
+    and rejects v1 traces that have no question_id.
     """
     grouped: dict[Any, dict[str, Any]] = {}
     for trace in traces:
@@ -781,7 +783,7 @@ def _draft_improved_prompt(
     target_config = _target_config_from_params(config_params)
     # ensure_ascii=False: \uXXXX-escaping Devanagari inflates its token count several-fold.
     traces_json = json.dumps(
-        _compact_traces_for_brief(traces), ensure_ascii=False, separators=(",", ":")
+        _format_traces_for_brief(traces), ensure_ascii=False, separators=(",", ":")
     )
 
     user_message_text = (
