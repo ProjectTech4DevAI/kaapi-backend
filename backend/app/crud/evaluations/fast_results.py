@@ -5,10 +5,23 @@ dicts produced here are the units uploaded to S3, so they must stay
 JSON-serializable and match the batch path's shape.
 """
 
+from collections.abc import Mapping
 from typing import Any, TypedDict
 
 from app.core.config import settings
 from app.crud.evaluations.response_parsing import field_value
+from app.services.llm.chain.types import GuardrailOutcomeEnum
+
+# Guardrails passed content through. Blocked rows store "blocked: {error}".
+GUARDRAIL_APPLIED: str = "applied"
+
+# `BlockResult.metadata` keys present when guardrails passed content through.
+INPUT_GUARDRAIL_METADATA_KEY: str = "input_guardrail"
+OUTPUT_GUARDRAIL_METADATA_KEY: str = "output_guardrail"
+GUARDRAIL_METADATA_KEYS: tuple[str, ...] = (
+    INPUT_GUARDRAIL_METADATA_KEY,
+    OUTPUT_GUARDRAIL_METADATA_KEY,
+)
 
 
 class ResponseResult(TypedDict, total=False):
@@ -23,6 +36,9 @@ class ResponseResult(TypedDict, total=False):
     question_id: int | None
     failed: bool
     retrieved_chunks: list[dict[str, Any]]
+    guardrail: str | None
+    input_to_llm: str | None
+    output_from_llm: str | None
 
 
 class EmbeddingResult(TypedDict, total=False):
@@ -51,6 +67,9 @@ def build_response_result(
     response_id: str | None = None,
     usage: dict[str, int] | None = None,
     retrieved_chunks: list[dict[str, Any]] | None = None,
+    guardrail: str | None = None,
+    input_to_llm: str | None = None,
+    output_from_llm: str | None = None,
 ) -> ResponseResult:
     """One Stage-1 per-item result, in the batch path's shape."""
     return {
@@ -63,7 +82,16 @@ def build_response_result(
         "question_id": question_id,
         "failed": failed,
         "retrieved_chunks": retrieved_chunks,
+        "guardrail": guardrail,
+        "input_to_llm": input_to_llm,
+        "output_from_llm": output_from_llm,
     }
+
+
+def is_guardrail_blocked(row: Mapping[str, Any]) -> bool:
+    """True when guardrails hard-blocked this row, leaving it with no output to score."""
+    # `.get` not `[...]`: response units written before guardrails landed have no key.
+    return (row.get("guardrail") or "").startswith(f"{GuardrailOutcomeEnum.BLOCKED}:")
 
 
 def build_embedding_failure(item_id: str, error: str) -> EmbeddingResult:
