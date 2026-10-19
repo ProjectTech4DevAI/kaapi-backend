@@ -8,6 +8,7 @@ persists the result as a new config_version.
 import copy
 import json
 import logging
+from typing import Any
 from uuid import UUID
 
 import anthropic
@@ -646,11 +647,54 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
         ) from exc
 
 
+# Score keys the drafting brief reads; data_type/verdict are UI bookkeeping.
+_BRIEF_SCORE_KEYS = ("name", "value", "comment", "unscoreable")
+
+
+def _compact_traces_for_brief(traces: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group repeated attempts per question and keep only what the brief reads.
+
+    A 500-row Hindi judge run blew past Claude's 1M-token context: every repeat
+    (duplication factor) re-shipped question + ground truth, and trace_id /
+    data_type / verdict / guardrail bookkeeping rode along for nothing. Rows the
+    guardrails rewrote substitute `input_to_llm` / `output_from_llm`, since the
+    prompt under repair acts on what the LLM actually saw and produced, not on
+    the user-facing text.
+    """
+    grouped: dict[Any, dict[str, Any]] = {}
+    for trace in traces:
+        question = trace.get("input_to_llm") or trace.get("question", "")
+        ground_truth = trace.get("ground_truth_answer", "")
+        question_id = trace.get("question_id")
+        # v1 traces may lack question_id; the text pair is the next-best identity.
+        key = question_id if question_id is not None else (question, ground_truth)
+        entry = grouped.setdefault(
+            key,
+            {
+                "question_id": question_id,
+                "question": question,
+                "ground_truth_answer": ground_truth,
+                "attempts": [],
+            },
+        )
+        entry["attempts"].append(
+            {
+                "llm_answer": trace.get("output_from_llm")
+                or trace.get("llm_answer", ""),
+                "scores": [
+                    {k: score[k] for k in _BRIEF_SCORE_KEYS if k in score}
+                    for score in trace.get("scores", [])
+                ],
+            }
+        )
+    return list(grouped.values())
+
+
 def _draft_improved_prompt(
     *,
     current_instructions: str,
     config_params: dict,
-    traces: list | dict,
+    traces: list[dict[str, Any]],
     is_judge_run: bool = False,
 ) -> tuple[str, str]:
     """Rewrite the prompt from a run's score traces.
@@ -662,9 +706,13 @@ def _draft_improved_prompt(
     """
     if is_judge_run:
         trace_description = (
-            " from an LLM-as-judge run. Each trace has the fields: `question`, "
-            "`ground_truth_answer`, `llm_answer`, and `scores`. `scores` is a list of "
-            "metric objects; each has `name`, `value`, and `comment`, where:\n"
+            " from an LLM-as-judge run. Each entry is one dataset question with the "
+            "fields: `question_id`, `question`, `ground_truth_answer`, and `attempts`. "
+            "`attempts` is a list, one per time the question was run, each with "
+            "`llm_answer` and `scores`; a wide spread of scores across a question's "
+            "attempts means the prompt yields inconsistent behaviour on it. `scores` "
+            "is a list of metric objects; each has `name`, `value`, and `comment`, "
+            "where:\n"
             f"- `name` is one of `{GROUND_TRUTH_SCORE_NAME}`, `{PROMPT_SCORE_NAME}`, "
             f"or `{KNOWLEDGE_BASE_SCORE_NAME}`.\n"
             "- `value` is the metric's score, an integer from 0 (worst) to 5 (best). Metrics that "
@@ -706,9 +754,10 @@ def _draft_improved_prompt(
         ]
     else:
         trace_description = (
-            ". Each trace has the fields: `question`, `ground_truth_answer`, "
-            "`llm_answer`, `category`, and `scores` (a list of scoring objects with "
-            "`name`, `value`, and `unscoreable`)."
+            ". Each entry is one dataset question with the fields: `question`, "
+            "`ground_truth_answer`, and `attempts`, a list, one per time the "
+            "question was run, each with `llm_answer` and `scores` (a list of "
+            "scoring objects with `name`, `value`, and `unscoreable`)."
         )
         task_steps = [
             "1. Identify the answers that performed poorly — those with low scores or "
@@ -730,11 +779,15 @@ def _draft_improved_prompt(
         f"sentence (≤ {_RATIONALE_MAX_LENGTH} characters): what you changed and why."
     )
     target_config = _target_config_from_params(config_params)
+    # ensure_ascii=False: \uXXXX-escaping Devanagari inflates its token count several-fold.
+    traces_json = json.dumps(
+        _compact_traces_for_brief(traces), ensure_ascii=False, separators=(",", ":")
+    )
 
     user_message_text = (
         "You are a prompt engineer. Below is a JSON array of evaluation traces"
         f"{trace_description}\n\n"
-        f"## Evaluation traces\n```\n{json.dumps(traces)}\n```\n\n"
+        f"## Evaluation traces\n```\n{traces_json}\n```\n\n"
         f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
         "## Target configuration (read-only — do NOT change any of these)\n"
         f"```\n{json.dumps(target_config)}\n```\n\n"

@@ -42,6 +42,7 @@ from app.models.config.config import ConfigTag
 from app.models.job import Job, JobStatus, JobType
 from app.services.evaluations.prompt_improvement import (
     AI_GENERATED_MARKER,
+    _compact_traces_for_brief,
     execute_prompt_improvement,
 )
 from app.services.llm.providers.claude import STOP_REASON_COMPLETE
@@ -671,3 +672,209 @@ class TestV2Worker:
         assert payload["success"] is True
         assert payload["data"]["recommendation_type"] == "prompt"
         assert payload["data"]["config_version"]["version"] == first_version
+
+
+def _score(name: str, value: int | str, comment: str) -> dict:
+    return {
+        "name": name,
+        "value": value,
+        "data_type": "NUMERIC",
+        "comment": comment,
+        "verdict": "Good",
+    }
+
+
+class TestCompactTracesForBrief:
+    """Pure-function checks on the trace projection fed to the drafting LLM."""
+
+    def test_groups_repeats_per_question_and_drops_bookkeeping(self) -> None:
+        traces = [
+            {
+                "trace_id": "t1",
+                "question": "Q",
+                "llm_answer": "A1",
+                "ground_truth_answer": "G",
+                "question_id": 7,
+                "category": "default",
+                "guardrail": None,
+                "input_to_llm": None,
+                "output_from_llm": None,
+                "scores": [_score(GROUND_TRUTH_SCORE_NAME, 1, "wrong")],
+            },
+            {
+                "trace_id": "t2",
+                "question": "Q",
+                "llm_answer": "A2",
+                "ground_truth_answer": "G",
+                "question_id": 7,
+                "guardrail": None,
+                "input_to_llm": None,
+                "output_from_llm": None,
+                "scores": [
+                    _score(GROUND_TRUTH_SCORE_NAME, 5, "right"),
+                    {
+                        "name": KNOWLEDGE_BASE_SCORE_NAME,
+                        "value": "N/A",
+                        "data_type": "CATEGORICAL",
+                        "comment": "no KB",
+                        "unscoreable": True,
+                    },
+                ],
+            },
+        ]
+
+        compact = _compact_traces_for_brief(traces)
+
+        assert compact == [
+            {
+                "question_id": 7,
+                "question": "Q",
+                "ground_truth_answer": "G",
+                "attempts": [
+                    {
+                        "llm_answer": "A1",
+                        "scores": [
+                            {
+                                "name": GROUND_TRUTH_SCORE_NAME,
+                                "value": 1,
+                                "comment": "wrong",
+                            }
+                        ],
+                    },
+                    {
+                        "llm_answer": "A2",
+                        "scores": [
+                            {
+                                "name": GROUND_TRUTH_SCORE_NAME,
+                                "value": 5,
+                                "comment": "right",
+                            },
+                            {
+                                "name": KNOWLEDGE_BASE_SCORE_NAME,
+                                "value": "N/A",
+                                "comment": "no KB",
+                                "unscoreable": True,
+                            },
+                        ],
+                    },
+                ],
+            }
+        ]
+
+    def test_guardrail_rewritten_rows_use_what_the_llm_saw(self) -> None:
+        traces = [
+            {
+                "trace_id": "t1",
+                "question": "user text with PII",
+                "llm_answer": "answer shown to user",
+                "ground_truth_answer": "G",
+                "question_id": 1,
+                "guardrail": "applied",
+                "input_to_llm": "user text masked",
+                "output_from_llm": "raw model answer",
+                "scores": [],
+            },
+            {
+                "trace_id": "t2",
+                "question": "Q2",
+                "llm_answer": "A2",
+                "ground_truth_answer": "G2",
+                "question_id": 2,
+                "guardrail": "applied",
+                "input_to_llm": "Q2 masked",
+                "output_from_llm": None,
+                "scores": [],
+            },
+        ]
+
+        compact = _compact_traces_for_brief(traces)
+
+        assert compact[0]["question"] == "user text masked"
+        assert compact[0]["attempts"][0]["llm_answer"] == "raw model answer"
+        # Only the input side was rewritten; the answer falls back to llm_answer.
+        assert compact[1]["question"] == "Q2 masked"
+        assert compact[1]["attempts"][0]["llm_answer"] == "A2"
+        for entry in compact:
+            assert "guardrail" not in entry
+            assert "input_to_llm" not in entry
+            assert "output_from_llm" not in entry
+            assert "trace_id" not in entry
+
+    def test_v1_traces_without_question_id_group_by_text(self) -> None:
+        traces = [
+            {
+                "trace_id": "t1",
+                "question": "Q",
+                "llm_answer": "A1",
+                "ground_truth_answer": "G",
+                "category": "Geo",
+                "scores": [{"name": "cosine_similarity", "value": 0.3}],
+            },
+            {
+                "trace_id": "t2",
+                "question": "Q",
+                "llm_answer": "A2",
+                "ground_truth_answer": "G",
+                "category": "Geo",
+                "scores": [{"name": "cosine_similarity", "value": 0.9}],
+            },
+            {
+                "trace_id": "t3",
+                "question": "Other",
+                "llm_answer": "A3",
+                "ground_truth_answer": "G3",
+                "scores": [],
+            },
+        ]
+
+        compact = _compact_traces_for_brief(traces)
+
+        assert [entry["question"] for entry in compact] == ["Q", "Other"]
+        assert compact[0]["question_id"] is None
+        assert [a["llm_answer"] for a in compact[0]["attempts"]] == ["A1", "A2"]
+        assert "category" not in compact[0]
+
+
+class TestV2BriefEncoding:
+    """The drafting message must ship Indic text raw, not \\uXXXX-escaped."""
+
+    def _pending_job(self, db: Session, project_id: int) -> Job:
+        return JobCrud(session=db).create(
+            job_type=JobType.PROMPT_IMPROVEMENT,
+            trace_id="N/A",
+            project_id=project_id,
+        )
+
+    def test_indic_text_is_not_ascii_escaped_in_brief(
+        self,
+        db: Session,
+        auth: TestAuthContext,
+        judge_run: EvaluationRun,
+    ) -> None:
+        hindi_question = "भारत की राजधानी क्या है?"
+        hindi_answer = "नई दिल्ली"
+        traces = [
+            {
+                **_JUDGE_TRACES[0],
+                "question": hindi_question,
+                "llm_answer": hindi_answer,
+                "ground_truth_answer": hindi_answer,
+            }
+        ]
+        job = self._pending_job(db, auth.project_id)
+
+        with _worker_env(db, traces=traces) as env:
+            execute_prompt_improvement(
+                project_id=auth.project_id,
+                job_id=str(job.id),
+                organization_id=auth.organization_id,
+                evaluation_id=judge_run.id,
+                callback_url=_CALLBACK_URL,
+            )
+
+        message = _llm_user_message(env.llm)
+        assert hindi_question in message
+        assert hindi_answer in message
+        assert "\\u0" not in message
+        assert '"attempts":[{"llm_answer":' in message
+        assert '"trace_id"' not in message
