@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from unittest.mock import patch, MagicMock
 from uuid import UUID, uuid4
@@ -36,9 +37,13 @@ from app.services.llm.jobs import (
     execute_job,
     execute_chain_job,
     resolve_config_blob,
+    _execute_provider_call,
+    _post_to_proxy,
 )
 from app.tests.utils.utils import get_project
 from app.tests.utils.test_data import create_test_config
+
+pytestmark = pytest.mark.usefixtures("no_retry_backoff")
 
 VALIDATOR_CONFIG_ID_1 = "00000000-0000-0000-0000-000000000001"
 VALIDATOR_CONFIG_ID_2 = "00000000-0000-0000-0000-000000000002"
@@ -2997,3 +3002,86 @@ class TestResolveConfigBlob:
         assert error_kaapi is None
         assert isinstance(resolved_kaapi.completion, KaapiTextCompletionConfig)
         assert resolved_kaapi.completion.provider == "openai"
+
+
+class TestExecuteProviderCallRetry:
+    @pytest.fixture(autouse=True)
+    def _no_langfuse(self):
+        with patch(
+            "app.services.llm.jobs.observe_llm_execution",
+            return_value=lambda fn: fn,
+        ):
+            yield
+
+    @staticmethod
+    def _call(func: MagicMock) -> tuple:
+        return _execute_provider_call(
+            func=func,
+            completion_config=MagicMock(),
+            query=QueryParams(input="hi"),
+            credentials=None,
+            session_id=None,
+        )
+
+    def test_persistent_5xx_returns_last_error_after_four_calls(self) -> None:
+        func = MagicMock(
+            side_effect=[
+                (None, f"OpenAI failed (code: 503, try {i})") for i in range(4)
+            ]
+        )
+
+        assert self._call(func) == (None, "OpenAI failed (code: 503, try 3)")
+        assert func.call_count == 4
+
+    def test_rate_limit_is_not_retried(self) -> None:
+        func = MagicMock(return_value=(None, "OpenAI failed (code: 429, slow down)"))
+
+        assert self._call(func) == (None, "OpenAI failed (code: 429, slow down)")
+        assert func.call_count == 1
+
+    def test_5xx_then_success_returns_success(self) -> None:
+        response = MagicMock()
+        func = MagicMock(
+            side_effect=[(None, "Gemini failed (code: 500 INTERNAL)"), (response, None)]
+        )
+
+        assert self._call(func) == (response, None)
+        assert func.call_count == 2
+
+
+class TestPostToProxyRetry:
+    URL = "https://proxy.example/v1/predict"
+
+    def _post(self, *outcomes: int | Exception) -> tuple[dict | Exception, int]:
+        request = httpx.Request("POST", self.URL)
+        side_effect = [
+            httpx.Response(o, json={"ok": o}, request=request)
+            if isinstance(o, int)
+            else o
+            for o in outcomes
+        ]
+        with patch.object(httpx.Client, "post", side_effect=side_effect) as post:
+            try:
+                result: dict | Exception = _post_to_proxy(self.URL, "key", "hi")
+            except httpx.HTTPError as e:
+                result = e
+        return result, post.call_count
+
+    def test_recovers_from_connect_error_and_5xx(self) -> None:
+        result, calls = self._post(httpx.ConnectError("refused"), 502, 200)
+
+        assert result == {"ok": 200}
+        assert calls == 3
+
+    def test_read_timeout_is_not_retried(self) -> None:
+        result, calls = self._post(httpx.ReadTimeout("slow"), 200)
+
+        assert isinstance(result, httpx.ReadTimeout)
+        assert calls == 1
+
+    def test_4xx_is_not_retried(self) -> None:
+        result, calls = self._post(400, 200)
+
+        assert isinstance(result, httpx.HTTPStatusError)
+        assert result.response.status_code == 400
+        assert calls == 1

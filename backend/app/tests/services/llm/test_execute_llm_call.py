@@ -23,6 +23,8 @@ from app.services.llm.chain.types import BlockResult
 from app.services.llm.jobs import execute_llm_call
 from app.tests.utils.utils import get_project
 
+pytestmark = pytest.mark.usefixtures("no_retry_backoff")
+
 VALIDATOR_CONFIG_ID = "00000000-0000-0000-0000-000000000001"
 PROXY_URL = "https://api.tap.example/v1/predictions"
 
@@ -374,17 +376,39 @@ class TestGuardrailOutcome:
 class TestRetryableFlag:
     """Pin `BlockResult.retryable` where it is set."""
 
-    def test_provider_failure_is_retryable(self, db: Session, provider):
-        provider.execute.return_value = (None, "API rate limit exceeded")
+    @pytest.mark.parametrize(
+        "error", ["API rate limit exceeded", "OpenAI failed (code: 400, bad)"]
+    )
+    def test_provider_failure_is_retryable(self, db: Session, provider, error: str):
+        provider.execute.return_value = (None, error)
 
         result = call(db, build_blob(TEXT_COMPLETION))
 
         assert result.retryable is True
 
-    def test_proxy_transport_failure_is_retryable(
+    def test_provider_5xx_is_not_retryable_after_inline_retries(
+        self, db: Session, provider
+    ):
+        provider.execute.return_value = (None, "OpenAI failed (code: 503, down)")
+
+        result = call(db, build_blob(TEXT_COMPLETION))
+
+        assert result.error == "OpenAI failed (code: 503, down)"
+        assert result.retryable is False
+
+    def test_proxy_connect_failure_is_not_retryable_after_inline_retries(
         self, db: Session, provider, proxy_http
     ):
         proxy_http.post.side_effect = httpx.ConnectError("connection refused")
+
+        result = call(db, build_blob(PROXY_COMPLETION))
+
+        assert result.error.startswith("Proxy call failed:")
+        assert result.retryable is False
+
+    def test_proxy_4xx_is_retryable(self, db: Session, provider, proxy_http):
+        request = httpx.Request("POST", PROXY_URL)
+        proxy_http.post.return_value = httpx.Response(400, request=request)
 
         result = call(db, build_blob(PROXY_COMPLETION))
 

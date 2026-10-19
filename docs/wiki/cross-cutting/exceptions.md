@@ -9,6 +9,9 @@ All paths relative to `backend/app/`.
 ## Provider/SDK error convention
 - `.claude/conventions/error-handling.md` — the standardized pattern for wrapping provider/SDK exceptions at service/crud call sites. Follow it for any new OpenAI/Gemini/Anthropic call site.
 
+## Outbound retry policy
+- `core/retry.py`: `retry_thrice(condition)` (first try + 3 retries, jittered backoff, returns the last result or re-raises on exhaustion) and `is_transient(error)` (5xx — HTTP error or provider `(code: 5NN` string — or a connection that never reached upstream). Used by `utils.send_callback`, `services/llm/jobs.py` and `services/llm/guardrails.py`. Batch providers keep their own policy.
+
 ## Route-level rules
 - Routes return structured error codes + human-readable messages (see any module page's endpoint errors).
 - Per-row/batch work isolates failures: one item's provider error must not fail sibling items (pattern used across evaluations and batch processing).
