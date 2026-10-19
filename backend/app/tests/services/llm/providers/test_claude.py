@@ -104,7 +104,7 @@ class TestCreateClient:
         with patch("app.services.llm.providers.claude.Anthropic") as mock_anthropic:
             mock_anthropic.return_value = MagicMock(name="anthropic-client")
             client = ClaudeProvider.create_client({"api_key": "sk-test"})
-        mock_anthropic.assert_called_once_with(api_key="sk-test")
+        mock_anthropic.assert_called_once_with(api_key="sk-test", max_retries=3)
         assert client is mock_anthropic.return_value
 
 

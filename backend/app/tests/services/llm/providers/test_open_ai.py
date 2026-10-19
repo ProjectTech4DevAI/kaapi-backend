@@ -3,7 +3,7 @@ Tests for the OpenAI provider.
 """
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import openai
 
@@ -379,3 +379,9 @@ class TestOpenAIProvider:
         # Verify old conversation was removed
         call_args = mock_client.responses.create.call_args
         assert "conversation" not in call_args[1]
+
+
+def test_create_client_retries_thrice() -> None:
+    with patch("app.services.llm.providers.open_ai.OpenAI") as mock_openai:
+        OpenAIProvider.create_client({"api_key": "sk-test"})
+    mock_openai.assert_called_once_with(api_key="sk-test", max_retries=3)
