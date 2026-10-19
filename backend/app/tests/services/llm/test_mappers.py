@@ -7,6 +7,7 @@ Covers real-world scenarios, edge cases, and provider-specific requirements.
 
 from sqlmodel import Session
 
+from app.models.llm.constants import DEFAULT_ELEVENLABS_TTS_MODEL
 from app.models.llm.request import (
     NativeCompletionConfig,
     STTLLMParams,
@@ -937,7 +938,7 @@ class TestMapKaapiToElevenlabsParams:
             kaapi_params, completion_type="tts"
         )
 
-        assert result["model_id"] == "eleven_v3"
+        assert result["model_id"] == DEFAULT_ELEVENLABS_TTS_MODEL
         assert result["voice_id"] == "EXAVITQu4vr4xnSDxMaL"
         assert result["language_code"] == "en"
         assert warnings == []

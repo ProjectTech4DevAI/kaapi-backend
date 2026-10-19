@@ -197,7 +197,7 @@ DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS = 16384
 DEFAULT_SARVAM_STT_MODEL = "saaras:v3"
 DEFAULT_SARVAM_TTS_MODEL = "bulbul:v3"
 DEFAULT_ELEVENLABS_STT_MODEL = "scribe_v2"
-DEFAULT_ELEVENLABS_TTS_MODEL = "eleven_v3"
+DEFAULT_ELEVENLABS_TTS_MODEL = "eleven_v4"
 
 # Kaapi BCP-47 tag -> Gemini TTS language. Full locales, not bare ISO codes:
 # en-IN keeps the Indian accent where "en" does not. Unlisted tags fall back
