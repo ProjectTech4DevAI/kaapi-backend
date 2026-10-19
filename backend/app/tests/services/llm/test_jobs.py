@@ -37,7 +37,6 @@ from app.services.llm.jobs import (
     execute_job,
     execute_chain_job,
     resolve_config_blob,
-    _execute_provider_call,
     _post_to_proxy,
 )
 from app.tests.utils.utils import get_project
@@ -3002,51 +3001,6 @@ class TestResolveConfigBlob:
         assert error_kaapi is None
         assert isinstance(resolved_kaapi.completion, KaapiTextCompletionConfig)
         assert resolved_kaapi.completion.provider == "openai"
-
-
-class TestExecuteProviderCallRetry:
-    @pytest.fixture(autouse=True)
-    def _no_langfuse(self):
-        with patch(
-            "app.services.llm.jobs.observe_llm_execution",
-            return_value=lambda fn: fn,
-        ):
-            yield
-
-    @staticmethod
-    def _call(func: MagicMock) -> tuple:
-        return _execute_provider_call(
-            func=func,
-            completion_config=MagicMock(),
-            query=QueryParams(input="hi"),
-            credentials=None,
-            session_id=None,
-        )
-
-    def test_persistent_5xx_returns_last_error_after_three_calls(self) -> None:
-        func = MagicMock(
-            side_effect=[
-                (None, f"OpenAI failed (code: 503, try {i})") for i in range(3)
-            ]
-        )
-
-        assert self._call(func) == (None, "OpenAI failed (code: 503, try 2)")
-        assert func.call_count == 3
-
-    def test_rate_limit_is_not_retried(self) -> None:
-        func = MagicMock(return_value=(None, "OpenAI failed (code: 429, slow down)"))
-
-        assert self._call(func) == (None, "OpenAI failed (code: 429, slow down)")
-        assert func.call_count == 1
-
-    def test_5xx_then_success_returns_success(self) -> None:
-        response = MagicMock()
-        func = MagicMock(
-            side_effect=[(None, "Gemini failed (code: 500 INTERNAL)"), (response, None)]
-        )
-
-        assert self._call(func) == (response, None)
-        assert func.call_count == 2
 
 
 class TestPostToProxyRetry:

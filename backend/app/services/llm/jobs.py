@@ -16,13 +16,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from gevent import Timeout
 from opentelemetry import trace
 from sqlmodel import Session
-from tenacity import (
-    retry,
-    retry_if_exception,
-    retry_if_result,
-    stop_after_attempt,
-    wait_exponential,
-)
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.celery.utils import start_llm_chain_job, start_llm_job
 from app.core.db import engine
@@ -124,12 +118,6 @@ def _set_traceability_attributes(
         span.set_attribute("celery.task_id", task_id)
 
 
-@retry(
-    stop=stop_after_attempt(3),
-    wait=wait_exponential(max=10),
-    retry=retry_if_result(lambda r: r[0] is None and is_transient(r[1])),
-    retry_error_callback=lambda state: state.outcome.result(),
-)
 def _execute_provider_call(
     *,
     func,
@@ -1405,11 +1393,10 @@ def execute_llm_call(
         if not response:
             ctx.metrics_finished(provider=provider_name, model=model_name)
             error_message = error or "Unknown error occurred"
-            # 5xx was already retried in _execute_provider_call; don't stack fast-eval retries.
+            # ponytail: every provider failure retries, even deterministic 4xx (unbilled).
+            # Upgrade: have providers return the error category.
             return BlockResult(
-                error=error_message,
-                llm_call_id=ctx.llm_call_id,
-                retryable=not is_transient(error_message),
+                error=error_message, llm_call_id=ctx.llm_call_id, retryable=True
             )
 
         output = response.response.output

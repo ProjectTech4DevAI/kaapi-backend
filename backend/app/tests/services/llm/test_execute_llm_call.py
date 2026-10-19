@@ -376,25 +376,12 @@ class TestGuardrailOutcome:
 class TestRetryableFlag:
     """Pin `BlockResult.retryable` where it is set."""
 
-    @pytest.mark.parametrize(
-        "error", ["API rate limit exceeded", "OpenAI failed (code: 400, bad)"]
-    )
-    def test_provider_failure_is_retryable(self, db: Session, provider, error: str):
-        provider.execute.return_value = (None, error)
+    def test_provider_failure_is_retryable(self, db: Session, provider):
+        provider.execute.return_value = (None, "API rate limit exceeded")
 
         result = call(db, build_blob(TEXT_COMPLETION))
 
         assert result.retryable is True
-
-    def test_provider_5xx_is_not_retryable_after_inline_retries(
-        self, db: Session, provider
-    ):
-        provider.execute.return_value = (None, "OpenAI failed (code: 503, down)")
-
-        result = call(db, build_blob(TEXT_COMPLETION))
-
-        assert result.error == "OpenAI failed (code: 503, down)"
-        assert result.retryable is False
 
     def test_proxy_connect_failure_is_not_retryable_after_inline_retries(
         self, db: Session, provider, proxy_http
