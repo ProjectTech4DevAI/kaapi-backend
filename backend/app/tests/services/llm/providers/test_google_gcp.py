@@ -193,6 +193,7 @@ class TestCreateClient:
         assert kwargs["project"] == "byok-proj"
         assert kwargs["location"] == "europe-west4"
         assert kwargs["credentials"] is sa_creds
+        assert kwargs["http_options"].retry_options.attempts == 3
         # The SDK rejects credentials + api_key together.
         assert "api_key" not in kwargs
         assert c.genai is mock_client.return_value

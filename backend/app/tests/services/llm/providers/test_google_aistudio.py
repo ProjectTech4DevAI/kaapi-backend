@@ -963,3 +963,8 @@ class TestGoogleAIProviderErrors:
         assert result is None
         assert error.startswith("[KAAPI] Unsupported completion type 'video'")
         mock_client.interactions.create.assert_not_called()
+
+
+def test_create_client_retries_thrice() -> None:
+    client = GoogleAIProvider.create_client({"api_key": "test-key"})
+    assert client._api_client._http_options.retry_options.attempts == 3

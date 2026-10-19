@@ -130,7 +130,10 @@ class GoogleGCPProvider(BaseProvider):
                 )
                 sa_info = None
 
-        http_options = genai_types.HttpOptions(timeout=REQUEST_TIMEOUT_MS)
+        http_options = genai_types.HttpOptions(
+            timeout=REQUEST_TIMEOUT_MS,
+            retry_options=genai_types.HttpRetryOptions(attempts=3),
+        )
         # The SDK rejects credentials + api_key together. Prefer the SA since STT
         # needs it for GCS anyway; otherwise use the API key (Vertex express mode).
         if sa_credentials and project_id:

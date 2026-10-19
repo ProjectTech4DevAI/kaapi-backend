@@ -6,6 +6,7 @@ from typing import Any
 
 from google import genai
 from google.genai import errors as genai_errors
+from google.genai import types as genai_types
 
 # Interactions raises its own error hierarchy, not google.genai.errors; in
 # google-genai 2.29 this private module is the only path that exports it.
@@ -56,7 +57,13 @@ class GoogleAIProvider(BaseProvider):
     def create_client(credentials: dict[str, Any]) -> Any:
         if "api_key" not in credentials:
             raise ValueError("API Key for Google Gemini Not Set")
-        return genai.Client(api_key=credentials["api_key"])
+        # Interactions reads `attempts` as the retry count; files.upload as total attempts.
+        return genai.Client(
+            api_key=credentials["api_key"],
+            http_options=genai_types.HttpOptions(
+                retry_options=genai_types.HttpRetryOptions(attempts=3)
+            ),
+        )
 
     @staticmethod
     def format_parts(
