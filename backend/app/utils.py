@@ -28,12 +28,16 @@ from opentelemetry import trace
 from openai import OpenAI
 from pydantic import BaseModel, JsonValue
 from sqlmodel import Session
-from tenacity import retry_if_exception_type
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.core import security
 from app.core.audio_utils import AudioRef
 from app.core.config import settings
-from app.core.retry import retry_thrice
 from app.crud.credentials import get_provider_credential
 from app.models.llm.request import (
     TextInput,
@@ -613,7 +617,12 @@ def send_callback(
         return False
 
 
-@retry_thrice(retry_if_exception_type(requests.RequestException))
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(max=10),
+    retry=retry_if_exception_type(requests.RequestException),
+    reraise=True,
+)
 def _post_callback(
     callback_url: str, raw_body: bytes, webhook_secret: str | None
 ) -> requests.Response:

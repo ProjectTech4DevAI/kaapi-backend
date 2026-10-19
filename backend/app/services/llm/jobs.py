@@ -16,12 +16,18 @@ from celery.exceptions import SoftTimeLimitExceeded
 from gevent import Timeout
 from opentelemetry import trace
 from sqlmodel import Session
-from tenacity import retry_if_exception, retry_if_result
+from tenacity import (
+    retry,
+    retry_if_exception,
+    retry_if_result,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.celery.utils import start_llm_chain_job, start_llm_job
 from app.core.db import engine
 from app.core.providers import Provider
-from app.core.retry import is_transient, retry_thrice
+from app.core.retry import is_transient
 from app.core.langfuse.langfuse import observe_llm_execution
 from app.core.telemetry import (
     LogModuleEnum,
@@ -118,7 +124,12 @@ def _set_traceability_attributes(
         span.set_attribute("celery.task_id", task_id)
 
 
-@retry_thrice(retry_if_result(lambda r: r[0] is None and is_transient(r[1])))
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(max=10),
+    retry=retry_if_result(lambda r: r[0] is None and is_transient(r[1])),
+    retry_error_callback=lambda state: state.outcome.result(),
+)
 def _execute_provider_call(
     *,
     func,
@@ -863,7 +874,12 @@ def _run_output_guardrails(
 
 
 # ReadTimeout isn't retried: the proxy may already have run (and billed) the call.
-@retry_thrice(retry_if_exception(is_transient))
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(max=10),
+    retry=retry_if_exception(is_transient),
+    reraise=True,
+)
 def _post_to_proxy(url: str, api_key: str, input_text: str) -> dict:
     with httpx.Client(timeout=60.0) as client:
         resp = client.post(

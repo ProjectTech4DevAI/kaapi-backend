@@ -9,10 +9,10 @@ from uuid import UUID
 import httpx
 from fastapi import HTTPException
 from opentelemetry import trace
-from tenacity import retry_if_exception
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
-from app.core.retry import is_transient, retry_thrice
+from app.core.retry import is_transient
 from app.models.llm.request import InlineValidator, InlineValidatorTypeEnum, Validator
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,12 @@ def proxy_guardrails_request(
             httpx.Client(timeout=GUARDRAILS_PROXY_TIMEOUT_SECONDS) as client,
         ):
             # Status isn't raised, so only connect failures retry: safe for any method.
-            response = retry_thrice(retry_if_exception(is_transient))(client.request)(
+            response = retry(
+                stop=stop_after_attempt(3),
+                wait=wait_exponential(max=10),
+                retry=retry_if_exception(is_transient),
+                reraise=True,
+            )(client.request)(
                 method, url, params=query, json=json_body, headers=headers
             )
     except httpx.RequestError as e:
@@ -375,7 +380,12 @@ def run_guardrails_validation(
             httpx.Client(timeout=45.0) as client,
         ):
 
-            @retry_thrice(retry_if_exception(is_transient))
+            @retry(
+                stop=stop_after_attempt(3),
+                wait=wait_exponential(max=10),
+                retry=retry_if_exception(is_transient),
+                reraise=True,
+            )
             def _post() -> dict[str, Any]:
                 response = client.post(
                     url,
@@ -466,7 +476,12 @@ def list_validators_config(
             httpx.Client(timeout=10.0) as client,
         ):
 
-            @retry_thrice(retry_if_exception(is_transient))
+            @retry(
+                stop=stop_after_attempt(3),
+                wait=wait_exponential(max=10),
+                retry=retry_if_exception(is_transient),
+                reraise=True,
+            )
             def _fetch_by_ids(validator_ids: list[UUID]) -> list[dict[str, Any]]:
                 if not validator_ids:
                     return []

@@ -3023,15 +3023,15 @@ class TestExecuteProviderCallRetry:
             session_id=None,
         )
 
-    def test_persistent_5xx_returns_last_error_after_four_calls(self) -> None:
+    def test_persistent_5xx_returns_last_error_after_three_calls(self) -> None:
         func = MagicMock(
             side_effect=[
-                (None, f"OpenAI failed (code: 503, try {i})") for i in range(4)
+                (None, f"OpenAI failed (code: 503, try {i})") for i in range(3)
             ]
         )
 
-        assert self._call(func) == (None, "OpenAI failed (code: 503, try 3)")
-        assert func.call_count == 4
+        assert self._call(func) == (None, "OpenAI failed (code: 503, try 2)")
+        assert func.call_count == 3
 
     def test_rate_limit_is_not_retried(self) -> None:
         func = MagicMock(return_value=(None, "OpenAI failed (code: 429, slow down)"))

@@ -772,10 +772,10 @@ class TestGuardrailsRetry:
         assert calls == 2
 
     def test_validation_bypasses_after_exhausting_503s(self) -> None:
-        result, calls = self._validate(*[_guardrails_response(503)] * 4)
+        result, calls = self._validate(*[_guardrails_response(503)] * 3)
 
         assert result["bypassed"] is True
-        assert calls == 4
+        assert calls == 3
 
     def test_validation_auth_error_is_not_retried(self) -> None:
         result, calls = self._validate(
@@ -815,7 +815,7 @@ class TestGuardrailsRetry:
                 )
 
         assert exc.value.status_code == 502
-        assert request.call_count == 4
+        assert request.call_count == 3
 
     def test_proxy_upstream_5xx_is_passed_through_without_retry(self) -> None:
         with patch.object(
