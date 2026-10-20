@@ -34,7 +34,6 @@ class ChatbotTurnRequest(SQLModel):
         gt=0,
         description="Token size of the history above which older turns are summarized; omit for the server default.",
     )
-    # Required every call in v0: there is no server-side storage of the flow prompt yet.
     system_prompt: str = Field(
         min_length=1,
         description="Admin-authored flow prompt (goal, fields to collect, rules).",

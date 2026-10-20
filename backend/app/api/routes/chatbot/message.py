@@ -3,15 +3,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.models import ChatbotMessage, ChatbotTurnRequest, ChatbotTurnResponse
-from app.services.chatbot.engine import (
-    ChatbotInputError,
-    ChatbotProviderError,
-    run_chatbot_turn,
-)
 from app.services.chatbot.config import resolve_chatbot_model_settings
+from app.services.chatbot.engine import run_chatbot_turn
+from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
 from app.utils import APIResponse, load_description
 
-router = APIRouter(prefix="/chatbot", tags=["Chatbot"])
+router = APIRouter()
 
 
 @router.post(
