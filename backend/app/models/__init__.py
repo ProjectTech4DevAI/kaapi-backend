@@ -38,8 +38,15 @@ from .batch_job import (
 from .chatbot import (
     ChatbotMessage,
     ChatbotMessageRoleEnum,
+    ChatbotSession,
+    ChatbotSessionMessage,
+    ChatbotSessionStatusEnum,
     ChatbotTurnRequest,
     ChatbotTurnResponse,
+    CreateChatbotSessionRequest,
+    CreateChatbotSessionResponse,
+    SendChatbotSessionMessageRequest,
+    SendChatbotSessionMessageResponse,
 )
 from .collection import (
     Collection,

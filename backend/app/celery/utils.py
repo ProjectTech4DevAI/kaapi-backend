@@ -337,6 +337,30 @@ def start_evaluation_iteration_round(
     return task_id
 
 
+def start_chatbot_session_message(
+    session_id: str,
+    organization_id: int,
+    project_id: int,
+    webhook_url: str,
+    trace_id: str = "N/A",
+) -> str:
+    from app.celery.tasks.job_execution import run_chatbot_session_message
+
+    task_id = _enqueue_with_trace_context(
+        run_chatbot_session_message,
+        session_id=session_id,
+        organization_id=organization_id,
+        project_id=project_id,
+        webhook_url=webhook_url,
+        trace_id=trace_id,
+    )
+    logger.info(
+        f"[start_chatbot_session_message] Enqueued chatbot turn | "
+        f"session_id: {session_id}, task_id: {task_id}"
+    )
+    return task_id
+
+
 def get_task_status(task_id: str) -> Dict[str, Any]:
     result = AsyncResult(task_id)
     return {
