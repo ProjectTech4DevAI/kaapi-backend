@@ -14,7 +14,6 @@ from app.models.guardrails.response import (
 
 __all__ = [
     "GuardrailValidator",
-    "GuardrailsRequest",
     "GuardrailsCallbackData",
     "GuardrailsCallbackResponse",
     "GuardrailsCallbackUsage",
@@ -22,4 +21,5 @@ __all__ = [
     "GuardrailsJobPublic",
     "GuardrailsOutput",
     "GuardrailsOutputContent",
+    "GuardrailsRequest",
 ]
