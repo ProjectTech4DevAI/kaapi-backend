@@ -4,8 +4,6 @@ import secrets
 from sqlmodel import SQLModel, Field
 from pydantic import EmailStr, model_validator, field_validator
 
-# Module import, not names: app.core.providers imports app.models, so binding
-# names here would fail when app.core.providers is the first module loaded.
 from app.core import providers as core_providers
 from app.models.provider_credentials import (
     Provider,
