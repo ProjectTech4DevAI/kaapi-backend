@@ -3,21 +3,6 @@
 Revision ID: 087
 Revises: 086
 Create Date: 2026-10-09 00:00:00.000000
-
-`anthropic` has been a valid provider since 066 but had no model_config rows,
-so it never showed up in /models/providers and config-version updates could
-not tell its models are reasoning models. The `effort` key in `config` is what
-`is_reasoning_model` keys on — it makes `_strip_unsupported_params` drop
-`temperature`, which the Messages API rejects at non-default values.
-
-`effort.default` is "high" because that is what the Messages API applies when
-the param is omitted. Sonnet 4.6 does not expose the "xhigh" level.
-
-claude-opus-5-5 pricing is left NULL until list prices are confirmed; cost
-estimation returns None for NULL pricing rather than a wrong number.
-
-Downgrade deletes the two rows by key, so a row that already existed before
-upgrade (ON CONFLICT DO NOTHING skipped it) is removed as well.
 """
 
 from alembic import op
