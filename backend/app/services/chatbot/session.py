@@ -14,12 +14,9 @@ from app.crud.chatbot import (
 )
 from app.models import ChatbotMessageRoleEnum, ChatbotSessionMessage
 from app.services.chatbot.config import resolve_chatbot_model_settings
-from app.services.chatbot.engine import (
-    ChatbotInputError,
-    ChatbotMessageDict,
-    ChatbotProviderError,
-    run_chatbot_turn,
-)
+from app.services.chatbot.engine import run_chatbot_turn
+from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
+from app.services.chatbot.types import ChatbotMessageDict
 from app.services.chatbot.utils import ChatbotModelSettings
 from app.utils import get_webhook_secret, send_callback
 
