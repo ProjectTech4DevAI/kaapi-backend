@@ -1,5 +1,3 @@
-import logging
-
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import AuthContextDep, SessionDep
@@ -13,12 +11,9 @@ from app.services.chatbot.engine import (
 from app.services.chatbot.config import resolve_chatbot_model_settings
 from app.utils import APIResponse, load_description
 
-logger = logging.getLogger(__name__)
-
 router = APIRouter(prefix="/chatbot", tags=["Chatbot"])
 
 
-# Synchronous by design (real-time request/response turn), not a Celery job.
 @router.post(
     "/message",
     description=load_description("chatbot/message.md"),
@@ -52,10 +47,6 @@ async def send_chatbot_message(
     except ChatbotInputError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except ChatbotProviderError as e:
-        logger.warning(
-            f"[send_chatbot_message] Chatbot turn failed upstream | "
-            f"project_id: {auth_context.project_.id}"
-        )
         raise HTTPException(status_code=502, detail=str(e))
 
     messages: list[ChatbotMessage] = []
