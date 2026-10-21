@@ -246,7 +246,8 @@ class GoogleAIProvider(BaseProvider):
                         ],
                     }
                 ],
-                "generation_config": {"thinking_level": thinking_level},
+                # remove as its not required for STT
+                # "generation_config": {"thinking_level": thinking_level},
             },
         )
 
