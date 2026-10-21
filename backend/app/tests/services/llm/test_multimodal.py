@@ -1,6 +1,8 @@
 import pytest
 from unittest.mock import MagicMock
 
+from google.genai.interactions import Interaction
+
 from app.models.llm.request import (
     TextInput,
     AudioInput,
@@ -224,15 +226,12 @@ class TestGoogleAIFormatParts:
     def test_text_part(self):
         parts = [TextContent(value="hello")]
         result = GoogleAIProvider.format_parts(parts)
-        assert result == [{"text": "hello"}]
+        assert result == [{"type": "text", "text": "hello"}]
 
     def test_image_base64_part(self):
         parts = [ImageContent(format="base64", value="abc123", mime_type="image/png")]
         result = GoogleAIProvider.format_parts(parts)
-        assert len(result) == 1
-        assert result[0] == {
-            "inline_data": {"data": "abc123", "mime_type": "image/png"}
-        }
+        assert result == [{"type": "image", "data": "abc123", "mime_type": "image/png"}]
 
     def test_image_url_part(self):
         parts = [
@@ -243,22 +242,27 @@ class TestGoogleAIFormatParts:
             )
         ]
         result = GoogleAIProvider.format_parts(parts)
-        assert result[0] == {
-            "file_data": {
-                "file_uri": "https://example.com/img.jpg",
+        assert result == [
+            {
+                "type": "image",
+                "uri": "https://example.com/img.jpg",
                 "mime_type": "image/jpeg",
-                "display_name": None,
             }
-        }
+        ]
+
+    def test_image_without_mime_type_omits_key(self):
+        parts = [ImageContent(format="url", value="https://example.com/img.jpg")]
+        result = GoogleAIProvider.format_parts(parts)
+        assert result == [{"type": "image", "uri": "https://example.com/img.jpg"}]
 
     def test_pdf_base64_part(self):
         parts = [
             PDFContent(format="base64", value="pdf123", mime_type="application/pdf")
         ]
         result = GoogleAIProvider.format_parts(parts)
-        assert result[0] == {
-            "inline_data": {"data": "pdf123", "mime_type": "application/pdf"}
-        }
+        assert result == [
+            {"type": "document", "data": "pdf123", "mime_type": "application/pdf"}
+        ]
 
     def test_pdf_url_part(self):
         parts = [
@@ -269,13 +273,13 @@ class TestGoogleAIFormatParts:
             )
         ]
         result = GoogleAIProvider.format_parts(parts)
-        assert result[0] == {
-            "file_data": {
-                "file_uri": "https://example.com/doc.pdf",
+        assert result == [
+            {
+                "type": "document",
+                "uri": "https://example.com/doc.pdf",
                 "mime_type": "application/pdf",
-                "display_name": None,
             }
-        }
+        ]
 
     def test_mixed_parts(self):
         parts = [
@@ -286,10 +290,9 @@ class TestGoogleAIFormatParts:
             PDFContent(format="base64", value="pdf", mime_type="application/pdf"),
         ]
         result = GoogleAIProvider.format_parts(parts)
-        assert len(result) == 3
-        assert "text" in result[0]
-        assert "file_data" in result[1]
-        assert "inline_data" in result[2]
+        assert [item["type"] for item in result] == ["text", "image", "document"]
+        assert result[1]["uri"] == "https://img.com/a.jpg"
+        assert result[2]["data"] == "pdf"
 
 
 class TestResolveImageContent:
@@ -433,15 +436,24 @@ class TestOpenAIExecuteInputRouting:
 class TestGoogleAIExecuteTextRouting:
     def _make_provider(self):
         mock_client = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.response_id = "resp_gai_123"
-        mock_resp.model_version = "gemini-2.0-flash"
-        mock_resp.text = "response text"
-        mock_resp.usage_metadata.prompt_token_count = 10
-        mock_resp.usage_metadata.candidates_token_count = 5
-        mock_resp.usage_metadata.total_token_count = 15
-        mock_resp.usage_metadata.thoughts_token_count = 0
-        mock_client.models.generate_content.return_value = mock_resp
+        mock_client.interactions.create.return_value = Interaction.model_validate(
+            {
+                "id": "int_gai_123",
+                "status": "completed",
+                "model": "gemini-2.0-flash",
+                "steps": [
+                    {
+                        "type": "model_output",
+                        "content": [{"type": "text", "text": "response text"}],
+                    }
+                ],
+                "usage": {
+                    "total_input_tokens": 10,
+                    "total_output_tokens": 5,
+                    "total_tokens": 15,
+                },
+            }
+        )
         return GoogleAIProvider(client=mock_client), mock_client
 
     def _make_config(self, **extra_params):
@@ -453,6 +465,13 @@ class TestGoogleAIExecuteTextRouting:
 
     def _make_query(self):
         return QueryParams(input="test")
+
+    @staticmethod
+    def _user_content(mock_client):
+        user_input = mock_client.interactions.create.call_args.kwargs["input"]
+        assert len(user_input) == 1
+        assert user_input[0]["type"] == "user_input"
+        return user_input[0]["content"]
 
     def test_multimodal_input(self):
         provider, mock_client = self._make_provider()
@@ -468,9 +487,10 @@ class TestGoogleAIExecuteTextRouting:
             resolved_input=mm,
         )
         assert error is None
-        call_kwargs = mock_client.models.generate_content.call_args[1]
-        assert call_kwargs["contents"][0]["role"] == "user"
-        assert len(call_kwargs["contents"][0]["parts"]) == 2
+        assert self._user_content(mock_client) == [
+            {"type": "text", "text": "describe"},
+            {"type": "image", "data": "img", "mime_type": "image/png"},
+        ]
 
     def test_list_input(self):
         provider, mock_client = self._make_provider()
@@ -481,8 +501,9 @@ class TestGoogleAIExecuteTextRouting:
             resolved_input=parts,
         )
         assert error is None
-        call_kwargs = mock_client.models.generate_content.call_args[1]
-        assert call_kwargs["contents"][0]["role"] == "user"
+        assert self._user_content(mock_client) == [
+            {"type": "image", "data": "img", "mime_type": "image/png"}
+        ]
 
     def test_string_input(self):
         provider, mock_client = self._make_provider()
@@ -492,11 +513,10 @@ class TestGoogleAIExecuteTextRouting:
             resolved_input="hello",
         )
         assert error is None
-        call_kwargs = mock_client.models.generate_content.call_args[1]
-        assert call_kwargs["contents"][0]["parts"] == [{"text": "hello"}]
+        assert self._user_content(mock_client) == [{"type": "text", "text": "hello"}]
+        assert response.response.output.content.value == "response text"
 
     def test_missing_model_falls_back_to_default(self):
-        """No model in params → provider uses DEFAULT_TEXT_MODELS['google']."""
         provider, mock_client = self._make_provider()
         config = NativeCompletionConfig(
             provider="google-aistudio-native", type="text", params={}
@@ -508,10 +528,11 @@ class TestGoogleAIExecuteTextRouting:
         )
         assert error is None
         assert response is not None
-        call_kwargs = mock_client.models.generate_content.call_args[1]
-        assert call_kwargs["model"] == "gemini-2.5-pro"
+        assert mock_client.interactions.create.call_args.kwargs["model"] == (
+            "gemini-2.5-pro"
+        )
 
-    def test_instructions_passed_to_config(self):
+    def test_instructions_passed_as_system_instruction(self):
         provider, mock_client = self._make_provider()
         response, error = provider.execute(
             completion_config=self._make_config(instructions="be helpful"),
@@ -519,14 +540,12 @@ class TestGoogleAIExecuteTextRouting:
             resolved_input="hello",
         )
         assert error is None
-        call_kwargs = mock_client.models.generate_content.call_args[1]
-        config = call_kwargs["config"]
-        assert config.system_instruction == "be helpful"
+        call_kwargs = mock_client.interactions.create.call_args.kwargs
+        assert call_kwargs["system_instruction"] == "be helpful"
 
-    def test_no_usage_metadata(self):
+    def test_no_usage(self):
         provider, mock_client = self._make_provider()
-        mock_resp = mock_client.models.generate_content.return_value
-        mock_resp.usage_metadata = None
+        mock_client.interactions.create.return_value.usage = None
         response, error = provider.execute(
             completion_config=self._make_config(),
             query=self._make_query(),

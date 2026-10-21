@@ -14,10 +14,9 @@ from app.crud.evaluations.score import (
     DEFAULT_CATEGORY,
     GUARDRAIL_TRACE_KEYS,
     JUDGE_FAILED_REASON,
-    TraceData,
-    TraceScore,
     verdict_from_score,
 )
+from app.models.evaluation import TraceData, TraceScore
 
 # How many top KB matches to name in the knowledge_base trace comment.
 _KB_TOP_CHUNKS = 3

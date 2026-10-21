@@ -3,6 +3,8 @@
 from enum import Enum
 from typing import Literal, NotRequired, TypedDict
 
+from app.models.evaluation import TraceData
+
 DEFAULT_CATEGORY: str = "Other"
 
 
@@ -59,35 +61,6 @@ UNSCOREABLE_REASONS: tuple[str, ...] = (
     UNSCOREABLE_GUARDRAIL_BLOCKED,
     JUDGE_FAILED_REASON,
 )
-
-
-class TraceScore(TypedDict):
-    """A score attached to a trace."""
-
-    name: str
-    value: float | str
-    data_type: str
-    comment: NotRequired[str]
-    verdict: NotRequired[str]
-    # True for placeholder scores on unscoreable items; excluded from summary stats.
-    unscoreable: NotRequired[bool]
-
-
-class TraceData(TypedDict):
-    """Data for a single trace including Q&A and scores."""
-
-    trace_id: str
-    question: str
-    llm_answer: str
-    question_id: int | None
-    ground_truth_answer: str
-    category: NotRequired[str]
-    # "blocked: ..." | "rephrased" | "applied"; None if guardrails didn't fire.
-    guardrail: NotRequired[str | None]
-    # LLM input after input guardrails / output before output guardrails.
-    input_to_llm: NotRequired[str | None]
-    output_from_llm: NotRequired[str | None]
-    scores: list[TraceScore]
 
 
 # Merged key-by-key since None is meaningful.
