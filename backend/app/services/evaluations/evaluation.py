@@ -30,8 +30,12 @@ from app.crud.evaluations.merge import apply_cosine_breakdown
 from app.crud.evaluations.score import (
     CategoryMetrics,
 )
-from app.models.evaluation import TraceData
-from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnum
+from app.models.evaluation import (
+    EvaluationRun,
+    EvaluationRunUpdate,
+    RunModeEnum,
+    TraceData,
+)
 from app.models.llm.constants import CompletionType
 from app.services.llm.providers import LLMProvider
 from app.utils import get_langfuse_client

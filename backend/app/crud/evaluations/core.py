@@ -16,9 +16,8 @@ from app.crud.evaluations.score import (
     DEFAULT_CATEGORY,
     EvaluationScore,
 )
-from app.models.evaluation import TraceData
 from app.models import EvaluationRun, EvaluationRunUpdate
-from app.models.evaluation import RunModeEnum
+from app.models.evaluation import RunModeEnum, TraceData
 from app.models.config.config import ConfigTag
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.models.stt_evaluation import EvaluationType

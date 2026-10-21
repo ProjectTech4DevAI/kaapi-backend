@@ -30,7 +30,6 @@ from app.crud.evaluations.score import (
     KNOWLEDGE_BASE_SCORE_NAME,
     PROMPT_SCORE_NAME,
 )
-from app.models.evaluation import TraceData, TraceScore
 from app.crud.jobs import JobCrud
 from app.models.config.config import ConfigTag
 from app.models.config.version import (
@@ -42,7 +41,9 @@ from app.models.evaluation import (
     EvaluationRun,
     PromptImprovementJobPublic,
     PromptRecommendationJobPublic,
+    TraceData,
     TraceQuestion,
+    TraceScore,
     TraceScoreSummary,
 )
 from app.models.job import Job, JobStatus, JobType, JobUpdate
