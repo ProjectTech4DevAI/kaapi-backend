@@ -4,7 +4,7 @@ import json
 import logging
 
 from app.core.config import settings
-from app.crud.evaluations.score import TraceData
+from app.models.evaluation import TraceData
 from app.services.llm.providers.claude import (
     STOP_REASON_COMPLETE,
     ClaudeProvider,

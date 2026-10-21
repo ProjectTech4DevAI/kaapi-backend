@@ -22,9 +22,8 @@ from app.crud.evaluations.score import (
     COSINE_SCORE_NAME,
     DEFAULT_CATEGORY,
     EvaluationScore,
-    TraceData,
-    TraceScore,
 )
+from app.models.evaluation import TraceData, TraceScore
 
 logger = logging.getLogger(__name__)
 
