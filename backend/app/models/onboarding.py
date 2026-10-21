@@ -4,12 +4,11 @@ import secrets
 from sqlmodel import SQLModel, Field
 from pydantic import EmailStr, model_validator, field_validator
 
-from app.core.providers import (
+from app.core import providers as core_providers
+from app.models.provider_credentials import (
     Provider,
     ProviderCredentials,
     ProviderCredentialsBase,
-    parse_provider_credentials,
-    validate_provider,
 )
 
 
@@ -109,9 +108,13 @@ class OnboardingRequest(SQLModel):
                 )
 
             (provider, payload) = next(iter(item.items()))
-            canonical_provider = validate_provider(provider).value
+            canonical_provider = core_providers.validate_provider(provider).value
             parsed.append(
-                {canonical_provider: parse_provider_credentials(provider, payload)}
+                {
+                    canonical_provider: core_providers.parse_provider_credentials(
+                        provider, payload
+                    )
+                }
             )
 
         return parsed
