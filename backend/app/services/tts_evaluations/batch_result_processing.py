@@ -19,8 +19,8 @@ from app.core.db import engine
 from app.core.storage_utils import upload_to_object_store
 from app.core.util import now
 from app.crud.tts_evaluations.result import (
+    fail_pending_tts_results,
     get_pending_results_for_run,
-    update_tts_result,
 )
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
@@ -195,6 +195,23 @@ def execute_tts_result_processing(
                 result_record.updated_at = now()
                 failed_count += 1
 
+        missing_count = 0
+        for result_record in result_map.values():
+            if result_record.status != JobStatus.PENDING.value:
+                continue
+            result_record.status = JobStatus.FAILED.value
+            result_record.error_message = "No result in batch output"
+            result_record.updated_at = now()
+            missing_count += 1
+        if missing_count:
+            # Left PENDING, the cron would re-dispatch this batch every tick forever.
+            logger.warning(
+                f"[execute_tts_result_processing] Rows missing from batch output | "
+                f"run_id={evaluation_run_id}, provider={tts_provider}, "
+                f"count={missing_count}"
+            )
+            failed_count += missing_count
+
         with Session(engine) as session:
             session.add_all(list(result_map.values()))
             session.commit()
@@ -216,11 +233,13 @@ def execute_tts_result_processing(
         logger.warning(
             f"[execute_tts_result_processing] TTS result processing timed out | run_id={evaluation_run_id}"
         )
-        _fail_pending_results(
-            run_id=evaluation_run_id,
-            model=tts_provider,
-            error_message="Result processing exceeded soft time limit",
-        )
+        with Session(engine) as session:
+            fail_pending_tts_results(
+                session=session,
+                run_id=evaluation_run_id,
+                provider=tts_provider,
+                error_message="Result processing exceeded soft time limit",
+            )
         raise
 
     except Exception as e:
@@ -229,28 +248,14 @@ def execute_tts_result_processing(
             f"run_id={evaluation_run_id}, error={str(e)}",
             exc_info=True,
         )
-        _fail_pending_results(
-            run_id=evaluation_run_id,
-            model=tts_provider,
-            error_message=f"Result processing failed: {str(e)}",
-        )
-        return {"success": False, "error": str(e)}
-
-
-def _fail_pending_results(*, run_id: int, model: str, error_message: str) -> None:
-    """Fail only this model's leftover rows so the other models still decide the run."""
-    with Session(engine) as session:
-        pending = get_pending_results_for_run(
-            session=session, run_id=run_id, provider=model
-        )
-        for result in pending:
-            update_tts_result(
+        with Session(engine) as session:
+            fail_pending_tts_results(
                 session=session,
-                result_id=result.id,
-                status=JobStatus.FAILED.value,
-                error_message=error_message,
+                run_id=evaluation_run_id,
+                provider=tts_provider,
+                error_message=f"Result processing failed: {str(e)}",
             )
-        session.commit()
+        return {"success": False, "error": str(e)}
 
 
 def _extract_audio_from_response(response: dict[str, Any]) -> str | None:

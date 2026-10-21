@@ -24,13 +24,12 @@ from app.crud.evaluations.cron_utils import (
     poll_batch_jobs,
 )
 from app.crud.tts_evaluations.result import (
+    fail_pending_tts_results,
     get_pending_results_for_run,
-    update_tts_result,
 )
 from app.crud.tts_evaluations.run import finalize_tts_run_status
 from app.models import EvaluationRun
 from app.models.batch_job import BatchJob, BatchJobType
-from app.models.job import JobStatus
 from app.models.stt_evaluation import EvaluationType
 from app.services.tts_evaluations.constants import (
     GEMINI_TTS_MODELS,
@@ -189,26 +188,28 @@ async def poll_tts_run(
     any_dispatched = False
 
     batch_jobs: list[BatchJob] = []
+    models_with_batch_job: set[str] = set()
     if batch_models:
-        # A job whose creation failed has no provider_batch_id and nothing to poll;
-        # submission already marked its rows FAILED.
-        batch_jobs = [
-            batch_job
-            for batch_job in get_batch_jobs_for_run(
-                session=session, run=run, job_type=BatchJobType.TTS_EVALUATION
-            )
-            if batch_job.provider_batch_id
-        ]
+        for batch_job in get_batch_jobs_for_run(
+            session=session, run=run, job_type=BatchJobType.TTS_EVALUATION
+        ):
+            models_with_batch_job.add(batch_job.config.get("tts_provider", ""))
+            # A job whose creation failed has no provider_batch_id and nothing to poll;
+            # submission already marked its rows FAILED.
+            if batch_job.provider_batch_id:
+                batch_jobs.append(batch_job)
 
     # Submission marks rows FAILED when a batch can't be created, so leftover PENDING
-    # rows without a batch job mean the submission task died part-way.
-    if batch_models and not batch_jobs and is_stale:
-        logger.warning(f"{log_prefix} No batch jobs found for Gemini models")
+    # rows of a model without a batch job mean the submission task died part-way.
+    if is_stale:
         for model in batch_models:
-            _fail_pending_results(
+            if model in models_with_batch_job:
+                continue
+            logger.warning(f"{log_prefix} No batch job found | model={model}")
+            fail_pending_tts_results(
                 session=session,
                 run_id=run.id,
-                model=model,
+                provider=model,
                 error_message="No batch jobs found",
             )
 
@@ -224,10 +225,10 @@ async def poll_tts_run(
                 f"{log_prefix} Failed to get Gemini client | error={client_err}"
             )
             for model in batch_models:
-                _fail_pending_results(
+                fail_pending_tts_results(
                     session=session,
                     run_id=run.id,
-                    model=model,
+                    provider=model,
                     error_message=f"Gemini client initialization failed: {str(client_err)}",
                 )
 
@@ -270,10 +271,10 @@ async def poll_tts_run(
                     continue
                 if batch_job.provider_status == BatchJobState.SUCCEEDED.value:
                     continue
-                _fail_pending_results(
+                fail_pending_tts_results(
                     session=session,
                     run_id=run.id,
-                    model=batch_job.config.get("tts_provider", ""),
+                    provider=batch_job.config.get("tts_provider", ""),
                     error_message=(
                         f"Gemini batch ended: "
                         f"{batch_job.error_message or batch_job.provider_status}"
@@ -283,10 +284,10 @@ async def poll_tts_run(
     # Sync workers write rows as they go; past the stale window the worker is gone.
     if is_stale:
         for model in sync_models:
-            _fail_pending_results(
+            fail_pending_tts_results(
                 session=session,
                 run_id=run.id,
-                model=model,
+                provider=model,
                 error_message="Synthesis did not complete",
             )
 
@@ -309,26 +310,3 @@ async def poll_tts_run(
         action=action,
         error=error_message,
     )
-
-
-def _fail_pending_results(
-    *, session: Session, run_id: int, model: str, error_message: str
-) -> None:
-    """Mark one model's PENDING rows of a run FAILED."""
-    pending = get_pending_results_for_run(
-        session=session, run_id=run_id, provider=model
-    )
-    if not pending:
-        return
-    logger.warning(
-        f"[_fail_pending_results] Failing pending results | run_id={run_id}, "
-        f"model={model}, count={len(pending)}, error={error_message}"
-    )
-    for result in pending:
-        update_tts_result(
-            session=session,
-            result_id=result.id,
-            status=JobStatus.FAILED.value,
-            error_message=error_message,
-        )
-    session.commit()

@@ -27,6 +27,7 @@ from app.core.providers import Provider
 from app.core.storage_utils import upload_to_object_store
 from app.crud.credentials import get_provider_credential
 from app.crud.tts_evaluations.result import (
+    fail_pending_tts_results,
     get_pending_results_for_run,
     update_tts_result,
 )
@@ -133,7 +134,13 @@ def execute_tts_sync_generation(
     else:
         error_message = f"Unsupported sync TTS model: {model}"
         logger.error(f"[execute_tts_sync_generation] {error_message} | run_id={run_id}")
-        _fail_pending_results(run_id=run_id, model=model, error_message=error_message)
+        with Session(engine) as session:
+            fail_pending_tts_results(
+                session=session,
+                run_id=run_id,
+                provider=model,
+                error_message=error_message,
+            )
         return {"success": False, "run_id": run_id, "error": error_message}
 
     logger.info(
@@ -250,11 +257,13 @@ def execute_tts_sync_generation(
         logger.warning(
             f"[execute_tts_sync_generation] Timed out | run_id={run_id}, model={model}"
         )
-        _fail_pending_results(
-            run_id=run_id,
-            model=model,
-            error_message="Synthesis timed out before this sample was processed",
-        )
+        with Session(engine) as session:
+            fail_pending_tts_results(
+                session=session,
+                run_id=run_id,
+                provider=model,
+                error_message="Synthesis timed out before this sample was processed",
+            )
         raise
 
     except Exception as e:
@@ -263,25 +272,11 @@ def execute_tts_sync_generation(
             f"error={str(e)}",
             exc_info=True,
         )
-        _fail_pending_results(
-            run_id=run_id,
-            model=model,
-            error_message=f"{provider.value} synthesis failed: {str(e)}",
-        )
-        return {"success": False, "run_id": run_id, "error": str(e)}
-
-
-def _fail_pending_results(*, run_id: int, model: str, error_message: str) -> None:
-    """Mark this model's leftover PENDING rows FAILED; nothing re-drives a sync task."""
-    with Session(engine) as session:
-        pending = get_pending_results_for_run(
-            session=session, run_id=run_id, provider=model
-        )
-        for result in pending:
-            update_tts_result(
+        with Session(engine) as session:
+            fail_pending_tts_results(
                 session=session,
-                result_id=result.id,
-                status=JobStatus.FAILED.value,
-                error_message=error_message,
+                run_id=run_id,
+                provider=model,
+                error_message=f"{provider.value} synthesis failed: {str(e)}",
             )
-        session.commit()
+        return {"success": False, "run_id": run_id, "error": str(e)}

@@ -26,6 +26,7 @@ from app.tests.utils.tts_evaluation import (
 
 MODULE = "app.crud.tts_evaluations.cron"
 GEMINI = "gemini-2.5-pro-preview-tts"
+GEMINI_FLASH = "gemini-3.1-flash-tts-preview"
 SARVAM = "bulbul:v3"
 
 
@@ -273,6 +274,28 @@ class TestPollTTSRunStaleModels:
         else:
             assert row.status == JobStatus.PENDING.value
             assert run.status == "processing"
+
+    @pytest.mark.usefixtures("gemini_client", "dispatch")
+    async def test_stale_run_fails_only_gemini_model_without_batch_job(
+        self, db: Session, user_api_key: TestAuthContext
+    ) -> None:
+        # Regression: one model's batch job masked another model that never got one.
+        run = _processing_run(db, user_api_key, [GEMINI, GEMINI_FLASH], stale=True)
+        create_test_tts_batch_job(
+            db, run=run, model=GEMINI, provider_status=BatchJobState.RUNNING.value
+        )
+        with_job = create_test_tts_result_row(db, run=run, provider=GEMINI)
+        without_job = create_test_tts_result_row(db, run=run, provider=GEMINI_FLASH)
+
+        with _gemini_reports(BatchJobState.RUNNING):
+            await _poll(db, run)
+
+        _refresh(db, with_job, without_job)
+        assert (without_job.status, without_job.error_message) == (
+            JobStatus.FAILED.value,
+            "No batch jobs found",
+        )
+        assert with_job.status == JobStatus.PENDING.value
 
 
 @pytest.mark.asyncio

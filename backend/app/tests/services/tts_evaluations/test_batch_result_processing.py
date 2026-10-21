@@ -175,6 +175,24 @@ class TestExecuteTTSResultProcessing:
         for row in (errored, no_error_text, silent, bad_padding, not_base64, odd_shape):
             assert (row.status, row.object_store_url) == (JobStatus.FAILED.value, None)
 
+    def test_row_missing_from_batch_output_fails(
+        self, db: Session, run: EvaluationRun, boundaries: Boundaries
+    ) -> None:
+        # Regression: an omitted row stayed PENDING and the cron re-dispatched forever.
+        covered = create_test_tts_result_row(db, run=run)
+        omitted = create_test_tts_result_row(db, run=run)
+        boundaries.download.return_value = [_ok(covered.id)]
+
+        outcome = _execute(run)
+
+        assert (outcome["processed"], outcome["failed"]) == (1, 1)
+        _refresh(db, covered, omitted)
+        assert covered.status == JobStatus.SUCCESS.value
+        assert (omitted.status, omitted.error_message) == (
+            JobStatus.FAILED.value,
+            "No result in batch output",
+        )
+
     def test_upload_failure_fails_row(
         self, db: Session, run: EvaluationRun, boundaries: Boundaries
     ) -> None:

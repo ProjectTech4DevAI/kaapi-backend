@@ -20,12 +20,11 @@ from app.crud.tts_evaluations.batch import start_tts_evaluation_batch
 from app.crud.tts_evaluations.dataset import get_tts_dataset_by_id
 from app.crud.tts_evaluations.result import (
     create_tts_results,
+    fail_pending_tts_results,
     get_pending_results_for_run,
-    update_tts_result,
 )
 from app.crud.tts_evaluations.run import get_tts_run_by_id, update_tts_run
 from app.models import Language
-from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
 from app.services.tts_evaluations.constants import (
     DEFAULT_TTS_LANGUAGE,
@@ -197,17 +196,12 @@ def execute_batch_submission(
         if failed_models:
             with Session(engine) as session:
                 for model, error_message in failed_models.items():
-                    pending = get_pending_results_for_run(
-                        session=session, run_id=run_id, provider=model
+                    fail_pending_tts_results(
+                        session=session,
+                        run_id=run_id,
+                        provider=model,
+                        error_message=error_message,
                     )
-                    for result in pending:
-                        update_tts_result(
-                            session=session,
-                            result_id=result.id,
-                            status=JobStatus.FAILED.value,
-                            error_message=error_message,
-                        )
-                session.commit()
 
         logger.info(
             f"[execute_batch_submission] Submitted | run_id: {run_id}, "
