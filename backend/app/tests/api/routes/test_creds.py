@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 from app.core.config import settings
-from app.core.providers import Provider
+from app.models.provider_credentials import Provider
 from app.models.credentials import Credential
 from app.core.security import decrypt_credentials
 from app.tests.utils.utils import generate_random_string

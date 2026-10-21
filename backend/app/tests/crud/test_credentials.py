@@ -1,3 +1,4 @@
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,7 +16,7 @@ from app.crud import (
     remove_creds_for_org,
 )
 from app.models import CredsCreate, CredsUpdate
-from app.core.providers import Provider
+from app.models.provider_credentials import Provider
 from app.tests.utils.test_data import (
     create_test_project,
     create_test_credential,
@@ -161,6 +162,39 @@ def test_get_provider_credential(db: Session) -> None:
     assert retrieved_cred is not None
     assert "api_key" in retrieved_cred
     assert retrieved_cred["api_key"] == original_api_key
+
+
+_GCP_SA_KEY = {"type": "service_account", "project_id": "gcp-proj"}
+_GCP_CRED = {
+    "api_key": "gkey",
+    "project_id": "gcp-proj",
+    "location": "us-central1",
+    "gcs_bucket": "gcp-bucket",
+}
+
+
+def test_set_credentials_for_google_gcp_rejects_string_sa_key() -> None:
+    with pytest.raises(ValidationError, match="sa_key"):
+        CredsCreate(
+            credential={"google-gcp": {**_GCP_CRED, "sa_key": json.dumps(_GCP_SA_KEY)}}
+        )
+
+
+def test_update_creds_for_google_gcp_rejects_string_sa_key(db: Session) -> None:
+    project = create_test_project(db)
+
+    with pytest.raises(HTTPException) as exc_info:
+        update_creds_for_org(
+            session=db,
+            org_id=project.organization_id,
+            creds_in=CredsUpdate(
+                provider="google-gcp",
+                credential={**_GCP_CRED, "sa_key": json.dumps(_GCP_SA_KEY)},
+            ),
+            project_id=project.id,
+        )
+    assert exc_info.value.status_code == 400
+    assert "sa_key" in exc_info.value.detail
 
 
 def test_update_creds_for_org(db: Session) -> None:
