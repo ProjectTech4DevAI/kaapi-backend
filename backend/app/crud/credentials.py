@@ -2,7 +2,6 @@ import logging
 from typing import Any
 
 from sqlalchemy import delete
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from fastapi import HTTPException
@@ -39,31 +38,10 @@ def set_creds_for_org(
             credential=encrypted_credentials,
         )
         credential.inserted_at = now()
-        try:
-            session.add(credential)
-            session.commit()
-            session.refresh(credential)
-            created_credentials.append(credential)
-        except IntegrityError as e:
-            session.rollback()
-            is_duplicate = (
-                "uq_credential_org_project_provider" in str(e)
-                or "unique constraint" in str(e).lower()
-            )
-            log = logger.warning if is_duplicate else logger.error
-            log(
-                f"[set_creds_for_org] Integrity error while adding credentials | organization_id {organization_id}, project_id {project_id}, provider {provider}: {str(e)}",
-                exc_info=True,
-            )
-            if is_duplicate:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Credentials for provider '{provider}' already exist for this organization and project combination",
-                )
-            raise HTTPException(
-                status_code=500,
-                detail=f"Could not store credentials for provider '{provider}'. Contact Kaapi if it persists.",
-            )
+        session.add(credential)
+        session.commit()
+        session.refresh(credential)
+        created_credentials.append(credential)
     logger.info(
         f"[set_creds_for_org] Successfully created credentials | organization_id {organization_id}, project_id {project_id}"
     )

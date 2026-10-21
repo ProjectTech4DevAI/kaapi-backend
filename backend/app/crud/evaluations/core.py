@@ -4,6 +4,7 @@ from typing import Any, cast
 from uuid import UUID
 
 from langfuse import Langfuse
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from app.core.cloud.storage import get_cloud_storage
@@ -125,6 +126,9 @@ def create_evaluation_run(
     try:
         session.commit()
         session.refresh(eval_run)
+    except IntegrityError:
+        session.rollback()
+        raise  # caller classifies: run_name conflict is a 409, the rest an error
     except Exception as e:
         session.rollback()
         logger.error(

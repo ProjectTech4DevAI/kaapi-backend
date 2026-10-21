@@ -1,6 +1,9 @@
+import logging
 from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
+import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.util import now
@@ -19,7 +22,7 @@ from app.tests.utils.auth import (
     get_user_test_auth_context,
 )
 from app.tests.utils.test_data import create_test_evaluation_dataset
-from app.tests.utils.utils import random_lower_string
+from app.tests.utils.utils import make_integrity_error, random_lower_string
 
 
 def _create_config(db: Session, project_id: int) -> tuple:
@@ -116,6 +119,44 @@ class TestCreateEvaluationRun:
         assert eval_run.type == EvaluationType.TEXT.value
         assert eval_run.status == "pending"
         assert eval_run.run_name == "test_run"
+
+    def test_duplicate_run_name_is_left_to_caller_without_error_log(
+        self, db: Session, monkeypatch, caplog
+    ) -> None:
+        """The service turns a run_name collision into a 409; crud must not log it as an error."""
+        org = db.exec(select(Organization)).first()
+        project = db.exec(
+            select(Project).where(Project.organization_id == org.id)
+        ).first()
+        dataset = create_evaluation_dataset(
+            session=db,
+            name="test_dataset_dup_run",
+            dataset_metadata={"original_items_count": 10},
+            organization_id=org.id,
+            project_id=project.id,
+        )
+        config_id, config_version = _create_config(db, project.id)
+
+        def _fail_commit() -> None:
+            raise make_integrity_error(
+                "23505", "uq_evaluation_run_org_project_run_name"
+            )
+
+        monkeypatch.setattr(db, "commit", _fail_commit)
+
+        with caplog.at_level(logging.WARNING), pytest.raises(IntegrityError):
+            create_evaluation_run(
+                session=db,
+                run_name="dup_run",
+                dataset_name=dataset.name,
+                dataset_id=dataset.id,
+                config_id=config_id,
+                config_version=config_version,
+                organization_id=org.id,
+                project_id=project.id,
+            )
+
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
 class TestGetEvaluationRunById:

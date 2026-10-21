@@ -220,8 +220,8 @@ def start_prompt_improvement_job(
             ),
         )
         raise HTTPException(
-            status_code=500,
-            detail="prompt_improvement_enqueue_failed: could not queue the job",
+            status_code=503,
+            detail="prompt_improvement_enqueue_failed: could not queue the job. Retry shortly.",
         )
 
     logger.info(

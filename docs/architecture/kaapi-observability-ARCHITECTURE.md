@@ -112,7 +112,7 @@ flowchart LR
     F --> Sentry[("Sentry Traces")]
 ```
 
-- **One trace from API to worker:** the Sentry Celery integration adds trace headers on enqueue, and the task re-attaches the parent. Self re-enqueuing poll loops start a fresh trace so one trace does not span hours.
+- **One trace from API to worker:** OTel's Celery instrumentation carries the trace on enqueue and parents the worker's `run/...` span to `apply_async`; task spans nest under `run/...`. Trace context is never injected or attached by hand: doing so reparented task spans to the API request and split them into separate Sentry transactions. Self re-enqueuing poll loops start a fresh trace so one trace does not span hours.
 - **Root attributes are kept:** Sentry's processor copies attributes only for child spans; ours copies root-span attributes too.
 - **Provider HTTP spans are suppressed** inside LLM calls, since the `chat <model>` span already covers the call.
 - **Spans are flushed** after every Celery task and in LLM job `finally` blocks, so a recycled worker does not lose them.

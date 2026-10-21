@@ -22,24 +22,30 @@ logger = logging.getLogger(__name__)
 GENERIC_ERROR_DETAIL = "An unexpected error occurred."
 DB_ERROR_DETAIL = "Database error: request could not be completed."
 
-# Subclasses of SQLAlchemyError, so the first isinstance match wins.
-_DB_ERROR_HINTS: tuple[tuple[type[SQLAlchemyError], int, str], ...] = (
-    (
-        IntegrityError,
+UNIQUE_VIOLATION_SQLSTATE = "23505"
+FOREIGN_KEY_VIOLATION_SQLSTATE = "23503"
+
+# Other IntegrityError codes (e.g. not-null 23502) mean our write was wrong: 500.
+_INTEGRITY_ERROR_HINTS: dict[str, tuple[int, str]] = {
+    UNIQUE_VIOLATION_SQLSTATE: (
         HTTP_409_CONFLICT,
         "Database error: request conflicts with existing data.",
     ),
-    (
-        DataError,
+    FOREIGN_KEY_VIOLATION_SQLSTATE: (
         HTTP_422_UNPROCESSABLE_CONTENT,
-        "Database error: a value is invalid or too long.",
+        "Database error: request references a record that does not exist.",
     ),
-    (
-        OperationalError,
-        HTTP_503_SERVICE_UNAVAILABLE,
-        "Database error: service temporarily unavailable, please retry.",
-    ),
-)
+}
+
+# Unique violations on these constraints get a specific message; values stay out of it.
+_UNIQUE_CONSTRAINT_DETAILS: dict[str, str] = {
+    "uq_config_project_id_name_active": "A config with this name already exists in this project.",
+    "uq_config_version_config_id_version": "A version with this number already exists for this config.",
+    "uq_credential_org_project_provider": "Credentials for this provider already exist for this organization and project.",
+    "ix_organization_name": "An organization with this name already exists.",
+    "uq_project_name_org_id": "A project with this name already exists in this organization.",
+    "ix_user_email": "A user with this email already exists.",
+}
 
 _BRANCH_PATTERN = re.compile(r"^[A-Z]|[\[\]()]")
 
@@ -114,11 +120,35 @@ def _sanitize_validation_errors(errors: list[dict]) -> list[dict]:
         return errors
 
 
+def _db_error_constraint(exc: SQLAlchemyError) -> tuple[str | None, str | None]:
+    """Postgres SQLSTATE and violated constraint name from the driver error, when present."""
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
+    return getattr(orig, "sqlstate", None), getattr(diag, "constraint_name", None)
+
+
 def _db_error_response(exc: SQLAlchemyError) -> tuple[int, str]:
     """Map a DB exception to a status and a client-safe hint; SQL and parameters stay server-side."""
-    for exc_type, status_code, hint in _DB_ERROR_HINTS:
-        if isinstance(exc, exc_type):
-            return status_code, hint
+    if isinstance(exc, IntegrityError):
+        sqlstate, constraint = _db_error_constraint(exc)
+        if (
+            sqlstate == UNIQUE_VIOLATION_SQLSTATE
+            and constraint in _UNIQUE_CONSTRAINT_DETAILS
+        ):
+            return HTTP_409_CONFLICT, _UNIQUE_CONSTRAINT_DETAILS[constraint]
+        return _INTEGRITY_ERROR_HINTS.get(
+            sqlstate, (HTTP_500_INTERNAL_SERVER_ERROR, DB_ERROR_DETAIL)
+        )
+    if isinstance(exc, DataError):
+        return (
+            HTTP_422_UNPROCESSABLE_CONTENT,
+            "Database error: a value is invalid or too long.",
+        )
+    if isinstance(exc, OperationalError):
+        return (
+            HTTP_503_SERVICE_UNAVAILABLE,
+            "Database error: service temporarily unavailable, please retry.",
+        )
     return HTTP_500_INTERNAL_SERVER_ERROR, DB_ERROR_DETAIL
 
 
@@ -161,12 +191,22 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(SQLAlchemyError)
     async def db_error_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
-        logger.error(
+        status_code, hint = _db_error_response(exc)
+        sqlstate, constraint = _db_error_constraint(exc)
+        if sentry_sdk.get_client().is_active():
+            sentry_sdk.set_tag("http.status_code", str(status_code))
+            sentry_sdk.set_tag(
+                "error.class", "server" if status_code >= 500 else "client"
+            )
+            if constraint:
+                sentry_sdk.set_tag("db.constraint", constraint)
+        log = logger.error if status_code >= 500 else logger.warning
+        log(
             f"[db_error_handler] Unhandled DB error | path: {request.url.path}, "
-            f"type: {type(exc).__name__}, trace_id: {correlation_id.get() or 'N/A'}",
+            f"type: {type(exc).__name__}, status: {status_code}, sqlstate: {sqlstate}, "
+            f"constraint: {constraint}, trace_id: {correlation_id.get() or 'N/A'}",
             exc_info=exc,
         )
-        status_code, hint = _db_error_response(exc)
         return JSONResponse(
             status_code=status_code,
             content=APIResponse.failure_response(hint).model_dump(),
@@ -175,11 +215,11 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(Exception)
     async def generic_error_handler(request: Request, exc: Exception) -> JSONResponse:
         # Fixed detail: str(exc) here leaked provider bodies and DB text to callers.
-        sentry_sdk.capture_exception(exc)
+        # logger.error alone reports it; adding capture_exception makes a second event.
         logger.error(
             f"[generic_error_handler] Unhandled exception | "
             f"path: {request.url.path}, trace_id: {correlation_id.get() or 'N/A'}",
-            exc_info=True,
+            exc_info=exc,
         )
         return JSONResponse(
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,

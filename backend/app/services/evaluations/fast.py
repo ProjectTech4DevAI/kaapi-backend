@@ -325,8 +325,9 @@ def validate_and_start_fast_evaluation(
     )
     total_items = original_items * max(1, effective_factor)
     if total_items == 0:
+        # Fast eval clients depend on the 500 contract for an empty dataset.
         raise HTTPException(
-            status_code=422, detail=f"Dataset '{dataset.name}' has no items"
+            status_code=500, detail=f"Dataset '{dataset.name}' has no items"
         )
     n_chunks = math.ceil(total_items / settings.EVAL_FAST_CHUNK_SIZE)
 

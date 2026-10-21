@@ -1,6 +1,5 @@
 import logging
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.core.security import encrypt_credentials, get_password_hash
@@ -138,20 +137,7 @@ def onboard_project(
 
             created_credentials.append(cred_row)
 
-    # Pre-checks are read-then-write; a concurrent onboard only collides here.
-    try:
-        session.commit()
-    except IntegrityError as e:
-        session.rollback()
-        logger.warning(
-            f"[onboard_project] Conflicting concurrent onboarding | "
-            f"org={onboard_in.organization_name}, project={onboard_in.project_name} | {e}"
-        )
-        raise HTTPException(
-            status_code=409,
-            detail=f"Project '{onboard_in.project_name}' already exists for "
-            f"organization '{onboard_in.organization_name}'",
-        )
+    session.commit()
 
     return OnboardingResponse(
         organization_id=organization.id,

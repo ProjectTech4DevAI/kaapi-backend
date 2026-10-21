@@ -21,7 +21,11 @@ from app.models import (
     APIKey,
     Credential,
 )
-from app.tests.utils.utils import random_lower_string, random_email
+from app.tests.utils.utils import (
+    make_integrity_error,
+    random_email,
+    random_lower_string,
+)
 from app.tests.utils.test_data import create_test_organization, create_test_project
 from app.tests.utils.user import create_random_user
 
@@ -318,17 +322,17 @@ def test_onboard_kms_failure_raises_502(db: Session, monkeypatch) -> None:
     assert exc.value.status_code == 502
 
 
-def test_onboard_concurrent_commit_conflict_raises_409(
+def test_onboard_concurrent_commit_conflict_propagates(
     db: Session, monkeypatch
 ) -> None:
-    """The pre-checks are racy; a collision at commit is a 409, not a 500."""
+    """A commit-time unique violation reaches the central DB handler (409)."""
 
     def _raise_integrity_error() -> None:
-        raise IntegrityError("INSERT", {}, Exception("duplicate key"))
+        raise make_integrity_error("23505")
 
     monkeypatch.setattr(db, "commit", _raise_integrity_error)
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(IntegrityError):
         onboard_project(
             session=db,
             onboard_in=OnboardingRequest(
@@ -339,5 +343,3 @@ def test_onboard_concurrent_commit_conflict_raises_409(
                 password=random_lower_string(),
             ),
         )
-
-    assert exc.value.status_code == 409

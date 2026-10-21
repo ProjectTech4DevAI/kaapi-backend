@@ -2,7 +2,6 @@ import logging
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, and_, select
 
 from app.core.util import now
@@ -69,32 +68,10 @@ class ConfigCrud:
 
             return config, version
 
-        except HTTPException:
+        except Exception:
+            # Each error type has a central handler (DB, HTTPException, generic).
             self.session.rollback()
             raise
-
-        except IntegrityError as e:
-            self.session.rollback()
-            logger.warning(
-                f"[ConfigCrud.create] Duplicate configuration name | "
-                f"{{'name': '{config_create.name}', 'project_id': {self.project_id}, 'error': '{str(e)}'}}",
-            )
-            raise HTTPException(
-                status_code=409,
-                detail=f"Config with name '{config_create.name}' already exists in this project.",
-            )
-
-        except Exception as e:
-            self.session.rollback()
-            logger.error(
-                f"[ConfigCrud.create] Failed to create configuration | "
-                f"{{'name': '{config_create.name}', 'project_id': {self.project_id}, 'error': '{str(e)}'}}",
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=500,
-                detail="Unexpected error occurred: failed to create config",
-            )
 
     def read_one(self, config_id: UUID) -> Config | None:
         statement = select(Config).where(

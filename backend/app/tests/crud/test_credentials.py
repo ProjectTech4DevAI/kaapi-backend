@@ -454,8 +454,8 @@ def test_remove_creds_for_org_when_none_exist_raises_404(db: Session) -> None:
     assert exc.value.status_code == 404
 
 
-def test_duplicate_provider_raises_409(db: Session) -> None:
-    """Unique-constraint violation is a conflict, not bad input."""
+def test_duplicate_provider_propagates_unique_violation(db: Session) -> None:
+    """The central DB handler turns this into a 409; crud lets it propagate."""
     _, project = create_test_credential(db)
 
     creds_create = CredsCreate(
@@ -463,7 +463,7 @@ def test_duplicate_provider_raises_409(db: Session) -> None:
         credential={"openai": {"api_key": "another-key"}},
     )
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(IntegrityError) as exc:
         set_creds_for_org(
             session=db,
             creds_add=creds_create,
@@ -471,12 +471,11 @@ def test_duplicate_provider_raises_409(db: Session) -> None:
             project_id=project.id,
         )
 
-    assert exc.value.status_code == 409
-    assert "already exist" in exc.value.detail
+    assert exc.value.orig.diag.constraint_name == "uq_credential_org_project_provider"
 
 
-def test_non_duplicate_integrity_error_raises_500(db: Session, monkeypatch) -> None:
-    """An IntegrityError that is not the unique constraint is a server fault."""
+def test_integrity_error_propagates_to_db_handler(db: Session, monkeypatch) -> None:
+    """Classifying DB errors is the central handler's job, not crud's."""
     project = create_test_project(db)
 
     def _fail_commit() -> None:
@@ -484,7 +483,7 @@ def test_non_duplicate_integrity_error_raises_500(db: Session, monkeypatch) -> N
 
     monkeypatch.setattr(db, "commit", _fail_commit)
 
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(IntegrityError):
         set_creds_for_org(
             session=db,
             creds_add=CredsCreate(
@@ -493,8 +492,6 @@ def test_non_duplicate_integrity_error_raises_500(db: Session, monkeypatch) -> N
             organization_id=project.organization_id,
             project_id=project.id,
         )
-
-    assert exc.value.status_code == 500
 
 
 def test_update_creds_without_provider_raises_400(db: Session) -> None:
