@@ -62,13 +62,10 @@ class ChatbotTurnResponse(SQLModel):
 
 
 class ChatbotSessionStatusEnum(StrEnum):
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    ABANDONED = "abandoned"
+    ACTIVE = "active"
+    INACTIVE = "inactive"
 
 
-# values_callable stores the lowercase member values the migration created the
-# Postgres enum types with; SQLAlchemy's default would store member names.
 _SESSION_STATUS_PG_ENUM = ENUM(
     ChatbotSessionStatusEnum,
     name="chatbotsessionstatusenum",
@@ -121,11 +118,11 @@ class ChatbotSession(SQLModel, table=True):
         },
     )
     status: ChatbotSessionStatusEnum = Field(
-        default=ChatbotSessionStatusEnum.IN_PROGRESS,
+        default=ChatbotSessionStatusEnum.ACTIVE,
         sa_column=Column(
             _SESSION_STATUS_PG_ENUM,
             nullable=False,
-            comment="Conversation lifecycle: in_progress, completed, or abandoned",
+            comment="Conversation lifecycle: active or inactive",
         ),
     )
     collected_fields: dict[str, Any] = Field(
@@ -221,6 +218,17 @@ class CreateChatbotSessionRequest(SQLModel):
 
 class CreateChatbotSessionResponse(SQLModel):
     session_id: UUID
+
+
+class ChatbotSessionSummary(SQLModel):
+    session_id: UUID
+    contact_ref: str
+    status: ChatbotSessionStatusEnum
+    collected_fields: dict[str, Any]
+    config_id: UUID
+    config_version: int | None
+    inserted_at: datetime
+    updated_at: datetime
 
 
 class SendChatbotSessionMessageRequest(SQLModel):

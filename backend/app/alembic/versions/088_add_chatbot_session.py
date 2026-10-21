@@ -52,13 +52,12 @@ def upgrade():
         sa.Column(
             "status",
             sa.Enum(
-                "in_progress",
-                "completed",
-                "abandoned",
+                "active",
+                "inactive",
                 name="chatbotsessionstatusenum",
             ),
             nullable=False,
-            comment="Conversation lifecycle: in_progress, completed, or abandoned",
+            comment="Conversation lifecycle: active or inactive",
         ),
         sa.Column(
             "collected_fields",

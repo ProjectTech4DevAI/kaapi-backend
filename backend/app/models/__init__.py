@@ -36,11 +36,13 @@ from .batch_job import (
     BatchJobUpdate,
 )
 from .chatbot import (
+    CONTACT_REF_MAX_LENGTH,
     ChatbotMessage,
     ChatbotMessageRoleEnum,
     ChatbotSession,
     ChatbotSessionMessage,
     ChatbotSessionStatusEnum,
+    ChatbotSessionSummary,
     ChatbotTurnRequest,
     ChatbotTurnResponse,
     CreateChatbotSessionRequest,

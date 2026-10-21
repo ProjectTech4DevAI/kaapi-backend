@@ -93,3 +93,22 @@ def list_chatbot_session_messages(
         .order_by(col(ChatbotSessionMessage.inserted_at).asc())
     )
     return list(session.exec(statement).all())
+
+
+def list_chatbot_sessions_by_contact_ref(
+    session: Session,
+    *,
+    contact_ref: str,
+    organization_id: int,
+    project_id: int,
+) -> list[ChatbotSession]:
+    statement = (
+        select(ChatbotSession)
+        .where(
+            ChatbotSession.contact_ref == contact_ref,
+            ChatbotSession.organization_id == organization_id,
+            ChatbotSession.project_id == project_id,
+        )
+        .order_by(col(ChatbotSession.inserted_at).desc())
+    )
+    return list(session.exec(statement).all())
