@@ -26,7 +26,7 @@ All paths relative to `backend/app/`.
 
 ## API contracts
 - `OnboardingRequest.credentials` is a list of single-entry `{Provider: payload}`
-  maps typed against the per-provider credential models in `core/providers.py`
+  maps typed against the per-provider credential models in `models/provider_credentials.py`
   (see `modules/platform.md`). Unsupported providers, non-object payloads and
   missing required fields are rejected at the request boundary (422).
 - `ProjectPublic.settings` is `dict[str, JsonValue]` — free-form JSONB whose
