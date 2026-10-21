@@ -16,25 +16,14 @@ from google.genai import types
 from google.cloud import storage as gcs
 
 from app.core.cloud.storage import CloudStorageError, build_gcp_sa_credentials
-from app.core.providers import (
-    GoogleGcpCredentials,
-    Provider,
-    parse_provider_credentials,
-)
+from app.core.providers import parse_provider_credentials
+from app.models.provider_credentials import GoogleGcpCredentials, Provider
 
 from .base import BATCH_KEY, BatchProvider
 from .gemini import BatchJobState
 
 logger = logging.getLogger(__name__)
 
-# Terminal Vertex job states (superset of AI-Studio: Vertex adds PAUSED).
-_TERMINAL_STATES = {
-    BatchJobState.SUCCEEDED.value,
-    BatchJobState.FAILED.value,
-    BatchJobState.CANCELLED.value,
-    BatchJobState.EXPIRED.value,
-    "JOB_STATE_PAUSED",
-}
 _FAILED_STATES = {
     BatchJobState.FAILED.value,
     BatchJobState.CANCELLED.value,
@@ -88,7 +77,7 @@ class GoogleGCPBatchProvider(BatchProvider):
             parse_provider_credentials(Provider.GOOGLE_GCP, credentials),
         )
 
-        creds = build_gcp_sa_credentials(cast(dict[str, Any], creds_model.sa_key))
+        creds = build_gcp_sa_credentials(creds_model.sa_key)
         client = genai.Client(
             vertexai=True,
             project=creds_model.project_id,
@@ -116,11 +105,6 @@ class GoogleGCPBatchProvider(BatchProvider):
         src_uri = self.upload_file(jsonl_content, purpose="batch")
         dest_uri = f"gs://{self._bucket}/{self._output_prefix}/{uuid4().hex}/"
 
-        logger.info(
-            f"[create_batch] Creating Vertex batch | items={len(jsonl_data)} | "
-            f"model={model} | src={src_uri} | dest={dest_uri}"
-        )
-
         try:
             batch_job = self._client.batches.create(
                 model=model,
@@ -137,10 +121,6 @@ class GoogleGCPBatchProvider(BatchProvider):
                 "provider_status": initial_state,
                 "total_items": len(jsonl_data),
             }
-            logger.info(
-                f"[create_batch] Created Vertex batch | batch_id={batch_job.name} | "
-                f"status={initial_state} | items={len(jsonl_data)}"
-            )
             return result
         except Exception as e:
             logger.error(f"[create_batch] Failed to create Vertex batch | {e}")
@@ -148,7 +128,6 @@ class GoogleGCPBatchProvider(BatchProvider):
 
     def get_batch_status(self, batch_id: str) -> dict[str, Any]:
         """Poll Vertex for batch job status."""
-        logger.info(f"[get_batch_status] Polling Vertex batch | batch_id={batch_id}")
         try:
             batch_job = self._client.batches.get(name=batch_id)
             state = batch_job.state.name if batch_job.state else "UNKNOWN"
@@ -165,10 +144,6 @@ class GoogleGCPBatchProvider(BatchProvider):
             if state in _FAILED_STATES:
                 message = batch_job.error.message if batch_job.error else state
                 result["error_message"] = message
-            logger.info(
-                f"[get_batch_status] Vertex batch status | batch_id={batch_id} | "
-                f"status={state}"
-            )
             return result
         except Exception as e:
             logger.error(
@@ -182,9 +157,6 @@ class GoogleGCPBatchProvider(BatchProvider):
 
         Vertex echoes the input ``key`` per line; line order is only the fallback.
         """
-        logger.info(
-            f"[download_batch_results] Reading Vertex results | src={output_file_id}"
-        )
         output_uri = output_file_id
         if not output_uri.startswith("gs://"):
             batch_job = self._client.batches.get(name=output_file_id)
@@ -219,10 +191,6 @@ class GoogleGCPBatchProvider(BatchProvider):
                         }
                     )
                     index += 1
-            logger.info(
-                f"[download_batch_results] Read Vertex results | src={output_uri} | "
-                f"results={len(results)}"
-            )
             return results
         except Exception as e:
             logger.error(
@@ -234,7 +202,6 @@ class GoogleGCPBatchProvider(BatchProvider):
     def upload_file(self, content: str, purpose: str = "batch") -> str:
         """Upload a JSONL string to GCS and return its ``gs://`` URI."""
         key = f"{self._input_prefix}/{int(time.time())}-{uuid4().hex}.jsonl"
-        logger.info(f"[upload_file] Uploading batch input to GCS | key={key}")
         try:
             blob = self._storage.bucket(self._bucket).blob(key)
             blob.upload_from_string(content, content_type="application/jsonl")
@@ -245,7 +212,6 @@ class GoogleGCPBatchProvider(BatchProvider):
 
     def download_file(self, file_id: str) -> str:
         """Download a ``gs://`` object's content as text."""
-        logger.info(f"[download_file] Downloading from GCS | uri={file_id}")
         try:
             bucket_name, key = _parse_gs_uri(file_id)
             blob = self._storage.bucket(bucket_name).blob(key)
