@@ -19,7 +19,7 @@ from sqlmodel import Session
 
 from app.celery.utils import start_llm_chain_job, start_llm_job
 from app.core.db import engine
-from app.core.providers import Provider
+from app.models.provider_credentials import Provider
 from app.core.langfuse.langfuse import observe_llm_execution
 from app.core.telemetry import (
     LogModuleEnum,
