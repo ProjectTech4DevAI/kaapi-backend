@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from opentelemetry import trace
 
 from app.core.config import settings
-from app.models.llm.request import InlineValidator, Validator
+from app.models.llm.request import InlineValidator, InlineValidatorTypeEnum, Validator
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -25,7 +25,7 @@ GUARDRAIL_STAGE_OUTPUT = "output"
 
 # Upstream supports more; only these are productised for tenants.
 EXPOSED_VALIDATOR_TYPES = frozenset(
-    {"topic_relevance_llm", "uli_slur_match", "gender_assumption_bias", "pii_remover"}
+    validator_type.value for validator_type in InlineValidatorTypeEnum
 )
 
 
