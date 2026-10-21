@@ -1,0 +1,130 @@
+# Rewrite the PR body with Claude using .claude/skills/pr-ready/SKILL.md when a PR
+# is labeled ready-for-review (same label that triggers the CodeRabbit auto-review).
+name: PR Ready Body
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-ready-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  rewrite-body:
+    if: >-
+      github.event.label.name == 'ready-for-review' &&
+      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (skill + PR template only)
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            .claude/skills/pr-ready/SKILL.md
+            .github/pull_request_template.md
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Rewrite PR body with Claude
+        uses: actions/github-script@v9
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          script: |
+            const fs = require('fs');
+            const pr = context.payload.pull_request;
+
+            if (!process.env.ANTHROPIC_API_KEY) {
+              core.setFailed('ANTHROPIC_API_KEY secret is not set');
+              return;
+            }
+
+            const skill = fs.readFileSync('.claude/skills/pr-ready/SKILL.md', 'utf8');
+            const template = fs.readFileSync('.github/pull_request_template.md', 'utf8');
+
+            const { data: rawDiff } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              mediaType: { format: 'diff' },
+            });
+            // Keep the request well inside the context window on huge PRs (lockfiles, fixtures).
+            const DIFF_CHAR_CAP = 400000;
+            const diff = rawDiff.length > DIFF_CHAR_CAP
+              ? rawDiff.slice(0, DIFF_CHAR_CAP) + '\n\n[diff truncated]'
+              : rawDiff;
+
+            const prompt = `You are rewriting the body of a GitHub pull request.
+
+            Follow the skill below exactly. Keep the repository PR template's sections (## Issue, ## Checklist, ## Notes) and fill them from the current body; replace the template's ## Summary with the skill's three sections (## Summary, ## Evidence, ## Merge Danger) in that order, between ## Issue and ## Checklist. Keep any "Closes ..." issue reference verbatim; if none, write "Closes #PLEASE_TYPE_ISSUE_NUMBER". Preserve checklist [x]/[ ] states from the current body. Do not invent evidence: only cite tests, numbers or screenshots present in the current body or diff. Output ONLY the markdown body.
+
+            <skill>
+            ${skill}
+            </skill>
+
+            <pull_request_template>
+            ${template}
+            </pull_request_template>
+
+            PR title: ${pr.title}
+            Branch: ${pr.head.ref} -> ${pr.base.ref}
+
+            <current_body>
+            ${pr.body || '(empty)'}
+            </current_body>
+
+            <diff>
+            ${diff}
+            </diff>`;
+
+            const response = await fetch('https://api.anthropic.com/v1/messages', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': process.env.ANTHROPIC_API_KEY,
+                'anthropic-version': '2023-06-01',
+                'anthropic-beta': 'server-side-fallback-2026-07-01',
+              },
+              body: JSON.stringify({
+                model: 'claude-opus-5-5',
+                max_tokens: 8000,
+                fallbacks: 'default',
+                output_config: { effort: 'medium' },
+                messages: [{ role: 'user', content: prompt }],
+              }),
+            });
+
+            const data = await response.json();
+            if (!response.ok) {
+              core.setFailed(`Anthropic API error: ${JSON.stringify(data)}`);
+              return;
+            }
+            if (data.stop_reason === 'refusal') {
+              core.setFailed(`Claude declined the request: ${JSON.stringify(data.stop_details)}`);
+              return;
+            }
+
+            const body = data.content
+              .filter((block) => block.type === 'text')
+              .map((block) => block.text)
+              .join('')
+              .trim();
+            if (!body) {
+              core.setFailed('Empty response from Claude');
+              return;
+            }
+
+            const original = pr.body || '(empty)';
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              body: `${body}\n\n<details><summary>Previous PR description</summary>\n\n${original}\n\n</details>`,
+            });
