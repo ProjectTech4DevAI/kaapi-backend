@@ -6,6 +6,7 @@ All paths relative to `backend/app/`.
 
 ## Routes
 - `api/routes/chatbot.py` — `POST /chatbot/message` (one synchronous turn; requires project scope)
+- `api/routes/chatbot/session.py` — `GET /chatbot/sessions?contact_ref=` (all sessions for a contact in the caller's project, newest first → `list[ChatbotSessionSummary]`)
 
 ## Tables (SQLModel)
 None of its own. Request/response shapes only: `models/chatbot.py` (`ChatbotMessage`, `ChatbotMessageRoleEnum`, `ChatbotTurnRequest`, `ChatbotTurnResponse`). Reads `config` / `config_version` (see the config module) to resolve the model.
@@ -14,6 +15,7 @@ None of its own. Request/response shapes only: `models/chatbot.py` (`ChatbotMess
 - `services/chatbot/config.py` — `resolve_chatbot_model_settings` (saved config + request overrides → `ChatbotModelSettings`; 404 via `ConfigVersionCrud`, 422 for non-Anthropic/non-text/no-model configs)
 - `services/chatbot/engine.py` — `run_chatbot_turn` (dict <-> LangChain message conversion, error mapping), `build_chatbot_graph`, history summarization
 - `services/chatbot/utils.py` — `ChatbotModelSettings`, defaults (`DEFAULT_MAX_OUTPUT_TOKENS`, `DEFAULT_HISTORY_TOKEN_LIMIT`, `FLOW_KEEP_RECENT_MESSAGES`), `get_chat_model`
+- `crud/chatbot.py` — `list_chatbot_sessions_by_contact_ref` (org + project scoped, `inserted_at` desc, unpaginated)
 - `crud/config/version.py` — `ConfigVersionCrud.read_latest` (used when `config_version` is omitted)
 
 ## Async

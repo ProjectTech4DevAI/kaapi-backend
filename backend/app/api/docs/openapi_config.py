@@ -8,9 +8,6 @@ for organizing and enhancing the API documentation.
 from app.api.docs.guardrails_schemas import GUARDRAILS_COMPONENT_SCHEMAS
 from app.api.openapi_docs import inject_component_schemas, register_component_schemas
 
-# Schemas for routes that document a contract they do not validate (the
-# guardrails proxy). Registered at import so they are in `components` before
-# any `$ref` to them is resolved.
 register_component_schemas(GUARDRAILS_COMPONENT_SCHEMAS)
 
 # Tag metadata for organizing endpoints in documentation
