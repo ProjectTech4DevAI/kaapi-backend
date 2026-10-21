@@ -59,9 +59,8 @@ from app.crud.evaluations.score import (
     EvaluationScore,
     NumericSummaryScore,
     SummaryScore,
-    TraceData,
-    TraceScore,
 )
+from app.models.evaluation import TraceData, TraceScore
 
 __all__ = [
     # Core

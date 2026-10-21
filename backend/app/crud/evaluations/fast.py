@@ -114,9 +114,9 @@ from app.crud.evaluations.score import (
     EvaluationScore,
     OverallSummary,
     SummaryScore,
-    TraceData,
     compute_overall_summary,
 )
+from app.models.evaluation import TraceData
 from app.crud.evaluations.summary import generate_run_ai_summary
 from app.crud.job import create_batch_job, get_batch_job
 from app.models import EvaluationRun, EvaluationRunUpdate

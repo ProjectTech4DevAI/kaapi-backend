@@ -1,132 +1,22 @@
-import logging
-from typing import Annotated
-from enum import Enum
-from dataclasses import dataclass, field
+from pydantic import ValidationError
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from app.models.provider_credentials import (
+    AnthropicCredentials,
+    CredentialPayload,
+    ElevenLabsCredentials,
+    GoogleAIStudioCredentials,
+    GoogleCredentials,
+    GoogleGcpCredentials,
+    LangfuseCredentials,
+    OpenAICredentials,
+    Provider,
+    ProviderConfig,
+    ProviderCredentialsBase,
+    ProxyCredentials,
+    SarvamAICredentials,
+    WebhookSecretCredentials,
+)
 
-logger = logging.getLogger(__name__)
-
-
-class Provider(str, Enum):
-    """Enumeration of supported credential providers."""
-
-    OPENAI = "openai"
-    LANGFUSE = "langfuse"
-    GOOGLE_AISTUDIO = "google-aistudio"
-    GOOGLE_GCP = "google-gcp"
-    SARVAMAI = "sarvamai"
-    ELEVENLABS = "elevenlabs"
-    ANTHROPIC = "anthropic"
-    GOOGLE = "google"
-    WEBHOOK_SECRET = "webhook_secret"
-    PROXY = "proxy"
-
-
-CredentialPayload = dict[str, JsonValue]
-
-
-class ProviderCredentialsBase(BaseModel):
-    """Base for provider credential payloads.
-
-    Extra keys are allowed and preserved. Callers already store keys beyond the
-    declared auth fields, and the payload is written back verbatim, so
-    forbidding them would reject requests that work today. Tightening this to
-    ``extra="forbid"`` is a deliberate breaking change and needs its own
-    migration for existing rows.
-    """
-
-    model_config = ConfigDict(extra="allow")
-
-
-class OpenAICredentials(ProviderCredentialsBase):
-    api_key: str = Field(description="OpenAI API key")
-
-
-class LangfuseCredentials(ProviderCredentialsBase):
-    secret_key: str = Field(description="Langfuse secret key")
-    public_key: str = Field(description="Langfuse public key")
-    host: str = Field(description="Langfuse host URL")
-
-
-class GoogleAIStudioCredentials(ProviderCredentialsBase):
-    api_key: str = Field(description="Google AI Studio API key")
-
-
-class SarvamAICredentials(ProviderCredentialsBase):
-    api_key: str = Field(description="SarvamAI API key")
-
-
-class ElevenLabsCredentials(ProviderCredentialsBase):
-    api_key: str = Field(description="ElevenLabs API key")
-
-
-class AnthropicCredentials(ProviderCredentialsBase):
-    api_key: str = Field(description="Anthropic API key")
-
-
-class GoogleCredentials(ProviderCredentialsBase):
-    api_key: str = Field(description="Google API key")
-
-
-class GoogleGcpCredentials(ProviderCredentialsBase):
-    api_key: str = Field(description="Google GCP API key")
-    project_id: str = Field(description="GCP project ID")
-    location: str = Field(description="GCP region/location")
-    sa_key: JsonValue = Field(description="Service account key JSON")
-    gcs_bucket: str = Field(description="GCS bucket name")
-
-
-class WebhookSecretCredentials(ProviderCredentialsBase):
-    webhook_secret: str = Field(
-        description="Shared secret used to HMAC-sign outgoing webhooks"
-    )
-
-
-class ProxyCredentials(ProviderCredentialsBase):
-    api_key: str = Field(description="Proxy API key")
-
-
-ProviderCredentials = Annotated[
-    OpenAICredentials
-    | LangfuseCredentials
-    | GoogleAIStudioCredentials
-    | SarvamAICredentials
-    | ElevenLabsCredentials
-    | AnthropicCredentials
-    | GoogleCredentials
-    | GoogleGcpCredentials
-    | WebhookSecretCredentials
-    | ProxyCredentials,
-    Field(
-        description=(
-            "Credential payload. The accepted shape depends on the provider it "
-            "is keyed by — see the per-provider schemas."
-        )
-    ),
-]
-
-
-@dataclass
-class ProviderConfig:
-    """Configuration for a provider: its credential schema and which of those
-    fields are secret."""
-
-    model: type[ProviderCredentialsBase]
-    sensitive_fields: list[str] = field(default_factory=list)
-
-    @property
-    def required_fields(self) -> list[str]:
-        """Credential keys the provider cannot be used without, derived from
-        the schema so the two can never drift."""
-        return [
-            name
-            for name, model_field in self.model.model_fields.items()
-            if model_field.is_required()
-        ]
-
-
-# Provider configurations
 PROVIDER_CONFIGS: dict[Provider, ProviderConfig] = {
     Provider.OPENAI: ProviderConfig(
         model=OpenAICredentials, sensitive_fields=["api_key"]
@@ -180,9 +70,6 @@ def validate_provider(provider: str) -> Provider:
         return Provider(provider.lower())
     except (AttributeError, ValueError):  # non-string keys reach here too
         supported = ", ".join(p.value for p in Provider)
-        logger.warning(
-            f"[validate_provider] Unsupported provider | provider: {provider}, supported_providers: {supported}"
-        )
         raise ValueError(
             f"Unsupported provider: {provider}. Supported providers are: {supported}"
         )
@@ -210,9 +97,6 @@ def parse_provider_credentials(
     if missing_fields := [
         name for name in config.required_fields if name not in credentials
     ]:
-        logger.warning(
-            f"[parse_provider_credentials] Missing required fields | provider: {provider}, missing_fields: {', '.join(missing_fields)}"
-        )
         raise ValueError(
             f"Missing required fields for {provider}: {', '.join(missing_fields)}"
         )
@@ -223,9 +107,6 @@ def parse_provider_credentials(
         invalid_fields = ", ".join(
             f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
             for err in e.errors()
-        )
-        logger.warning(
-            f"[parse_provider_credentials] Invalid credential fields | provider: {provider}, errors: {invalid_fields}"
         )
         raise ValueError(f"Invalid credentials for {provider}: {invalid_fields}")
 
