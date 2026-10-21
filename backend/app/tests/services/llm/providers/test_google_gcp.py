@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 from google.auth import exceptions as google_auth_errors
-from google.genai._gaos.lib import compat_errors
-from google.genai.interactions import Interaction
+from google.genai import errors as genai_errors
+from google.genai import types as genai_types
 
 from app.core.audio_utils import AudioRef, pcm_to_wav
 from app.core.config import settings
@@ -33,53 +33,62 @@ GCP_MODULE = "app.services.llm.providers.google_gcp"
 SAMPLE_PCM_BYTES = b"\x00\x01" * 100
 VERTEX_REQUEST = httpx.Request("POST", "https://aiplatform.googleapis.com")
 SA_INFO = {"type": "service_account", "project_id": "sa-proj"}
+GS_URI = "gs://test-bucket/audio/test.wav"
+USAGE = genai_types.GenerateContentResponseUsageMetadata(
+    prompt_token_count=10,
+    candidates_token_count=5,
+    total_token_count=17,
+    thoughts_token_count=2,
+)
 
 
-def make_interaction(
+def make_response(
     *,
     text: str | None = "hello world",
     audio: bytes | None = None,
-    audio_b64: str | None = None,
-    interaction_id: str | None = "int_123",
-    model: str | None = "gemini-2.5-flash",
-    status: str = "completed",
-) -> Interaction:
-    content: list[dict[str, Any]] = []
+    response_id: str | None = "resp_123",
+    model_version: str | None = "gemini-2.5-flash-001",
+    finish_reason: genai_types.FinishReason | None = genai_types.FinishReason.STOP,
+    usage: genai_types.GenerateContentResponseUsageMetadata | None = USAGE,
+) -> genai_types.GenerateContentResponse:
+    parts: list[genai_types.Part] = []
     if text is not None:
-        content.append({"type": "text", "text": text})
+        parts.append(genai_types.Part(text=text))
     if audio is not None:
-        audio_b64 = base64.b64encode(audio).decode("ascii")
-    if audio_b64 is not None:
-        content.append({"type": "audio", "data": audio_b64, "mime_type": "audio/l16"})
-    payload: dict[str, Any] = {
-        "status": status,
-        "model": model,
-        "steps": [{"type": "model_output", "content": content}],
-        "usage": {
-            "total_input_tokens": 10,
-            "total_output_tokens": 5,
-            "total_thought_tokens": 2,
-            "total_tokens": 17,
-        },
-    }
-    if interaction_id is not None:
-        payload["id"] = interaction_id
-    return Interaction.model_validate(payload)
+        parts.append(
+            genai_types.Part(
+                inline_data=genai_types.Blob(data=audio, mime_type="audio/L16")
+            )
+        )
+    content = genai_types.Content(role="model", parts=parts) if parts else None
+    return genai_types.GenerateContentResponse(
+        response_id=response_id,
+        model_version=model_version,
+        candidates=[
+            genai_types.Candidate(content=content, finish_reason=finish_reason)
+        ],
+        usage_metadata=usage,
+    )
 
 
-def tts_interaction(audio: bytes = SAMPLE_PCM_BYTES) -> Interaction:
-    return make_interaction(text=None, audio=audio, model="gemini-2.5-flash-tts")
+def blocked_response() -> genai_types.GenerateContentResponse:
+    return genai_types.GenerateContentResponse(
+        response_id="resp_blocked",
+        prompt_feedback=genai_types.GenerateContentResponsePromptFeedback(
+            block_reason=genai_types.BlockedReason.SAFETY
+        ),
+    )
 
 
-def create_kwargs(client: GoogleGCPClient) -> dict[str, Any]:
-    client.genai.interactions.create.assert_called_once()
-    return client.genai.interactions.create.call_args.kwargs
+def tts_response(
+    audio: bytes = SAMPLE_PCM_BYTES,
+) -> genai_types.GenerateContentResponse:
+    return make_response(text=None, audio=audio)
 
 
-def status_error(status_code: int, message: str) -> Exception:
-    body = {"error": {"code": status_code, "message": message}}
-    response = httpx.Response(status_code, json=body, request=VERTEX_REQUEST)
-    return compat_errors.APIError.generate(status_code, body, message, response)
+def call_kwargs(client: GoogleGCPClient) -> dict[str, Any]:
+    client.genai.models.generate_content.assert_called_once()
+    return client.genai.models.generate_content.call_args.kwargs
 
 
 def platform_settings(**overrides: Any):
@@ -110,6 +119,11 @@ def provider(client: GoogleGCPClient) -> GoogleGCPProvider:
 
 
 @pytest.fixture
+def generate(client: GoogleGCPClient) -> MagicMock:
+    return client.genai.models.generate_content
+
+
+@pytest.fixture
 def query() -> QueryParams:
     return QueryParams(input="ignored")
 
@@ -117,7 +131,7 @@ def query() -> QueryParams:
 @pytest.fixture
 def upload_mock(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     # GCS is an external boundary; STT stages audio there before calling Vertex.
-    mock = MagicMock(return_value="gs://test-bucket/audio/test.wav")
+    mock = MagicMock(return_value=GS_URI)
     monkeypatch.setattr(f"{GCP_MODULE}.upload_audio_to_gcs", mock)
     return mock
 
@@ -326,24 +340,56 @@ class TestCreateClient:
         mock_client.assert_not_called()
 
 
+class TestExtractUsage:
+    def test_maps_usage_metadata(self):
+        usage = GoogleGCPProvider._extract_usage(make_response(), "google-gcp")
+        assert (
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.total_tokens,
+            usage.reasoning_tokens,
+        ) == (10, 5, 17, 2)
+
+    def test_none_counts_become_zero(self):
+        response = make_response(
+            usage=genai_types.GenerateContentResponseUsageMetadata(
+                prompt_token_count=4, total_token_count=4
+            )
+        )
+        usage = GoogleGCPProvider._extract_usage(response, "google-gcp")
+        assert (
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.total_tokens,
+            usage.reasoning_tokens,
+        ) == (4, 0, 4, 0)
+
+    def test_missing_usage_metadata_is_all_zeros(self):
+        usage = GoogleGCPProvider._extract_usage(
+            make_response(usage=None), "google-gcp"
+        )
+        assert (
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.total_tokens,
+            usage.reasoning_tokens,
+        ) == (0, 0, 0, 0)
+
+
 class TestSTT:
     @pytest.fixture
     def audio_ref(self) -> AudioRef:
         return AudioRef(bytes_=b"RIFFfake", mime_type="audio/wav")
 
-    def test_happy_path(self, provider, client, query, audio_ref, upload_mock):
-        client.genai.interactions.create.return_value = make_interaction(
-            text="  hi there \n"
-        )
+    def test_happy_path(self, provider, generate, query, audio_ref, upload_mock):
+        generate.return_value = make_response(text="  hi there \n")
 
         resp, err = provider.execute(_stt_config(), query, audio_ref)
 
         assert err is None
         assert resp.response.output.content.value == "hi there"
-        assert resp.response.model == "gemini-2.5-flash"
-        assert resp.response.provider_response_id == "int_123"
-        assert resp.usage.input_tokens == 10
-        assert resp.usage.output_tokens == 5
+        assert resp.response.model == "gemini-2.5-flash-001"
+        assert resp.response.provider_response_id == "resp_123"
         assert resp.usage.total_tokens == 17
 
         upload_kwargs = upload_mock.call_args.kwargs
@@ -351,22 +397,55 @@ class TestSTT:
         assert upload_kwargs["bucket_name"] == "test-bucket"
         assert upload_kwargs["content_type"] == "audio/wav"
 
-        kwargs = create_kwargs(client)
-        content = kwargs["input"][0]["content"]
-        assert kwargs["input"][0]["type"] == "user_input"
-        assert content[0]["type"] == "text"
-        assert "Detect the spoken language automatically" in content[0]["text"]
-        assert content[1] == {
-            "type": "audio",
-            "uri": "gs://test-bucket/audio/test.wav",
-            "mime_type": "audio/wav",
-        }
+        kwargs = generate.call_args.kwargs
+        assert kwargs["model"] == "gemini-2.5-flash"
+        prompt_part, audio_part = kwargs["contents"][0].parts
+        assert "Detect the spoken language automatically" in prompt_part.text
+        assert audio_part.file_data.file_uri == GS_URI
+        assert audio_part.file_data.mime_type == "audio/wav"
 
-    def test_rejects_non_audioref_input(self, provider, client, query):
+    def test_defaults_thinking_low_and_max_tokens_2048(
+        self, provider, generate, query, audio_ref, upload_mock
+    ):
+        generate.return_value = make_response()
+        provider.execute(_stt_config(temperature=0.3), query, audio_ref)
+        config = call_kwargs(provider.client)["config"]
+        assert config.thinking_config.thinking_level == genai_types.ThinkingLevel.LOW
+        assert config.max_output_tokens == 2048
+        assert config.temperature is None
+
+    def test_explicit_thinking_level_and_max_tokens_override_defaults(
+        self, provider, generate, query, audio_ref, upload_mock
+    ):
+        generate.return_value = make_response()
+        provider.execute(
+            _stt_config(thinking_level="high", max_output_tokens=512), query, audio_ref
+        )
+        config = call_kwargs(provider.client)["config"]
+        assert config.thinking_config.thinking_level == genai_types.ThinkingLevel.HIGH
+        assert config.max_output_tokens == 512
+
+    def test_input_language_and_instructions_shape_prompt(
+        self, provider, generate, query, audio_ref, upload_mock
+    ):
+        generate.return_value = make_response()
+        config = _stt_config(
+            input_language="hi-IN", output_language="en-IN", instructions="be precise"
+        )
+        resp, err = provider.execute(config, query, audio_ref)
+
+        assert err is None
+        assert resp.response.output.content.language_code == "en-IN"
+        prompt = call_kwargs(provider.client)["contents"][0].parts[0].text
+        assert prompt.startswith("be precise")
+        assert "hi-IN" in prompt
+        assert "translate to en-IN" in prompt
+
+    def test_rejects_non_audioref_input(self, provider, generate, query):
         resp, err = provider.execute(_stt_config(), query, "/some/path.wav")
         assert resp is None
         assert "AudioRef input" in err
-        client.genai.interactions.create.assert_not_called()
+        generate.assert_not_called()
 
     def test_rejects_unsupported_mime(self, provider, query):
         bad = AudioRef(bytes_=b"x", mime_type="audio/xyz")
@@ -394,7 +473,7 @@ class TestSTT:
         upload_mock.assert_not_called()
 
     def test_gcs_upload_failure_returns_clean_error(
-        self, provider, client, query, audio_ref, monkeypatch
+        self, provider, generate, query, audio_ref, monkeypatch
     ):
         monkeypatch.setattr(
             f"{GCP_MODULE}.upload_audio_to_gcs",
@@ -404,357 +483,243 @@ class TestSTT:
         assert resp is None
         assert "Failed to stage audio for Google GCP STT" in err
         assert "bucket denied" in err
-        client.genai.interactions.create.assert_not_called()
+        generate.assert_not_called()
 
-    def test_http_error_returns_clean_message(
-        self, provider, client, query, audio_ref, upload_mock
+    @pytest.mark.parametrize(
+        ("response", "reason"),
+        [
+            (
+                make_response(text=None, finish_reason=genai_types.FinishReason.SAFETY),
+                "finish_reason=FinishReason.SAFETY",
+            ),
+            (blocked_response(), "block_reason=BlockedReason.SAFETY"),
+        ],
+    )
+    def test_empty_or_blocked_output_returns_error(
+        self, provider, generate, query, audio_ref, upload_mock, response, reason
     ):
-        client.genai.interactions.create.side_effect = status_error(
-            403, "permission denied"
-        )
-        resp, err = provider.execute(_stt_config(), query, audio_ref)
-        assert resp is None
-        assert err.startswith("[GOOGLE_GCP]")
-        assert "403" in err
-        assert "permission denied" in err
-
-    def test_network_error_returns_clean_message(
-        self, provider, client, query, audio_ref, upload_mock
-    ):
-        client.genai.interactions.create.side_effect = compat_errors.APIConnectionError(
-            request=VERTEX_REQUEST
-        )
-        resp, err = provider.execute(_stt_config(), query, audio_ref)
-        assert resp is None
-        assert "Google GCP connection failed" in err
-
-    def test_missing_transcript_returns_error(
-        self, provider, client, query, audio_ref, upload_mock
-    ):
-        client.genai.interactions.create.return_value = make_interaction(text=None)
+        generate.return_value = response
         resp, err = provider.execute(_stt_config(), query, audio_ref)
         assert resp is None
         assert err.startswith("[GOOGLE_GCP] STT response is missing transcribed text")
+        assert reason in err
 
-    def test_non_completed_status_returns_error(
-        self, provider, client, query, audio_ref, upload_mock
+    def test_raw_response_included_only_when_requested(
+        self, provider, generate, query, audio_ref, upload_mock
     ):
-        client.genai.interactions.create.return_value = make_interaction(
-            text="partial", status="failed"
-        )
-        resp, err = provider.execute(_stt_config(), query, audio_ref)
-        assert resp is None
-        assert "missing transcribed text" in err
-        assert "status=failed" in err
-
-    def test_input_language_and_instructions_shape_prompt(
-        self, provider, client, query, audio_ref, upload_mock
-    ):
-        client.genai.interactions.create.return_value = make_interaction()
-        config = _stt_config(
-            input_language="hi-IN",
-            output_language="en-IN",
-            instructions="be precise",
-        )
-        resp, err = provider.execute(config, query, audio_ref)
-
-        assert err is None
-        assert resp.response.output.content.language_code == "en-IN"
-        prompt = create_kwargs(client)["input"][0]["content"][0]["text"]
-        assert prompt.startswith("be precise")
-        assert "hi-IN" in prompt
-        assert "translate to en-IN" in prompt
-
-    def test_defaults_thinking_level_and_max_tokens_and_drops_temperature(
-        self, provider, client, query, audio_ref, upload_mock
-    ):
-        client.genai.interactions.create.return_value = make_interaction()
-        resp, err = provider.execute(_stt_config(temperature=0.3), query, audio_ref)
-        assert err is None
-        assert create_kwargs(client)["generation_config"] == {
-            "thinking_level": "low",
-            "max_output_tokens": 2048,
-        }
-
-    def test_explicit_thinking_level_and_max_tokens_override_defaults(
-        self, provider, client, query, audio_ref, upload_mock
-    ):
-        client.genai.interactions.create.return_value = make_interaction()
-        provider.execute(
-            _stt_config(thinking_level="high", max_output_tokens=512),
-            query,
-            audio_ref,
-        )
-        assert create_kwargs(client)["generation_config"] == {
-            "thinking_level": "high",
-            "max_output_tokens": 512,
-        }
-
-    def test_empty_interaction_id_gets_generated_response_id(
-        self, provider, client, query, audio_ref, upload_mock
-    ):
-        client.genai.interactions.create.return_value = make_interaction(
-            interaction_id=None
-        )
-        resp, err = provider.execute(_stt_config(), query, audio_ref)
-        assert err is None
-        assert resp.response.provider_response_id.startswith("google-gcp-")
-
-    def test_raw_response_included_when_requested(
-        self, provider, client, query, audio_ref, upload_mock
-    ):
-        client.genai.interactions.create.return_value = make_interaction()
+        generate.return_value = make_response()
         resp, _ = provider.execute(
             _stt_config(), query, audio_ref, include_provider_raw_response=True
         )
-        assert resp.provider_raw_response["id"] == "int_123"
-        assert resp.provider_raw_response["status"] == "completed"
-
-    def test_raw_response_omitted_by_default(
-        self, provider, client, query, audio_ref, upload_mock
-    ):
-        client.genai.interactions.create.return_value = make_interaction()
+        assert resp.provider_raw_response["response_id"] == "resp_123"
         resp, _ = provider.execute(_stt_config(), query, audio_ref)
         assert resp.provider_raw_response is None
 
 
 class TestTTS:
-    def test_happy_path_wav(self, provider, client, query):
-        client.genai.interactions.create.return_value = tts_interaction()
+    def test_request_carries_voice_language_and_transcript(
+        self, provider, generate, query
+    ):
+        generate.return_value = tts_response()
 
-        resp, err = provider.execute(_tts_config(), query, "hello")
+        resp, err = provider.execute(_tts_config(language="en-IN"), query, "Say this")
 
+        assert err is None
+        kwargs = call_kwargs(provider.client)
+        assert kwargs["model"] == "gemini-2.5-flash-tts"
+        assert kwargs["contents"] == "<transcript>Say this</transcript>"
+        config = kwargs["config"]
+        assert config.response_modalities == [genai_types.Modality.AUDIO]
+        speech = config.speech_config
+        assert speech.voice_config.prebuilt_voice_config.voice_name == "Kore"
+        assert speech.language_code == "en-IN"
+        assert config.system_instruction is None
+
+    def test_director_notes_become_system_instruction(self, provider, generate, query):
+        generate.return_value = tts_response()
+        config = _tts_config(
+            provider_specific={"gemini": {"director_notes": "whisper"}}
+        )
+        provider.execute(config, query, "hi")
+        assert call_kwargs(provider.client)["config"].system_instruction == "whisper"
+
+    @pytest.mark.parametrize(
+        "audio",
+        [SAMPLE_PCM_BYTES, pcm_to_wav(SAMPLE_PCM_BYTES)],
+        ids=["raw_pcm", "wav_header"],
+    )
+    def test_wav_output_is_single_wav_wrapping_of_pcm(
+        self, provider, generate, query, audio
+    ):
+        # 3.8+ TTS models return a full WAV; re-wrapping it would nest headers.
+        generate.return_value = tts_response(audio)
+        resp, err = provider.execute(_tts_config(), query, "hi")
         assert err is None
         content = resp.response.output.content
         assert content.format == "base64"
         assert content.mime_type == "audio/wav"
         assert base64.b64decode(content.value) == pcm_to_wav(SAMPLE_PCM_BYTES)
-        assert resp.response.model == "gemini-2.5-flash-tts"
+        assert resp.response.model == "gemini-2.5-flash-001"
 
-        kwargs = create_kwargs(client)
-        assert kwargs["model"] == "gemini-2.5-flash-tts"
-        assert kwargs["generation_config"] == {"speech_config": [{"voice": "Kore"}]}
-        assert kwargs["response_format"] == {"type": "audio"}
-
-    def test_wraps_input_in_transcript_tags(self, provider, client, query):
-        client.genai.interactions.create.return_value = tts_interaction()
-        provider.execute(_tts_config(), query, "Say this text")
-        assert create_kwargs(client)["input"] == [
-            {
-                "type": "user_input",
-                "content": [
-                    {"type": "text", "text": "<transcript>Say this text</transcript>"}
-                ],
-            }
-        ]
-
-    def test_wav_response_is_stripped_to_pcm(self, provider, client, query):
-        # 3.8+ TTS models return a full WAV; re-wrapping it would nest headers.
-        client.genai.interactions.create.return_value = tts_interaction(
-            pcm_to_wav(SAMPLE_PCM_BYTES)
-        )
-        resp, err = provider.execute(_tts_config(), query, "hi")
-        assert err is None
-        decoded = base64.b64decode(resp.response.output.content.value)
-        assert decoded == pcm_to_wav(SAMPLE_PCM_BYTES)
-
-    def test_rejects_non_string_input(self, provider, client, query):
-        resp, err = provider.execute(_tts_config(), query, ["not a string"])
-        assert resp is None
-        assert "text string as input" in err
-        client.genai.interactions.create.assert_not_called()
-
-    def test_rejects_empty_input(self, provider, query):
-        resp, err = provider.execute(_tts_config(), query, "   ")
-        assert resp is None
-        assert "text input is empty" in err
-
-    def test_missing_audio_returns_error(self, provider, client, query):
-        client.genai.interactions.create.return_value = make_interaction(text="oops")
-        resp, err = provider.execute(_tts_config(), query, "hello")
-        assert resp is None
-        assert err.startswith("[GOOGLE_GCP] TTS response is missing audio data")
-
-    def test_empty_audio_data_string_returns_missing_audio_error(
-        self, provider, client, query
+    @pytest.mark.parametrize("fmt", ["mp3", "ogg"])
+    @pytest.mark.parametrize(
+        "audio",
+        [SAMPLE_PCM_BYTES, pcm_to_wav(SAMPLE_PCM_BYTES)],
+        ids=["raw_pcm", "wav_header"],
+    )
+    def test_converted_formats_receive_raw_pcm(
+        self, provider, generate, query, audio, fmt
     ):
-        client.genai.interactions.create.return_value = make_interaction(
-            text=None, audio_b64=""
-        )
-        resp, err = provider.execute(_tts_config(), query, "hi")
-        assert resp is None
-        assert "missing audio data" in err
-
-    def test_non_completed_status_returns_error(self, provider, client, query):
-        client.genai.interactions.create.return_value = make_interaction(
-            text=None, audio=SAMPLE_PCM_BYTES, status="failed"
-        )
-        resp, err = provider.execute(_tts_config(), query, "hi")
-        assert resp is None
-        assert "missing audio data" in err
-
-    def test_wav_with_zero_frames_returns_empty_audio_error(
-        self, provider, client, query
-    ):
-        client.genai.interactions.create.return_value = tts_interaction(pcm_to_wav(b""))
-        resp, err = provider.execute(_tts_config(), query, "hi")
-        assert resp is None
-        assert err.startswith("[GOOGLE_GCP] TTS returned empty audio data")
-
-    def test_invalid_base64_returns_unexpected_error(self, provider, client, query):
-        client.genai.interactions.create.return_value = make_interaction(
-            text=None, audio_b64="not-valid-base64!!"
-        )
-        resp, err = provider.execute(_tts_config(), query, "hi")
-        assert resp is None
-        assert err.startswith("[KAAPI] Unexpected error")
-
-    def test_language_is_forwarded(self, provider, client, query):
-        client.genai.interactions.create.return_value = tts_interaction()
-        provider.execute(_tts_config(language="en-US"), query, "hi")
-        assert create_kwargs(client)["generation_config"] == {
-            "speech_config": [{"voice": "Kore", "language": "en-US"}]
-        }
-
-    def test_director_notes_become_speech_metadata_annotation(
-        self, provider, client, query
-    ):
-        client.genai.interactions.create.return_value = tts_interaction()
-        config = _tts_config(
-            provider_specific={"gemini": {"director_notes": "whisper"}}
-        )
-        provider.execute(config, query, "hi")
-        transcript = create_kwargs(client)["input"][0]["content"][0]
-        assert transcript["annotations"] == [
-            {"type": "speech_metadata", "style": "whisper"}
-        ]
-
-    def test_mp3_conversion_success(self, provider, client, query):
-        client.genai.interactions.create.return_value = tts_interaction()
-        with patch(
-            f"{GCP_MODULE}.convert_pcm_to_mp3", return_value=(b"mp3bytes", None)
-        ):
-            resp, err = provider.execute(
-                _tts_config(response_format="mp3"), query, "hi"
-            )
+        generate.return_value = tts_response(audio)
+        converter = MagicMock(return_value=(f"{fmt}bytes".encode(), None))
+        with patch(f"{GCP_MODULE}.convert_pcm_to_{fmt}", converter):
+            resp, err = provider.execute(_tts_config(response_format=fmt), query, "hi")
         assert err is None
-        assert resp.response.output.content.mime_type == "audio/mp3"
-        assert base64.b64decode(resp.response.output.content.value) == b"mp3bytes"
+        assert converter.call_args.args[0] == SAMPLE_PCM_BYTES
+        assert resp.response.output.content.mime_type == f"audio/{fmt}"
+        assert (
+            base64.b64decode(resp.response.output.content.value)
+            == f"{fmt}bytes".encode()
+        )
 
-    def test_mp3_conversion_failure_returns_error(self, provider, client, query):
-        client.genai.interactions.create.return_value = tts_interaction()
+    @pytest.mark.parametrize("fmt", ["mp3", "ogg"])
+    def test_conversion_failure_returns_error(self, provider, generate, query, fmt):
+        generate.return_value = tts_response()
         with patch(
-            f"{GCP_MODULE}.convert_pcm_to_mp3", return_value=(None, "ffmpeg missing")
+            f"{GCP_MODULE}.convert_pcm_to_{fmt}", return_value=(None, "codec missing")
         ):
-            resp, err = provider.execute(
-                _tts_config(response_format="mp3"), query, "hi"
-            )
-        assert resp is None
-        assert err.startswith("[KAAPI] Post-processing failure")
-        assert "ffmpeg missing" in err
-
-    def test_ogg_conversion_success(self, provider, client, query):
-        client.genai.interactions.create.return_value = tts_interaction()
-        with patch(
-            f"{GCP_MODULE}.convert_pcm_to_ogg", return_value=(b"oggbytes", None)
-        ):
-            resp, err = provider.execute(
-                _tts_config(response_format="ogg"), query, "hi"
-            )
-        assert err is None
-        assert resp.response.output.content.mime_type == "audio/ogg"
-        assert base64.b64decode(resp.response.output.content.value) == b"oggbytes"
-
-    def test_ogg_conversion_failure_returns_error(self, provider, client, query):
-        client.genai.interactions.create.return_value = tts_interaction()
-        with patch(
-            f"{GCP_MODULE}.convert_pcm_to_ogg", return_value=(None, "codec missing")
-        ):
-            resp, err = provider.execute(
-                _tts_config(response_format="ogg"), query, "hi"
-            )
+            resp, err = provider.execute(_tts_config(response_format=fmt), query, "hi")
         assert resp is None
         assert err.startswith("[KAAPI] Post-processing failure")
         assert "codec missing" in err
 
     def test_unsupported_response_format_falls_back_to_wav(
-        self, provider, client, query
+        self, provider, generate, query
     ):
-        client.genai.interactions.create.return_value = tts_interaction()
+        generate.return_value = tts_response()
         resp, err = provider.execute(_tts_config(response_format="flac"), query, "hi")
         assert err is None
         assert resp.response.output.content.mime_type == "audio/wav"
 
-    def test_raw_response_included_when_requested(self, provider, client, query):
-        client.genai.interactions.create.return_value = tts_interaction()
-        resp, _ = provider.execute(
+    @pytest.mark.parametrize(
+        "response",
+        [
+            make_response(text="oops"),
+            tts_response(b""),
+            make_response(text=None, finish_reason=genai_types.FinishReason.SAFETY),
+            blocked_response(),
+        ],
+        ids=["text_only", "empty_blob", "safety_finish", "prompt_blocked"],
+    )
+    def test_missing_audio_returns_error(self, provider, generate, query, response):
+        generate.return_value = response
+        resp, err = provider.execute(_tts_config(), query, "hello")
+        assert resp is None
+        assert err.startswith("[GOOGLE_GCP] TTS response is missing audio data")
+
+    def test_wav_with_zero_frames_returns_empty_audio_error(
+        self, provider, generate, query
+    ):
+        generate.return_value = tts_response(pcm_to_wav(b""))
+        resp, err = provider.execute(_tts_config(), query, "hi")
+        assert resp is None
+        assert err.startswith("[GOOGLE_GCP] TTS returned empty audio data")
+
+    def test_rejects_non_string_input(self, provider, generate, query):
+        resp, err = provider.execute(_tts_config(), query, ["not a string"])
+        assert resp is None
+        assert "text string as input" in err
+        generate.assert_not_called()
+
+    def test_rejects_empty_input(self, provider, generate, query):
+        resp, err = provider.execute(_tts_config(), query, "   ")
+        assert resp is None
+        assert "text input is empty" in err
+        generate.assert_not_called()
+
+    def test_raw_response_included_when_requested(self, provider, generate, query):
+        generate.return_value = tts_response()
+        resp, err = provider.execute(
             _tts_config(), query, "hi", include_provider_raw_response=True
         )
-        assert resp.provider_raw_response["id"] == "int_123"
+        assert err is None
+        assert resp.provider_raw_response["response_id"] == "resp_123"
 
 
 class TestText:
-    def test_happy_path_drops_temperature(self, provider, client, query):
-        client.genai.interactions.create.return_value = make_interaction(
-            text="generated answer"
-        )
+    def test_happy_path(self, provider, generate, query):
+        generate.return_value = make_response(text="generated answer")
 
         resp, err = provider.execute(_text_config(temperature=0.2), query, "hello")
 
         assert err is None
         assert resp.response.output.content.value == "generated answer"
-        assert resp.response.provider_response_id == "int_123"
-        assert resp.usage.reasoning_tokens == 2
-        assert create_kwargs(client) == {
-            "model": "gemini-2.5-flash",
-            "input": [
-                {"type": "user_input", "content": [{"type": "text", "text": "hello"}]}
-            ],
-        }
+        assert resp.response.provider_response_id == "resp_123"
+        assert resp.response.model == "gemini-2.5-flash-001"
+        assert (
+            resp.usage.input_tokens,
+            resp.usage.output_tokens,
+            resp.usage.total_tokens,
+            resp.usage.reasoning_tokens,
+        ) == (10, 5, 17, 2)
 
-    def test_forwards_system_instruction(self, provider, client, query):
-        client.genai.interactions.create.return_value = make_interaction()
-        provider.execute(_text_config(instructions="be terse"), query, "hi")
-        assert create_kwargs(client)["system_instruction"] == "be terse"
+        kwargs = call_kwargs(provider.client)
+        assert kwargs["model"] == "gemini-2.5-flash"
+        assert kwargs["contents"].role == "user"
+        assert [p.text for p in kwargs["contents"].parts] == ["hello"]
+        config = kwargs["config"]
+        assert config.temperature is None
+        assert config.system_instruction is None
+        assert config.thinking_config is None
+        assert config.max_output_tokens is None
+        assert config.response_mime_type is None
 
-    def test_forwards_max_output_tokens(self, provider, client, query):
-        client.genai.interactions.create.return_value = make_interaction()
-        provider.execute(_text_config(max_output_tokens=256), query, "hi")
-        assert create_kwargs(client)["generation_config"] == {"max_output_tokens": 256}
-
-    def test_forwards_output_schema_as_json_response_format(
-        self, provider, client, query
+    def test_forwards_instructions_and_max_output_tokens(
+        self, provider, generate, query
     ):
-        schema = {"type": "OBJECT", "properties": {"band": {"type": "STRING"}}}
-        client.genai.interactions.create.return_value = make_interaction(
-            text='{"band": "high"}'
+        generate.return_value = make_response()
+        provider.execute(
+            _text_config(instructions="be terse", max_output_tokens=256), query, "hi"
         )
-        provider.execute(_text_config(output_schema=schema), query, "hi")
-        kwargs = create_kwargs(client)
-        assert kwargs["response_format"] == schema
-        assert kwargs["response_mime_type"] == "application/json"
+        config = call_kwargs(provider.client)["config"]
+        assert config.system_instruction == "be terse"
+        assert config.max_output_tokens == 256
 
-    def test_thinking_config_takes_precedence_over_reasoning(
-        self, provider, client, query
+    def test_output_schema_requests_json(self, provider, generate, query):
+        schema = {"type": "object", "properties": {"band": {"type": "string"}}}
+        generate.return_value = make_response(text='{"band": "high"}')
+        resp, err = provider.execute(_text_config(output_schema=schema), query, "hi")
+        assert err is None
+        assert resp.response.output.content.value == '{"band": "high"}'
+        config = call_kwargs(provider.client)["config"]
+        assert config.response_mime_type == "application/json"
+        assert config.response_json_schema == schema
+        assert config.response_schema is None
+
+    @pytest.mark.parametrize(
+        ("params", "expected"),
+        [
+            (
+                {"thinking_config": {"thinking_level": "high"}, "reasoning": "low"},
+                genai_types.ThinkingLevel.HIGH,
+            ),
+            ({"reasoning": "minimal"}, genai_types.ThinkingLevel.MINIMAL),
+            (
+                {"thinking_config": {}, "reasoning": "medium"},
+                genai_types.ThinkingLevel.MEDIUM,
+            ),
+        ],
+    )
+    def test_thinking_level_resolution(
+        self, provider, generate, query, params, expected
     ):
-        client.genai.interactions.create.return_value = make_interaction()
-        config = _text_config(
-            thinking_config={"thinking_level": "high"}, reasoning="low"
-        )
-        provider.execute(config, query, "hello")
-        assert create_kwargs(client)["generation_config"] == {"thinking_level": "high"}
+        generate.return_value = make_response()
+        provider.execute(_text_config(**params), query, "hello")
+        thinking = call_kwargs(provider.client)["config"].thinking_config
+        assert thinking.thinking_level == expected
 
-    def test_reasoning_used_as_thinking_level_fallback(self, provider, client, query):
-        client.genai.interactions.create.return_value = make_interaction()
-        provider.execute(_text_config(reasoning="minimal"), query, "hello")
-        assert create_kwargs(client)["generation_config"] == {
-            "thinking_level": "minimal"
-        }
-
-    def test_accepts_multimodal_list_input(self, provider, client, query):
-        client.genai.interactions.create.return_value = make_interaction(
-            text="described"
-        )
+    def test_multimodal_list_input_maps_to_genai_parts(self, provider, generate, query):
+        generate.return_value = make_response(text="described")
         parts = [
             TextContent(value="describe this"),
             ImageContent(format="base64", value="aW1n", mime_type="image/png"),
@@ -768,123 +733,184 @@ class TestText:
         ]
         resp, err = provider.execute(_text_config(), query, parts)
         assert err is None
-        assert create_kwargs(client)["input"][0]["content"] == [
-            {"type": "text", "text": "describe this"},
-            {"type": "image", "data": "aW1n", "mime_type": "image/png"},
-            {"type": "image", "uri": "https://x/img.png", "mime_type": "image/png"},
-            {"type": "document", "data": "cGRm", "mime_type": "application/pdf"},
-            {
-                "type": "document",
-                "uri": "https://x/doc.pdf",
-                "mime_type": "application/pdf",
-            },
-        ]
-
-    def test_accepts_multimodal_input_wrapper(self, provider, client, query):
-        client.genai.interactions.create.return_value = make_interaction()
-        multimodal = MultiModalInput(parts=[TextContent(value="hi")])
-        resp, err = provider.execute(_text_config(), query, multimodal)
-        assert err is None
-        assert create_kwargs(client)["input"][0]["content"] == [
-            {"type": "text", "text": "hi"}
-        ]
-
-    def test_missing_content_returns_error(self, provider, client, query):
-        client.genai.interactions.create.return_value = make_interaction(text=None)
-        resp, err = provider.execute(_text_config(), query, "hello")
-        assert resp is None
-        assert err.startswith("[GOOGLE_GCP] Text response is missing generated content")
-
-    def test_empty_interaction_id_gets_generated_response_id(
-        self, provider, client, query
-    ):
-        client.genai.interactions.create.return_value = make_interaction(
-            interaction_id=None
+        text, img_inline, img_uri, pdf_inline, pdf_uri = call_kwargs(provider.client)[
+            "contents"
+        ].parts
+        assert text.text == "describe this"
+        assert (img_inline.inline_data.data, img_inline.inline_data.mime_type) == (
+            b"img",
+            "image/png",
         )
+        assert (img_uri.file_data.file_uri, img_uri.file_data.mime_type) == (
+            "https://x/img.png",
+            "image/png",
+        )
+        assert (pdf_inline.inline_data.data, pdf_inline.inline_data.mime_type) == (
+            b"pdf",
+            "application/pdf",
+        )
+        assert (pdf_uri.file_data.file_uri, pdf_uri.file_data.mime_type) == (
+            "https://x/doc.pdf",
+            "application/pdf",
+        )
+
+    def test_multimodal_input_wrapper(self, provider, generate, query):
+        generate.return_value = make_response()
+        resp, err = provider.execute(
+            _text_config(), query, MultiModalInput(parts=[TextContent(value="hi")])
+        )
+        assert err is None
+        assert [p.text for p in call_kwargs(provider.client)["contents"].parts] == [
+            "hi"
+        ]
+
+    def test_missing_ids_fall_back(self, provider, generate, query):
+        generate.return_value = make_response(response_id=None, model_version=None)
         resp, err = provider.execute(_text_config(), query, "hi")
         assert err is None
         assert resp.response.provider_response_id.startswith("google-gcp-")
+        assert len(resp.response.provider_response_id) == len("google-gcp-") + 32
+        assert resp.response.model == "gemini-2.5-flash"
 
-    def test_raw_response_included_when_requested(self, provider, client, query):
-        client.genai.interactions.create.return_value = make_interaction()
+    @pytest.mark.parametrize(
+        ("response", "reason"),
+        [
+            (
+                make_response(text=None, finish_reason=genai_types.FinishReason.SAFETY),
+                "finish_reason=FinishReason.SAFETY",
+            ),
+            (make_response(text=""), "finish_reason=FinishReason.STOP"),
+            (blocked_response(), "block_reason=BlockedReason.SAFETY"),
+        ],
+        ids=["safety_finish", "empty_text", "prompt_blocked"],
+    )
+    def test_empty_or_blocked_output_returns_error(
+        self, provider, generate, query, response, reason
+    ):
+        generate.return_value = response
+        resp, err = provider.execute(_text_config(), query, "hello")
+        assert resp is None
+        assert err.startswith("[GOOGLE_GCP] Text response is missing generated content")
+        assert reason in err
+
+    def test_raw_response_included_when_requested(self, provider, generate, query):
+        generate.return_value = make_response()
         resp, _ = provider.execute(
             _text_config(), query, "hello", include_provider_raw_response=True
         )
-        assert resp.provider_raw_response["id"] == "int_123"
+        assert resp.provider_raw_response["response_id"] == "resp_123"
 
 
 class TestExecuteErrors:
     @pytest.mark.parametrize(
-        ("status_code", "expected_prefix"),
+        ("error_cls", "code", "expected_prefix"),
         [
-            (400, "[GOOGLE_GCP] Bad request (code: 400)"),
-            (401, "[GOOGLE_GCP] Authentication / permission denied (code: 401)"),
-            (403, "[GOOGLE_GCP] Authentication / permission denied (code: 403)"),
-            (404, "[GOOGLE_GCP] Resource not found (code: 404)"),
-            (429, "[GOOGLE_GCP] Rate limit / quota exceeded (code: 429)"),
-            (500, "[GOOGLE_GCP] Server error (code: 500)"),
-            (503, "[GOOGLE_GCP] Server error (code: 503)"),
-            (418, "[GOOGLE_GCP] HTTP error (code: 418)"),
+            (genai_errors.ClientError, 400, "[GOOGLE_GCP] Bad request (code: 400)"),
+            (
+                genai_errors.ClientError,
+                401,
+                "[GOOGLE_GCP] Authentication / permission denied (code: 401)",
+            ),
+            (
+                genai_errors.ClientError,
+                403,
+                "[GOOGLE_GCP] Authentication / permission denied (code: 403)",
+            ),
+            (
+                genai_errors.ClientError,
+                404,
+                "[GOOGLE_GCP] Resource not found (code: 404)",
+            ),
+            (
+                genai_errors.ClientError,
+                429,
+                "[GOOGLE_GCP] Rate limit / quota exceeded (code: 429)",
+            ),
+            (genai_errors.ServerError, 500, "[GOOGLE_GCP] Server error (code: 500)"),
+            (genai_errors.ServerError, 503, "[GOOGLE_GCP] Server error (code: 503)"),
+            (genai_errors.ClientError, 418, "[GOOGLE_GCP] HTTP error (code: 418)"),
         ],
     )
-    def test_api_status_error_branches(
-        self, provider, client, query, status_code, expected_prefix
+    @pytest.mark.parametrize("config_factory", [_text_config, _tts_config])
+    def test_api_errors_map_to_messages(
+        self,
+        provider,
+        generate,
+        query,
+        error_cls,
+        code,
+        expected_prefix,
+        config_factory,
     ):
-        client.genai.interactions.create.side_effect = status_error(
-            status_code, "upstream detail"
+        generate.side_effect = error_cls(
+            code, {"error": {"code": code, "message": "upstream detail"}}
         )
-        resp, err = provider.execute(_tts_config(), query, "hi")
+        resp, err = provider.execute(config_factory(), query, "hi")
         assert resp is None
         assert err.startswith(f"{expected_prefix}: upstream detail")
 
-    def test_text_http_error_returns_message(self, provider, client, query):
-        client.genai.interactions.create.side_effect = status_error(
-            403, "permission denied"
-        )
+    @pytest.mark.parametrize(
+        ("exc", "expected_prefix"),
+        [
+            (
+                httpx.ReadTimeout("read timed out", request=VERTEX_REQUEST),
+                "[KAAPI] Google GCP request timed out after 60s (ReadTimeout)",
+            ),
+            (
+                httpx.ConnectTimeout("connect timed out", request=VERTEX_REQUEST),
+                "[KAAPI] Google GCP request timed out after 60s (ConnectTimeout)",
+            ),
+            (
+                httpx.ConnectError("dns failure", request=VERTEX_REQUEST),
+                "[KAAPI] Google GCP connection failed (ConnectError)",
+            ),
+            (
+                httpx.RemoteProtocolError("peer closed", request=VERTEX_REQUEST),
+                "[KAAPI] Google GCP connection failed (RemoteProtocolError)",
+            ),
+            (
+                google_auth_errors.RefreshError("token revoked"),
+                "[GOOGLE_GCP] Authentication failed (RefreshError)",
+            ),
+            (
+                TypeError("bad kwarg"),
+                "[KAAPI] Invalid or unexpected parameter in Config: bad kwarg",
+            ),
+            (
+                RuntimeError("kaboom"),
+                "[KAAPI] Unexpected error while executing Google GCP",
+            ),
+        ],
+        ids=[
+            "read_timeout",
+            "connect_timeout",
+            "connect_error",
+            "remote_protocol",
+            "auth",
+            "type_error",
+            "generic",
+        ],
+    )
+    def test_non_api_errors_map_to_messages(
+        self, provider, generate, query, exc, expected_prefix
+    ):
+        generate.side_effect = exc
         resp, err = provider.execute(_text_config(), query, "hi")
         assert resp is None
-        assert "403" in err
-        assert "permission denied" in err
+        assert err.startswith(expected_prefix)
+        assert str(exc) in err
 
-    def test_timeout_returns_clean_message(self, provider, client, query):
-        client.genai.interactions.create.side_effect = compat_errors.APITimeoutError(
-            request=VERTEX_REQUEST
+    def test_stt_api_error_is_mapped(self, provider, generate, query, upload_mock):
+        generate.side_effect = genai_errors.ClientError(
+            403, {"error": {"code": 403, "message": "permission denied"}}
         )
-        resp, err = provider.execute(_tts_config(), query, "hi")
-        assert resp is None
-        assert err.startswith("[KAAPI] Google GCP request timed out")
-
-    def test_connection_error_returns_clean_message(self, provider, client, query):
-        client.genai.interactions.create.side_effect = compat_errors.APIConnectionError(
-            request=VERTEX_REQUEST
+        resp, err = provider.execute(
+            _stt_config(), query, AudioRef(bytes_=b"x", mime_type="audio/wav")
         )
-        resp, err = provider.execute(_tts_config(), query, "hi")
         assert resp is None
-        assert err.startswith("[KAAPI] Google GCP connection failed")
-
-    def test_google_auth_error_returns_auth_failed(self, provider, client, query):
-        # Raised while minting the SA access token, before any HTTP status.
-        client.genai.interactions.create.side_effect = google_auth_errors.RefreshError(
-            "token revoked"
+        assert err.startswith(
+            "[GOOGLE_GCP] Authentication / permission denied (code: 403)"
         )
-        resp, err = provider.execute(_text_config(), query, "hi")
-        assert resp is None
-        assert err.startswith("[GOOGLE_GCP] Authentication failed (RefreshError)")
-        assert "token revoked" in err
-
-    def test_wraps_type_error(self, provider, client, query):
-        client.genai.interactions.create.side_effect = TypeError("bad kwarg")
-        resp, err = provider.execute(_tts_config(), query, "hi")
-        assert resp is None
-        assert err.startswith("[KAAPI] Invalid or unexpected parameter")
-        assert "bad kwarg" in err
-
-    def test_wraps_unexpected_exception(self, provider, client, query):
-        client.genai.interactions.create.side_effect = RuntimeError("kaboom")
-        resp, err = provider.execute(_tts_config(), query, "hi")
-        assert resp is None
-        assert err.startswith("[KAAPI] Unexpected error")
-        assert "kaboom" in err
 
     def test_unsupported_completion_type_returns_error(self, provider, query):
         # SimpleNamespace bypasses NativeCompletionConfig's enum validation to
