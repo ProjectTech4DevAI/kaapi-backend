@@ -10,7 +10,8 @@ per-task `priority`:
     2  Everything else (doctransform, collections, STT/TTS evaluation, assessment)
     1  Notifications (send_eval_completion_notification)
 
-`evaluations` (priority 6): run_evaluation_fast_chunk and
+`evaluations` (priority 9, top band of this queue; later eval tasks pick lower
+bands): run_evaluation_fast_chunk and
 run_evaluation_fast_aggregate only. A fast eval fans out into many chunk tasks
 at once; priority only reorders messages still waiting in a queue, so on a
 shared queue that burst occupies every worker slot and delays priority-9 LLM
@@ -441,7 +442,7 @@ def run_tts_result_processing(
     )
 
 
-@celery_app.task(bind=True, queue=EVALUATIONS_QUEUE, priority=6)
+@celery_app.task(bind=True, queue=EVALUATIONS_QUEUE, priority=9)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_fast_chunk")
 def run_evaluation_fast_chunk(
     self: Task,
@@ -472,7 +473,7 @@ def run_evaluation_fast_chunk(
         )
 
 
-@celery_app.task(bind=True, queue=EVALUATIONS_QUEUE, priority=6)
+@celery_app.task(bind=True, queue=EVALUATIONS_QUEUE, priority=9)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_evaluation_fast_aggregate")
 def run_evaluation_fast_aggregate(
     self: Task, eval_run_id: int, trace_id: str = DEFAULT_TRACE_ID

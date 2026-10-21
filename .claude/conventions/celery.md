@@ -48,7 +48,7 @@ the bands already in use (see the `job_execution.py` module docstring):
 | Priority | Queue | When |
 |---|---|---|
 | `9` | `default` | User-blocking, interactive — LLM call / chain / response jobs |
-| `6` | `evaluations` | Fast evaluation chunk/aggregate |
+| `9` | `evaluations` | Fast evaluation chunk/aggregate (top band of this queue; new eval tasks pick a lower band) |
 | `2` | `default` | Default — doctransform, collections, STT/TTS evaluation, assessment |
 | `1` | `default` | Notifications and other fire-and-forget background work |
 
