@@ -27,7 +27,10 @@ from app.crud.evaluations import (
 )
 from app.crud.evaluations.core import update_evaluation_run
 from app.crud.evaluations.merge import apply_cosine_breakdown
-from app.crud.evaluations.score import CategoryMetrics, TraceData
+from app.crud.evaluations.score import (
+    CategoryMetrics,
+)
+from app.models.evaluation import TraceData
 from app.models.evaluation import EvaluationRun, EvaluationRunUpdate, RunModeEnum
 from app.models.llm.constants import CompletionType
 from app.services.llm.providers import LLMProvider

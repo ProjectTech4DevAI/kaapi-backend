@@ -8,7 +8,7 @@ persists the result as a new config_version.
 import copy
 import json
 import logging
-from typing import NotRequired, TypedDict, cast
+from typing import cast
 from uuid import UUID
 
 import anthropic
@@ -29,9 +29,8 @@ from app.crud.evaluations.score import (
     GROUND_TRUTH_SCORE_NAME,
     KNOWLEDGE_BASE_SCORE_NAME,
     PROMPT_SCORE_NAME,
-    TraceData,
-    TraceScore,
 )
+from app.models.evaluation import TraceData, TraceScore
 from app.crud.jobs import JobCrud
 from app.models.config.config import ConfigTag
 from app.models.config.version import (
@@ -43,6 +42,8 @@ from app.models.evaluation import (
     EvaluationRun,
     PromptImprovementJobPublic,
     PromptRecommendationJobPublic,
+    TraceQuestion,
+    TraceScoreSummary,
 )
 from app.models.job import Job, JobStatus, JobType, JobUpdate
 from app.services.llm.providers.claude import (
@@ -640,31 +641,6 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
             "contact Kaapi if persistent | "
             f"anthropic_response: {_anthropic_error_detail(exc)}"
         ) from exc
-
-
-class TraceScoreSummary(TypedDict):
-    """A TraceScore without the UI-only fields (data_type, verdict)."""
-
-    name: str
-    value: float | str
-    comment: NotRequired[str]
-    unscoreable: NotRequired[bool]
-
-
-class TraceAttempt(TypedDict):
-    """One run of a question: its answer and scores."""
-
-    llm_answer: str
-    scores: list[TraceScoreSummary]
-
-
-class TraceQuestion(TypedDict):
-    """A dataset question with one attempt per duplication-factor repeat."""
-
-    question_id: int | str | None
-    question: str
-    ground_truth_answer: str
-    attempts: list[TraceAttempt]
 
 
 def _trace_score_summary(score: TraceScore) -> TraceScoreSummary:
