@@ -117,6 +117,9 @@ class TestGetLLMProvider:
         with (
             patch("app.crud.credentials.get_provider_credential") as mock_get_creds,
             patch("app.services.llm.providers.google_gcp.settings") as mock_settings,
+            patch(
+                "app.services.llm.providers.google_gcp.genai.Client"
+            ) as mock_genai_client,
         ):
             mock_get_creds.return_value = None
             mock_settings.GCP_VERTEX_API_KEY = "platform-key"
@@ -133,7 +136,12 @@ class TestGetLLMProvider:
             )
 
         assert isinstance(provider, GoogleGCPProvider)
-        assert provider.client.api_key == "platform-key"
+        # The platform SA stub has no private key, so it degrades to the API key.
+        assert mock_genai_client.call_args.kwargs["api_key"] == "platform-key"
+        assert provider.client.genai is mock_genai_client.return_value
+        assert provider.client.project_id == "platform-project"
+        assert provider.client.gcs_bucket == "platform-bucket"
+        assert provider.client.sa_info is None
 
     def test_get_llm_provider_google_gcp_raises_when_platform_credentials_missing(
         self, db: Session
@@ -161,7 +169,7 @@ class TestGetLLMProvider:
                     organization_id=project.organization_id,
                 )
 
-        assert "missing required fields" in str(exc_info.value)
+        assert "Google GCP credentials missing" in str(exc_info.value)
 
     def test_google_native_routes_to_aistudio(self, db: Session):
         """``google`` / ``google-native`` currently route to GoogleAIProvider
