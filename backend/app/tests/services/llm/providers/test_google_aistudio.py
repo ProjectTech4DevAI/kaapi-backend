@@ -378,28 +378,24 @@ class TestGoogleAIProviderSTT:
             "mime_type": "audio/wav",
         }
 
-    def test_stt_defaults_thinking_level_to_low(
-        self, provider, mock_client, stt_config, query_params, audio_ref
+    @pytest.mark.parametrize("thinking_level", [None, "high"])
+    def test_stt_generation_config_not_sent(
+        self,
+        provider,
+        mock_client,
+        stt_config,
+        query_params,
+        audio_ref,
+        thinking_level,
     ):
+        if thinking_level:
+            stt_config.params["thinking_level"] = thinking_level
         mock_client.interactions.create.return_value = make_interaction()
 
-        provider.execute(stt_config, query_params, audio_ref)
+        result, error = provider.execute(stt_config, query_params, audio_ref)
 
-        assert create_kwargs(mock_client)["generation_config"] == {
-            "thinking_level": "low"
-        }
-
-    def test_stt_explicit_thinking_level_overrides_default(
-        self, provider, mock_client, stt_config, query_params, audio_ref
-    ):
-        stt_config.params["thinking_level"] = "high"
-        mock_client.interactions.create.return_value = make_interaction()
-
-        provider.execute(stt_config, query_params, audio_ref)
-
-        assert create_kwargs(mock_client)["generation_config"] == {
-            "thinking_level": "high"
-        }
+        assert error is None
+        assert "generation_config" not in create_kwargs(mock_client)
 
     def test_stt_sampling_params_not_sent(
         self, provider, mock_client, stt_config, query_params, audio_ref
@@ -411,9 +407,7 @@ class TestGoogleAIProviderSTT:
         result, error = provider.execute(stt_config, query_params, audio_ref)
 
         assert error is None
-        kwargs = create_kwargs(mock_client)
-        assert set(kwargs) == {"model", "input", "generation_config"}
-        assert kwargs["generation_config"] == {"thinking_level": "low"}
+        assert set(create_kwargs(mock_client)) == {"model", "input"}
 
     def test_stt_with_specific_input_language(
         self, provider, mock_client, stt_config, query_params, audio_ref
