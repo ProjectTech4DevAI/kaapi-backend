@@ -305,6 +305,38 @@ def start_fast_evaluation_aggregate(eval_run_id: int, trace_id: str = "N/A") -> 
     return task_id
 
 
+def start_evaluation_iteration_round(
+    iteration_run_id: int,
+    resume: bool,
+    organization_id: int,
+    project_id: int,
+    trace_id: str = "N/A",
+    **kwargs: Any,
+) -> str:
+    """Enqueue one graph step (kickoff or resume) for an evaluation iteration loop.
+
+    `**kwargs` (`max_rounds`, `config_version`) is only meaningful on the
+    `resume=False` kickoff call, to seed the graph's initial state — a resume
+    call ignores them since the checkpoint already carries that state.
+    """
+    from app.celery.tasks.job_execution import run_evaluation_iteration_graph_step
+
+    task_id = _enqueue_with_trace_context(
+        run_evaluation_iteration_graph_step,
+        iteration_run_id=iteration_run_id,
+        resume=resume,
+        organization_id=organization_id,
+        project_id=project_id,
+        trace_id=trace_id,
+        **kwargs,
+    )
+    logger.info(
+        f"[start_evaluation_iteration_round] Enqueued | "
+        f"iteration_run_id={iteration_run_id} | resume={resume} | task_id={task_id}"
+    )
+    return task_id
+
+
 def get_task_status(task_id: str) -> Dict[str, Any]:
     result = AsyncResult(task_id)
     return {

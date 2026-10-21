@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal, get_args
 
@@ -12,7 +13,7 @@ from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.config.config import ConfigTag
 from app.models.llm.constants import CompletionType
 from app.models.llm.constants import Provider as ProviderEnum
-from app.models.llm.request import CompletionConfig, ConfigBlob
+from app.models.llm.request import CompletionConfig, ConfigBlob, KaapiLLMParams
 from app.models.model_config import (
     ModelConfigBulkUpdateItem,
     ModelConfigCreate,
@@ -167,18 +168,14 @@ def validate_blob_completion_models(
     _validate_completion_model_or_raise(session, completion)
 
     if isinstance(blob, AssessmentConfigBlob) and blob.pre_filters is not None:
-        pre_filters = (
-            blob.pre_filters.topic_relevance,
-            blob.pre_filters.duplicate_detection,
-        )
-        for flt in pre_filters:
-            if flt is not None:
-                _validate_model_or_raise(
-                    session,
-                    raw_provider=flt.provider,
-                    completion_type=CompletionType.TEXT,
-                    params=flt.params,
-                )
+        topic_relevance = blob.pre_filters.topic_relevance
+        if topic_relevance is not None:
+            _validate_model_or_raise(
+                session,
+                raw_provider=topic_relevance.provider,
+                completion_type=CompletionType.TEXT,
+                params=topic_relevance.params,
+            )
 
 
 def _validate_completion_model_or_raise(
@@ -193,12 +190,19 @@ def _validate_completion_model_or_raise(
     )
 
 
+def _get_param(params: KaapiLLMParams | dict[str, Any] | None, key: str) -> Any:
+    """Read a field from completion params, dict or typed Kaapi model alike."""
+    if isinstance(params, dict):
+        return params.get(key)
+    return getattr(params, key, None)
+
+
 def _validate_model_or_raise(
     session: Session,
     *,
     raw_provider: str | None,
     completion_type: str,
-    params: dict[str, Any] | None,
+    params: KaapiLLMParams | dict[str, Any] | None,
 ) -> None:
     """Reject a (provider, type, params) whose params.model is not in model_config.
 
@@ -222,7 +226,7 @@ def _validate_model_or_raise(
 
     provider = _normalize_provider(raw_provider)
 
-    model_name = (params or {}).get("model") or None
+    model_name = _get_param(params, "model") or None
     if not model_name:
         raise HTTPException(
             status_code=400,
@@ -241,7 +245,7 @@ def _validate_model_or_raise(
         )
 
     if completion_type == "tts" and model_row is not None:
-        voice = (params or {}).get("voice")
+        voice = _get_param(params, "voice")
         voice_spec = (
             model_row.config.get("voice")
             if isinstance(model_row.config, dict)
@@ -370,23 +374,40 @@ def is_summary_model(session: Session, provider: Provider, model_name: str) -> b
     return "summary" in model.config
 
 
-def estimate_model_cost(
+def list_active_model_pricing(
     session: Session,
-    provider: Provider,
+    pairs: set[tuple[str, str]],
+) -> dict[tuple[str, str], Mapping[str, Any] | None]:
+    """Fetch pricing for many (provider, model_name) pairs in one query."""
+    if not pairs:
+        return {}
+    providers = {provider for provider, _ in pairs}
+    model_names = {model_name for _, model_name in pairs}
+    stmt = select(
+        ModelConfig.provider, ModelConfig.model_name, ModelConfig.pricing
+    ).where(
+        ModelConfig.provider.in_(providers),  # type: ignore[attr-defined]
+        ModelConfig.model_name.in_(model_names),  # type: ignore[attr-defined]
+        ModelConfig.is_active,
+    )
+    return {
+        (provider, model_name): pricing
+        for provider, model_name, pricing in session.exec(stmt).all()
+    }
+
+
+def compute_cost_from_pricing(
+    pricing: Mapping[str, Any] | None,
+    provider: str,
     model_name: str,
     input_tokens: int,
     output_tokens: int,
     usage_type: Literal["response", "batch"] = "response",
 ) -> dict[str, Any] | None:
-    model = get_model_config(session=session, provider=provider, model_name=model_name)
-    if model is None or model.pricing is None:
+    if not isinstance(pricing, dict):
         return None
 
-    if not isinstance(model.pricing, dict):
-        return None
-
-    pricing_source: dict[str, Any] = model.pricing
-    usage_pricing = pricing_source.get(usage_type)
+    usage_pricing = pricing.get(usage_type)
     if not isinstance(usage_pricing, dict):
         return None
 
@@ -412,3 +433,24 @@ def estimate_model_cost(
         "total_cost": input_cost + output_cost,
         "currency": "USD",
     }
+
+
+def estimate_model_cost(
+    session: Session,
+    provider: Provider,
+    model_name: str,
+    input_tokens: int,
+    output_tokens: int,
+    usage_type: Literal["response", "batch"] = "response",
+) -> dict[str, Any] | None:
+    model = get_model_config(session=session, provider=provider, model_name=model_name)
+    if model is None:
+        return None
+    return compute_cost_from_pricing(
+        pricing=model.pricing,
+        provider=provider,
+        model_name=model_name,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        usage_type=usage_type,
+    )

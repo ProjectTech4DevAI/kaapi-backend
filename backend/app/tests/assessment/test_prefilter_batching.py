@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from uuid import UUID
 
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded
@@ -101,7 +102,9 @@ class TestSubmitCurrentStage:
                 "_resolve_run_context",
                 return_value=(assessment, MagicMock(), SimpleNamespace(), None),
             ),
-            patch.object(tasks, "_load_dataset_rows", return_value=[{"a": "1"}] * 3),
+            patch.object(
+                tasks, "load_submission_file_rows", return_value=[{"a": "1"}] * 3
+            ),
             patch.object(tasks, "_accepted_indices", return_value=accepted),
             patch.object(tasks, "recompute_assessment_status"),
         ]
@@ -139,6 +142,52 @@ class TestSubmitCurrentStage:
         with p[0], p[1], p[2], p[3], patch.object(tasks, "_persist_advance") as advance:
             tasks._submit_stage(session, run, 1, 1)
         advance.assert_called_once()
+
+    def test_prefilter_rewrites_gcs_attachments_before_submit(self) -> None:
+        run = _run(
+            stage=Stage.PRE_FILTER_TOPIC_RELEVANCE,
+            stage_status=StageStatus.PENDING,
+            stage_batches={},
+        )
+        session = MagicMock()
+        assessment = SimpleNamespace(
+            input={
+                **_ASSESSMENT_INPUT,
+                "attachments": [{"column": "a", "type": "image", "format": "url"}],
+            }
+        )
+        batch_job = SimpleNamespace(id=7, total_items=3)
+        with (
+            patch.object(
+                tasks,
+                "_resolve_run_context",
+                return_value=(assessment, MagicMock(), SimpleNamespace(), None),
+            ),
+            patch.object(
+                tasks, "load_submission_file_rows", return_value=[{"a": "1"}] * 3
+            ),
+            patch.object(tasks, "_accepted_indices", return_value=[0, 1, 2]),
+            patch.object(tasks, "recompute_assessment_status"),
+            patch.object(assessment_core, "flag_modified"),
+            patch.object(
+                tasks,
+                "rewrite_gcs_attachment_urls",
+                return_value=[{"a": "https://signed/1"}] * 3,
+            ) as rewrite,
+            patch.object(
+                tasks, "build_prefilter_requests", return_value=[{"key": "tr_0"}]
+            ) as build_reqs,
+            patch.object(tasks, "submit_prefilter_batch", return_value=batch_job),
+        ):
+            tasks._submit_stage(session, run, 1, 1)
+
+        rewrite.assert_called_once()
+        # the rewritten rows (not the raw gs:// rows) are what get built into JSONL
+        _, build_kwargs = build_reqs.call_args
+        rows_with_idx = (
+            build_kwargs.get("rows_with_idx") or build_reqs.call_args.args[1]
+        )
+        assert [r for _, r in rows_with_idx] == [{"a": "https://signed/1"}] * 3
 
 
 class TestAcceptedIndices:
@@ -235,9 +284,9 @@ class TestResolveRunContext:
     def test_success(self) -> None:
         session = MagicMock()
         run = _run()
-        session.get.return_value = SimpleNamespace(dataset_id=3)
+        session.get.return_value = SimpleNamespace(submission_id=UUID(int=3))
         with patch.object(
-            tasks, "get_assessment_dataset_by_id", return_value=MagicMock()
+            tasks, "get_submission_by_id", return_value=MagicMock()
         ), patch.object(
             tasks, "resolve_evaluation_config", return_value=({"x": 1}, None)
         ):
@@ -254,9 +303,9 @@ class TestResolveRunContext:
 
     def test_config_error(self) -> None:
         session = MagicMock()
-        session.get.return_value = SimpleNamespace(dataset_id=3)
+        session.get.return_value = SimpleNamespace(submission_id=UUID(int=3))
         with patch.object(
-            tasks, "get_assessment_dataset_by_id", return_value=MagicMock()
+            tasks, "get_submission_by_id", return_value=MagicMock()
         ), patch.object(
             tasks, "resolve_evaluation_config", return_value=(None, "bad config")
         ):
@@ -317,7 +366,9 @@ class TestSubmitStageBranches:
             tasks,
             "_resolve_run_context",
             return_value=(SimpleNamespace(), MagicMock(), SimpleNamespace(), None),
-        ), patch.object(tasks, "_load_dataset_rows", return_value=[]), patch.object(
+        ), patch.object(
+            tasks, "load_submission_file_rows", return_value=[]
+        ), patch.object(
             assessment_core, "flag_modified"
         ), patch.object(
             tasks, "update_assessment_run_status"
@@ -345,7 +396,7 @@ class TestSubmitStageBranches:
                 None,
             ),
         ), patch.object(
-            tasks, "_load_dataset_rows", return_value=[{"a": "1"}] * 3
+            tasks, "load_submission_file_rows", return_value=[{"a": "1"}] * 3
         ), patch.object(
             tasks, "_accepted_indices", return_value=[0, 1]
         ), patch.object(
@@ -371,7 +422,7 @@ class TestSubmitStageBranches:
                 None,
             ),
         ), patch.object(
-            tasks, "_load_dataset_rows", return_value=[{"a": "1"}]
+            tasks, "load_submission_file_rows", return_value=[{"a": "1"}]
         ), patch.object(
             tasks, "_accepted_indices", return_value=[0]
         ):

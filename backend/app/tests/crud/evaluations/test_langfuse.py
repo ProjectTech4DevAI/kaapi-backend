@@ -451,6 +451,23 @@ class TestUpdateTracesWithCosineScores:
         assert failed == []
         assert mock_langfuse.create_score.call_count == 2
 
+    def test_update_traces_with_cosine_scores_missing_value(self) -> None:
+        """Test that non-unscoreable items missing cosine_similarity are skipped."""
+        mock_langfuse = MagicMock()
+
+        per_item_scores = [
+            {"trace_id": "trace_1", "cosine_similarity": 0.95},
+            {"trace_id": "trace_2"},  # no cosine_similarity, not unscoreable
+            {"trace_id": "trace_3", "cosine_similarity": 0.92},
+        ]
+
+        failed = update_traces_with_cosine_scores(
+            langfuse=mock_langfuse, per_item_scores=per_item_scores
+        )
+
+        assert failed == []
+        assert mock_langfuse.create_score.call_count == 2
+
     def test_update_traces_with_cosine_scores_reports_failure(
         self,
     ) -> None:

@@ -301,14 +301,12 @@ class LangfuseTracer:
 def observe_llm_execution(
     session_id: str | None = None,
     credentials: dict | None = None,
-    metadata: dict[str, Any] | None = None,
 ) -> Callable:
     """Decorator to add Langfuse observability to LLM provider execute methods.
 
     Args:
         credentials: Langfuse credentials with public_key, secret_key, and host
         session_id: Session ID for grouping traces (conversation_id)
-        metadata: Trace-level metadata (e.g. effective_provider after routing)
 
     Usage:
         decorated_execute = observe_llm_execution(
@@ -323,9 +321,6 @@ def observe_llm_execution(
             completion_config: NativeCompletionConfig, query: QueryParams, **kwargs
         ):
             if not credentials:
-                logger.info(
-                    "[observe_llm_execution] No credentials - skipping observability"
-                )
                 return func(completion_config, query, **kwargs)
 
             try:
@@ -366,7 +361,6 @@ def observe_llm_execution(
                 as_type="span",
                 name="unified-llm-call",
                 input=query.input,
-                metadata=metadata or {},
             )
             if trace:
                 langfuse_call(
@@ -375,7 +369,6 @@ def observe_llm_execution(
                     name="unified-llm-call",
                     input=query.input,
                     tags=[completion_config.provider],
-                    metadata=metadata,
                 )
 
             generation = None
@@ -385,7 +378,11 @@ def observe_llm_execution(
                     as_type="generation",
                     name=f"{completion_config.provider}-completion",
                     input=query.input,
-                    model=completion_config.params.get("model"),
+                    model=(
+                        completion_config.params.get("model")
+                        if isinstance(completion_config.params, dict)
+                        else getattr(completion_config.params, "model", None)
+                    ),
                 )
 
             response: LLMCallResponse | None

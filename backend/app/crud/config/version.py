@@ -54,14 +54,10 @@ class ConfigVersionCrud:
         self.tag = tag
 
     def create_or_raise(self, version_create: ConfigVersionUpdate) -> ConfigVersion:
-        """
-        Create a new version from a partial config update.
+        """Create the next version from the submitted config blob.
 
-        Fetches the latest version, merges the partial config with it,
-        validates the result, and creates the new version.
-
-        Fields 'type' is inherited from the existing config
-        and cannot be changed.
+        A DEFAULT blob is a partial patch merged onto the latest version, with
+        `completion.type` immutable. An ASSESSMENT blob replaces it outright.
         """
         self._config_exists_or_raise(self.config_id)
 
@@ -73,15 +69,13 @@ class ConfigVersionCrud:
                 detail="Cannot create partial version: no existing version found. Use full config for initial version.",
             )
 
-        # Merge partial config with existing config
-        merged_config = self._deep_merge(
-            base=latest_version.config_blob,
-            updates=version_create.config_blob,
-        )
-
-        # These operate on a top-level `completion` block, which assessment
-        # blobs don't have — skip them for the ASSESSMENT tag.
-        if self.tag != ConfigTag.ASSESSMENT:
+        if self.tag == ConfigTag.ASSESSMENT:
+            merged_config = dict(version_create.config_blob)
+        else:
+            merged_config = self._deep_merge(
+                base=latest_version.config_blob,
+                updates=version_create.config_blob,
+            )
             self._strip_unsupported_params(merged_config)
             self._validate_immutable_fields(latest_version.config_blob, merged_config)
 

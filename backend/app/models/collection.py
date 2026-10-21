@@ -1,6 +1,5 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from pydantic import HttpUrl
@@ -109,7 +108,7 @@ class CollectionOptions(SQLModel):
         description="List of document IDs (at least one required)",
     )
 
-    def model_post_init(self, __context: Any):
+    def model_post_init(self, __context: object) -> None:
         self.documents = list(set(self.documents))
 
 
@@ -123,8 +122,9 @@ class CallbackRequest(SQLModel):
 class ProviderOptions(SQLModel):
     """LLM provider configuration."""
 
-    provider: Literal["openai", "google-aistudio"] = Field(
-        default="openai", description="LLM provider to use for this collection"
+    provider: ProviderType = Field(
+        default=ProviderType.openai,
+        description="LLM provider to use for this collection",
     )
 
 
@@ -134,7 +134,7 @@ class CreationRequest(
     CallbackRequest,
 ):
     def extract_super_type(self, cls: "CreationRequest"):
-        for field_name in cls.model_fields.keys():
+        for field_name in type(cls).model_fields.keys():
             field_value = getattr(self, field_name)
             yield (field_name, field_value)
 

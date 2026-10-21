@@ -2,7 +2,6 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
-from pydantic import field_validator
 from sqlmodel import JSON, Column, Field, SQLModel, Text
 
 from app.core.util import now
@@ -24,7 +23,7 @@ class CollectionActionType(str, Enum):
 class CollectionJob(SQLModel, table=True):
     """Database model for CollectionJob operations."""
 
-    __tablename__ = "collection_jobs"
+    __tablename__ = "collection_jobs"  # pyright: ignore[reportAssignmentType]
 
     id: UUID = Field(
         default_factory=uuid4,

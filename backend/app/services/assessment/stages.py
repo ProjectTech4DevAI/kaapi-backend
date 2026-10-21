@@ -29,7 +29,10 @@ from app.services.assessment.prefilter.topic_relevance import (
     parse_topic_relevance_results,
 )
 from app.services.llm.providers.registry import LLMProvider
-from app.utils import get_anthropic_client, get_openai_client
+from app.utils import (
+    get_anthropic_client,
+    get_openai_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,13 +63,24 @@ def build_pipeline(assessment_input: dict[str, Any]) -> dict[str, Any]:
     return {"stages": stages}
 
 
-def ordered_stages(pipeline: dict[str, Any] | None) -> list[str]:
-    """The stage names in execution order."""
-    return [s["stage"] for s in (pipeline or {}).get("stages", [])]
+def ordered_stages(pipeline: dict[str, Any] | list[dict[str, str]] | None) -> list[str]:
+    """The stage names in execution order, for the legacy RUN pipeline shape only.
+
+    The BATCH API path writes a bare list into the same JSONB column, so name the bad
+    shape here instead of failing with an AttributeError inside the caller.
+    """
+    if pipeline is None:
+        return []
+    if not isinstance(pipeline, dict):
+        raise ValueError(
+            f"[ordered_stages] Expected the RUN pipeline mapping "
+            f"{{'stages': [...]}}, got {type(pipeline).__name__}"
+        )
+    return [s["stage"] for s in pipeline.get("stages", [])]
 
 
 def next_stage(
-    pipeline: dict[str, Any] | None, current: str | None = None
+    pipeline: dict[str, Any] | list[dict[str, str]] | None, current: str | None = None
 ) -> str | None:
     """First stage when ``current`` is None, else the stage after it (None if last)."""
     stages = ordered_stages(pipeline)
@@ -147,11 +161,27 @@ def _get_batch_provider(
     if provider_name in (
         LLMProvider.GOOGLE,
         LLMProvider.GOOGLE_NATIVE,
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_AISTUDIO_NATIVE,
     ):
         gemini_client = GeminiClient.from_credentials(
             session=session, org_id=organization_id, project_id=project_id
         )
         return GeminiBatchProvider(client=gemini_client.client)
+    if provider_name in (LLMProvider.GOOGLE_GCP, LLMProvider.GOOGLE_GCP_NATIVE):
+        # Lazy to avoid a crud<->stages cycle.
+        from app.core.batch import GoogleGCPBatchProvider
+        from app.crud.credentials import get_provider_credential
+
+        cred = get_provider_credential(
+            session=session,
+            provider=LLMProvider.GOOGLE_GCP,
+            project_id=project_id,
+            org_id=organization_id,
+        )
+        if not isinstance(cred, dict):
+            raise ValueError("google-gcp credentials not configured for this project")
+        return GoogleGCPBatchProvider.from_credentials(cred)
     if provider_name in (LLMProvider.ANTHROPIC, LLMProvider.ANTHROPIC_NATIVE):
         return AnthropicBatchProvider(
             client=get_anthropic_client(

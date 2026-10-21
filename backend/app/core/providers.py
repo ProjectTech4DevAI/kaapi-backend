@@ -1,76 +1,55 @@
-import logging
-from typing import Any, Dict, List
-from enum import Enum
-from dataclasses import dataclass, field
+from pydantic import ValidationError
 
-logger = logging.getLogger(__name__)
+from app.models.provider_credentials import (
+    AnthropicCredentials,
+    CredentialPayload,
+    ElevenLabsCredentials,
+    GoogleAIStudioCredentials,
+    GoogleCredentials,
+    GoogleGcpCredentials,
+    LangfuseCredentials,
+    OpenAICredentials,
+    Provider,
+    ProviderConfig,
+    ProviderCredentialsBase,
+    ProxyCredentials,
+    SarvamAICredentials,
+    WebhookSecretCredentials,
+)
 
-
-class Provider(str, Enum):
-    """Enumeration of supported credential providers."""
-
-    OPENAI = "openai"
-    LANGFUSE = "langfuse"
-    GOOGLE_AISTUDIO = "google-aistudio"
-    GOOGLE_GCP = "google-gcp"
-    SARVAMAI = "sarvamai"
-    ELEVENLABS = "elevenlabs"
-    ANTHROPIC = "anthropic"
-    GOOGLE = "google"
-    WEBHOOK_SECRET = "webhook_secret"
-    PROXY = "proxy"
-
-
-@dataclass
-class ProviderConfig:
-    """Configuration for a provider including its required credential fields."""
-
-    required_fields: List[str]
-    sensitive_fields: List[str] = field(default_factory=list)
-
-
-# Provider configurations
-PROVIDER_CONFIGS: Dict[Provider, ProviderConfig] = {
+PROVIDER_CONFIGS: dict[Provider, ProviderConfig] = {
     Provider.OPENAI: ProviderConfig(
-        required_fields=["api_key"], sensitive_fields=["api_key"]
+        model=OpenAICredentials, sensitive_fields=["api_key"]
     ),
     Provider.LANGFUSE: ProviderConfig(
-        required_fields=["secret_key", "public_key", "host"],
+        model=LangfuseCredentials,
         sensitive_fields=["secret_key"],
     ),
     Provider.GOOGLE_AISTUDIO: ProviderConfig(
-        required_fields=["api_key"], sensitive_fields=["api_key"]
+        model=GoogleAIStudioCredentials, sensitive_fields=["api_key"]
     ),
     Provider.SARVAMAI: ProviderConfig(
-        required_fields=["api_key"], sensitive_fields=["api_key"]
+        model=SarvamAICredentials, sensitive_fields=["api_key"]
     ),
     Provider.ELEVENLABS: ProviderConfig(
-        required_fields=["api_key"], sensitive_fields=["api_key"]
+        model=ElevenLabsCredentials, sensitive_fields=["api_key"]
     ),
     Provider.ANTHROPIC: ProviderConfig(
-        required_fields=["api_key"], sensitive_fields=["api_key"]
+        model=AnthropicCredentials, sensitive_fields=["api_key"]
     ),
     Provider.GOOGLE: ProviderConfig(
-        required_fields=[
-            "api_key",
-        ],
+        model=GoogleCredentials,
         sensitive_fields=["api_key"],
     ),
     Provider.GOOGLE_GCP: ProviderConfig(
-        required_fields=[
-            "api_key",
-            "project_id",
-            "location",
-            "sa_key",
-            "gcs_bucket",
-        ],
+        model=GoogleGcpCredentials,
         sensitive_fields=["api_key", "sa_key"],
     ),
     Provider.WEBHOOK_SECRET: ProviderConfig(
-        required_fields=["webhook_secret"], sensitive_fields=["webhook_secret"]
+        model=WebhookSecretCredentials, sensitive_fields=["webhook_secret"]
     ),
     Provider.PROXY: ProviderConfig(
-        required_fields=["api_key"], sensitive_fields=["api_key"]
+        model=ProxyCredentials, sensitive_fields=["api_key"]
     ),
 }
 
@@ -89,48 +68,52 @@ def validate_provider(provider: str) -> Provider:
     """
     try:
         return Provider(provider.lower())
-    except ValueError:
+    except (AttributeError, ValueError):  # non-string keys reach here too
         supported = ", ".join(p.value for p in Provider)
-        logger.warning(
-            f"[validate_provider] Unsupported provider | provider: {provider}, supported_providers: {supported}"
-        )
         raise ValueError(
             f"Unsupported provider: {provider}. Supported providers are: {supported}"
         )
 
 
-def validate_provider_credentials(provider: str, credentials: Dict[str, str]) -> None:
-    """Validate that the credentials contain all required fields for the provider.
-
-    Args:
-        provider: The provider name to validate credentials for
-        credentials: Dictionary containing the provider credentials
+def parse_provider_credentials(
+    provider: str, credentials: object
+) -> ProviderCredentialsBase:
+    """Validate a raw credential payload and return it as the provider's model.
 
     Raises:
-        ValueError: If required fields are missing from the credentials
+        ValueError: If the provider is unsupported, the payload is not an
+            object, a required field is missing, a field has the wrong type, or
+            the payload carries keys the provider does not declare
     """
     provider_enum = validate_provider(provider)
-    required_fields = PROVIDER_CONFIGS[provider_enum].required_fields
 
+    if not isinstance(credentials, dict):
+        raise ValueError(f"Value for provider '{provider}' must be an object/dict.")
+
+    config = PROVIDER_CONFIGS[provider_enum]
+
+    # Checked up front so the message stays field-oriented; Pydantic would
+    # otherwise report one "Field required" error per missing key.
     if missing_fields := [
-        field for field in required_fields if field not in credentials
+        name for name in config.required_fields if name not in credentials
     ]:
-        logger.warning(
-            f"[validate_provider_credentials] Missing required fields | provider: {provider}, missing_fields: {', '.join(missing_fields)}"
-        )
         raise ValueError(
             f"Missing required fields for {provider}: {', '.join(missing_fields)}"
         )
 
-
-def get_supported_providers() -> List[str]:
-    """Return a list of all supported provider names."""
-    return [p.value for p in Provider]
+    try:
+        return config.model.model_validate(credentials)
+    except ValidationError as e:
+        invalid_fields = ", ".join(
+            f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+            for err in e.errors()
+        )
+        raise ValueError(f"Invalid credentials for {provider}: {invalid_fields}")
 
 
 def mask_credential_fields(
-    provider: str, credentials: Dict[str, Any]
-) -> Dict[str, Any]:
+    provider: str, credentials: CredentialPayload
+) -> CredentialPayload:
     """Mask sensitive fields in a credential dict for the given provider.
 
     Non-sensitive fields (e.g., langfuse `public_key`, `host`) are returned as-is.

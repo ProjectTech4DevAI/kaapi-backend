@@ -35,7 +35,6 @@ from app.models.llm.constants import (
 from app.models.llm.response import AudioOutput, AudioContent
 from app.services.llm.providers.base import BaseProvider, ContentPart, MultiModalInput
 from app.services.llm.mappers import BCP47_LOCALE_TO_GEMINI_LANG
-from app.core.config import settings
 from app.core.audio_utils import (
     AudioRef,
     convert_pcm_to_mp3,
@@ -58,10 +57,9 @@ class GoogleAIProvider(BaseProvider):
 
     @staticmethod
     def create_client(credentials: dict[str, Any]) -> Any:
-        api_key = credentials.get("api_key") or settings.GOOGLE_AISTUDIO_API_KEY
-        if not api_key:
+        if "api_key" not in credentials:
             raise ValueError("API Key for Google Gemini Not Set")
-        return genai.Client(api_key=api_key)
+        return genai.Client(api_key=credentials["api_key"])
 
     @staticmethod
     def format_parts(
@@ -171,10 +169,6 @@ class GoogleAIProvider(BaseProvider):
         else:
             merged_instruction = f"{lang_instruction}. {forced_transcription_text}"
 
-        logger.info(
-            f"The merged instructions is {merged_instruction} and output language is {output_language} and input language is {input_language}"
-        )
-
         # Materialize the AudioRef to a temp file so the genai SDK can upload it.
         with resolved_input.to_path() as audio_path:
             gemini_file = self.client.files.upload(file=audio_path)
@@ -187,7 +181,7 @@ class GoogleAIProvider(BaseProvider):
         response: GenerateContentResponse = self.client.models.generate_content(
             model=model,
             contents=contents,
-            # switch back default thinking configs for reasoning supported models in future
+            # TODO switch back default thinking configs for reasoning supported models in future
             config=GenerateContentConfig(
                 thinking_config=ThinkingConfig(
                     include_thoughts=True, thinking_budget=1000
@@ -242,7 +236,11 @@ class GoogleAIProvider(BaseProvider):
                 provider_response_id=response.response_id,
                 model=response.model_version or model,
                 provider=provider,
-                output=TextOutput(content=TextContent(value=response.text)),
+                output=TextOutput(
+                    content=TextContent(
+                        value=response.text, language_code=output_language
+                    )
+                ),
             ),
             usage=Usage(
                 input_tokens=input_tokens,

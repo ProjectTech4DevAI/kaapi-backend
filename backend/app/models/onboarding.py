@@ -1,17 +1,15 @@
 import re
 import secrets
-from typing import Any, ClassVar
 
 from sqlmodel import SQLModel, Field
 from pydantic import EmailStr, model_validator, field_validator
 
-from app.core.providers import (
+from app.core import providers as core_providers
+from app.models.provider_credentials import (
     Provider,
-    validate_provider,
-    validate_provider_credentials,
+    ProviderCredentials,
+    ProviderCredentialsBase,
 )
-
-ONBOARDING_MAX_PAYLOAD_BYTES = 32 * 1024
 
 
 class OnboardingRequest(SQLModel):
@@ -58,9 +56,13 @@ class OnboardingRequest(SQLModel):
         min_length=3,
         max_length=50,
     )
-    credentials: list[dict[str, Any]] | None = Field(
+    credentials: list[dict[Provider, ProviderCredentials]] | None = Field(
         default=None,
-        description="Optional credential(s) to link with the project",
+        description=(
+            "Optional credential(s) to link with the project. Each entry maps "
+            "exactly one provider to its credential payload, e.g. "
+            "{'openai': {'api_key': '...'}}"
+        ),
     )
 
     @staticmethod
@@ -88,81 +90,34 @@ class OnboardingRequest(SQLModel):
             self.password = secrets.token_urlsafe(12)
         return self
 
-    @field_validator("credentials")
+    @field_validator("credentials", mode="before")
     @classmethod
-    def _validate_credential_list(cls, v: list[dict[str, dict[str, str]]] | None):
-        if v is None:
-            return v
+    def _parse_credential_list(cls, value: object) -> object:
+        # Ill-typed containers are handed back untouched so Pydantic reports
+        # the shape mismatch ("Input should be a valid list/dictionary").
+        if not isinstance(value, list) or any(
+            not isinstance(item, dict) for item in value
+        ):
+            return value
 
-        if not isinstance(v, list):
-            raise TypeError(
-                "Credential must be a list of single-key dicts (e.g., {'openai': {...}})."
-            )
-
-        for item in v:
-            if not isinstance(item, dict):
-                raise TypeError(
-                    "Credential must be a dict with a single provider key like {'openai': {...}}."
-                )
+        parsed: list[dict[str, ProviderCredentialsBase]] = []
+        for item in value:
             if len(item) != 1:
                 raise ValueError(
                     "Credential must have exactly one provider key like {'openai': {...}}."
                 )
 
-            (provider_key,) = item.keys()
-            values = item[provider_key]
+            (provider, payload) = next(iter(item.items()))
+            canonical_provider = core_providers.validate_provider(provider).value
+            parsed.append(
+                {
+                    canonical_provider: core_providers.parse_provider_credentials(
+                        provider, payload
+                    )
+                }
+            )
 
-            validate_provider(provider_key)
-
-            if not isinstance(values, dict):
-                raise ValueError(
-                    f"Value for provider '{provider_key}' must be an object/dict."
-                )
-
-            validate_provider_credentials(provider_key, values)
-
-        return v
-
-    # Providers this API version refuses; subclasses override for their version.
-    _DISALLOWED_PROVIDERS: ClassVar[dict[str, str]] = {
-        Provider.GOOGLE_GCP.value: (
-            f"Provider '{Provider.GOOGLE_GCP.value}' is not accepted on v1 onboarding. "
-            "Use the v2 onboarding API."
-        )
-    }
-
-    @field_validator("credentials")
-    @classmethod
-    def _reject_version_specific_providers(
-        cls, v: list[dict[str, Any]] | None
-    ) -> list[dict[str, Any]] | None:
-        if v is None:
-            return v
-
-        for item in v:
-            if not isinstance(item, dict):
-                continue
-            for provider_key in item:
-                if provider_key in cls._DISALLOWED_PROVIDERS:
-                    raise ValueError(cls._DISALLOWED_PROVIDERS[provider_key])
-
-        return v
-
-
-class OnboardingRequestV2(OnboardingRequest):
-    """Onboarding payload for v2: the vanilla ``google`` provider is no longer accepted.
-
-    Existing ``google`` credential rows keep working through registry routing; only
-    new onboarding must pin the backend.
-    """
-
-    _DISALLOWED_PROVIDERS: ClassVar[dict[str, str]] = {
-        Provider.GOOGLE.value: (
-            f"Provider '{Provider.GOOGLE.value}' is not accepted on v2 onboarding. "
-            f"Use '{Provider.GOOGLE_AISTUDIO.value}' or '{Provider.GOOGLE_GCP.value}' "
-            "to pin the Gemini backend explicitly."
-        )
-    }
+        return parsed
 
 
 class OnboardingResponse(SQLModel):

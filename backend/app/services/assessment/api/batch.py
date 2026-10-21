@@ -18,14 +18,17 @@ import json
 import logging
 from enum import StrEnum
 from typing import Any, cast
+from uuid import UUID
 
-from sqlmodel import Session
+from fastapi import HTTPException
+from sqlmodel import Session, col, select
 
 from app.core.batch import (
     BATCH_KEY,
     AnthropicBatchProvider,
     BatchJobState,
     GeminiBatchProvider,
+    GoogleGCPBatchProvider,
     MessageBatchStatus,
     OpenAIBatchProvider,
     extract_text_from_response_dict,
@@ -43,6 +46,7 @@ from app.crud.assessment.batch import (
     build_google_jsonl,
     build_openai_jsonl,
 )
+from app.crud.credentials import get_provider_credential
 from app.crud.job import get_batch_job
 from app.models.assessment import (
     Assessment,
@@ -57,23 +61,47 @@ from app.models.assessment import (
 )
 from app.models.batch_job import BatchJob, BatchJobType
 from app.models.config.assessment_blob import (
+    ATTACHMENT_COLUMN_TYPES,
     AssessmentConfigBlob,
     AssessmentPreFilters,
-    DuplicateDetectionFilter,
     TopicRelevanceFilter,
 )
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
-from app.services.assessment.mappers import (
+from app.services.llm.mappers import (
     map_kaapi_to_anthropic_params,
     map_kaapi_to_google_params,
     map_kaapi_to_openai_params,
 )
+from app.services.assessment.utils.attachments import rewrite_gcs_attachment_urls
+from app.services.assessment.validators import normalize_llm_text, stage_batch_prefix
 from app.services.llm.providers.registry import LLMProvider
-from app.utils import get_anthropic_client, get_openai_client
+from app.utils import (
+    get_anthropic_client,
+    get_openai_client,
+)
 
 logger = logging.getLogger(__name__)
 
-# Re-poll cadence for a stage's provider batch, mirroring the assessment cron tick.
+
+def _google_gcp_credential(
+    *, session: Session, organization_id: int, project_id: int
+) -> dict[str, Any]:
+    """Vertex needs the SA key + bucket; a missing credential is client-fixable."""
+    cred = get_provider_credential(
+        session=session,
+        provider=LLMProvider.GOOGLE_GCP,
+        project_id=project_id,
+        org_id=organization_id,
+    )
+    if not isinstance(cred, dict):
+        raise HTTPException(
+            status_code=404,
+            detail="google-gcp credentials not configured for this project",
+        )
+    return cred
+
+
+# Re-poll cadence for a stage's provider batch, mirroring the assessment cron interval.
 POLL_COUNTDOWN_SECONDS = settings.CRON_INTERVAL_MINUTES * 60
 
 
@@ -81,7 +109,6 @@ class ApiStage(StrEnum):
     """Pipeline stage identifiers; names match the pre-filter config + result fields."""
 
     TOPIC_RELEVANCE = "topic_relevance"
-    DUPLICATE_DETECTION = "duplicate_detection"
     ASSESSMENT = "assessment"
 
 
@@ -126,6 +153,8 @@ _FAILED_STATUSES = {
 _SUPPORTED_PROVIDERS = {
     LLMProvider.OPENAI,
     LLMProvider.GOOGLE,
+    LLMProvider.GOOGLE_AISTUDIO,
+    LLMProvider.GOOGLE_GCP,
     LLMProvider.ANTHROPIC,
 }
 
@@ -138,14 +167,10 @@ def build_pipeline(
     pre_filters: AssessmentPreFilters | None,
 ) -> list[dict[str, str]]:
     """Ordered stages: GATE pre-filters, then PASS-THROUGH pre-filters, then assessment."""
-    present: list[tuple[ApiStage, TopicRelevanceFilter | DuplicateDetectionFilter]] = []
+    present: list[tuple[ApiStage, TopicRelevanceFilter]] = []
     if pre_filters is not None:
         if pre_filters.topic_relevance is not None:
             present.append((ApiStage.TOPIC_RELEVANCE, pre_filters.topic_relevance))
-        if pre_filters.duplicate_detection is not None:
-            present.append(
-                (ApiStage.DUPLICATE_DETECTION, pre_filters.duplicate_detection)
-            )
 
     gates = [
         {"stage": stage.value, "kind": StageKind.GATE.value}
@@ -177,27 +202,19 @@ def _stage_kind(pipeline: list[dict[str, str]], stage: str) -> str:
     raise ValueError(f"[_stage_kind] Stage {stage} not in pipeline")
 
 
-def build_rows(
-    batch_input: BatchInput,
-    input_columns: dict[str, Any] | None = None,
-) -> tuple[list[dict[str, str]], list[str], list[AssessmentAttachment]]:
-    """Split each submission into text cells + attachment specs for the JSONL builders.
+def column_kinds(
+    columns: list[str], input_columns: dict[str, Any]
+) -> tuple[list[str], list[AssessmentAttachment]]:
+    """Split columns into text names and attachment specs per the config's ``input_schema``.
 
-    Column kinds come from the config's ``input_schema``: a column typed image/pdf is
-    an attachment column (url-format only); any column not declared there is text. Cells are
-    plain strings (an attachment cell holds the url), so the URL-only JSONL builders consume
-    them unchanged.
+    A column typed image/pdf/video is an attachment (url-format only); anything else is text.
     """
-    submissions = batch_input.data
-    input_columns = input_columns or {}
-    columns = list(submissions[0].keys()) if submissions else []
-
     text_columns: list[str] = []
     attachments: list[AssessmentAttachment] = []
     for column in columns:
         spec = input_columns.get(column) or {}
         col_type = spec.get("type", "text")
-        if col_type in ("image", "pdf"):
+        if col_type in ATTACHMENT_COLUMN_TYPES:
             if (spec.get("format") or "url") != "url":
                 raise ValueError(
                     f"BATCH attachment column '{column}' must be url-format; base64 is "
@@ -208,33 +225,50 @@ def build_rows(
             )
         else:
             text_columns.append(column)
+    return text_columns, attachments
 
+
+def build_rows(
+    batch_input: BatchInput,
+    input_columns: dict[str, Any] | None = None,
+) -> tuple[list[dict[str, str]], list[str], list[AssessmentAttachment]]:
+    """Normalise submissions to string cells over the union of row and schema columns.
+
+    Submit-time only; the batch task streams the stored rows instead. A column a row omits
+    (non-strict) is filled with "".
+    """
+    submissions = batch_input.data or []
+    input_columns = input_columns or {}
+    columns = list(
+        dict.fromkeys([*(key for sub in submissions for key in sub), *input_columns])
+    )
+    text_columns, attachments = column_kinds(columns, input_columns)
     rows = [{col: str(sub.get(col, "")) for col in columns} for sub in submissions]
     return rows, text_columns, attachments
 
 
-def _stage_prompt(batch_input: BatchInput, stage: str) -> str | None:
+def _stage_prompt(blob: AssessmentConfigBlob, stage: str) -> str | None:
+    """Per-row prompt template for a stage, sourced from the config's ``submission``.
+
+    The assessment carries a mandatory ``submission``; a pre-filter may carry its own
+    optional one (None when it declares none — its criteria then live entirely in
+    params.instructions with the item's columns + attachments as the user content).
+    """
     if stage == ApiStage.ASSESSMENT:
-        return batch_input.query
-    # Pre-filter criteria live in params.instructions (system prompt); the item's
-    # own columns + attachments are the user content, so there is no per-row
-    # prompt template for a pre-filter stage.
-    return None
+        return blob.assessment.params["submission"]
+    return cast(
+        "str | None", _prefilter_for_stage(blob, stage).params.get("submission")
+    )
 
 
 def _prefilter_for_stage(
     blob: AssessmentConfigBlob, stage: str
-) -> TopicRelevanceFilter | DuplicateDetectionFilter:
-    """The pre-filter config object for a pre-filter stage (topic_relevance / duplicate_detection)."""
+) -> TopicRelevanceFilter:
+    """The pre-filter config object for a pre-filter stage (topic_relevance)."""
     pre = blob.pre_filters
     if pre is not None:
         if stage == ApiStage.TOPIC_RELEVANCE and pre.topic_relevance is not None:
             return pre.topic_relevance
-        if (
-            stage == ApiStage.DUPLICATE_DETECTION
-            and pre.duplicate_detection is not None
-        ):
-            return pre.duplicate_detection
     raise ValueError(
         f"[_prefilter_for_stage] No pre-filter configured for stage {stage}"
     )
@@ -248,28 +282,28 @@ def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
     if stage == ApiStage.ASSESSMENT:
         params = dict(blob.assessment.params)
         json_schema = params.pop("json_output_schema", None)
-        params.pop(
-            "input_schema", None
-        )  # request-validation only, not a provider param
+        # submission is a prompt concern, not a provider param.
+        params.pop("submission", None)
         if json_schema is not None:
             params["output_schema"] = json_schema  # provider param name
+        # Normalised here, not in the mapper, so only this path's prompts are rewritten.
+        params["instructions"] = normalize_llm_text(params.get("instructions") or "")
         return params
 
     flt = _prefilter_for_stage(blob, stage)
     params = dict(flt.params)
+    params.pop("submission", None)  # prompt template, not a provider param
     params["output_schema"] = PREFILTER_VERDICT_SCHEMA
     # The config's criteria (mandatory params.instructions) is the system prompt;
     # append the gate directive so the model returns the verdict+reasoning contract.
-    criteria = params.get("instructions") or ""
+    criteria = normalize_llm_text(params.get("instructions") or "")
     params["instructions"] = f"{criteria}\n\n{_PREFILTER_INSTRUCTION}"
-    if isinstance(flt, DuplicateDetectionFilter) and flt.knowledge_base_id:
-        params["knowledge_base_ids"] = [flt.knowledge_base_id]
     return params
 
 
 def _stage_provider_model(blob: AssessmentConfigBlob, stage: str) -> tuple[str, str]:
     """Provider + model for a stage: each pre-filter uses its own; assessment uses the config's."""
-    if stage in (ApiStage.TOPIC_RELEVANCE, ApiStage.DUPLICATE_DETECTION):
+    if stage == ApiStage.TOPIC_RELEVANCE:
         flt = _prefilter_for_stage(blob, stage)
         return flt.provider, flt.params["model"]
     return blob.assessment.provider, blob.assessment.params["model"]
@@ -291,6 +325,16 @@ def _submit_provider_batch(
     description: str,
 ) -> BatchJob:
     """Build provider JSONL and submit it via the shared batch infra."""
+    # Resolve gs:// attachments to provider-reachable URLs before building JSONL.
+    rows = rewrite_gcs_attachment_urls(
+        session=session,
+        rows=rows,
+        attachments=attachments,
+        llm_provider=provider_name,
+        project_id=project_id,
+        organization_id=organization_id,
+    )
+
     if provider_name == LLMProvider.OPENAI:
         mapped, _ = map_kaapi_to_openai_params(session=session, kaapi_params=params)
         jsonl = build_openai_jsonl(
@@ -306,16 +350,32 @@ def _submit_provider_batch(
             "description": description,
             "completion_window": "24h",
         }
-    elif provider_name == LLMProvider.GOOGLE:
+    elif provider_name in (
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_GCP,
+    ):
         mapped, _ = map_kaapi_to_google_params(params)
         jsonl = build_google_jsonl(
             rows, text_columns, attachments, prompt, mapped, row_indices
         )
-        gemini = GeminiClient.from_credentials(
-            session=session, org_id=organization_id, project_id=project_id
-        )
-        provider = GeminiBatchProvider(client=gemini.client, model=f"models/{model}")
-        config = {"display_name": description, "model": f"models/{model}"}
+        if provider_name == LLMProvider.GOOGLE_GCP:
+            cred = _google_gcp_credential(
+                session=session,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
+            provider = GoogleGCPBatchProvider.from_credentials(cred, model=model)
+            config = {"display_name": description}  # Vertex uses a bare model id
+        else:
+            gemini = GeminiClient.from_credentials(
+                session=session, org_id=organization_id, project_id=project_id
+            )
+            provider = GeminiBatchProvider(
+                client=gemini.client, model=f"models/{model}"
+            )
+            config = {"display_name": description, "model": f"models/{model}"}
+
     elif provider_name == LLMProvider.ANTHROPIC:
         mapped, _ = map_kaapi_to_anthropic_params(params)
         jsonl = build_anthropic_jsonl(
@@ -362,7 +422,18 @@ def _build_batch_provider(
                 session=session, org_id=organization_id, project_id=project_id
             )
         )
-    if provider_name == LLMProvider.GOOGLE:
+    if provider_name in (
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_GCP,
+    ):
+        if provider_name == LLMProvider.GOOGLE_GCP:
+            cred = _google_gcp_credential(
+                session=session,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
+            return GoogleGCPBatchProvider.from_credentials(cred)
         gemini = GeminiClient.from_credentials(
             session=session, org_id=organization_id, project_id=project_id
         )
@@ -453,7 +524,11 @@ def _parse_one(result: dict[str, Any], provider_name: str) -> ParsedResult:
             "response_id": response.get("id"),
         }
 
-    if provider_name == LLMProvider.GOOGLE:
+    if provider_name in (
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_GCP,
+    ):
         response = result.get("response")
         text = extract_text_from_response_dict(response) if response else None
         return {
@@ -496,8 +571,8 @@ def _parse_verdict(output: str | None) -> Verdict:
         }
     except (json.JSONDecodeError, TypeError, AttributeError):
         logger.warning(
-            "[_parse_verdict] Unparseable verdict, failing open | output=%s",
-            output[:200],
+            "[_parse_verdict] Unparseable verdict, failing open | output_len=%s",
+            len(output),
         )
         return {"verdict": True, "reasoning": ""}
 
@@ -537,18 +612,45 @@ def _submit_stage(
     *,
     session: Session,
     execution: AssessmentRun,
+    assessment: Assessment,
     blob: AssessmentConfigBlob,
-    batch_input: BatchInput,
     bag: BatchRunState,
     stage: str,
     organization_id: int,
     project_id: int,
 ) -> bool:
-    """Build + submit the current stage's batch on its row subset. Returns success."""
+    """Build + submit the current stage's batch on its row subset. Returns success.
+
+    A stage already in flight is reported as submitted (no second provider batch): the
+    in-memory bag can predate a concurrent task's write, so the row is re-read here.
+    Rows are streamed from storage once per stage submit; only this stage's subset is held.
+    """
+    session.refresh(execution)
+    persisted = cast(BatchRunState, execution.execution or {})
+    in_flight_batch_id = (persisted.get("stage_batches") or {}).get(stage)
+    if (
+        in_flight_batch_id is not None
+        and persisted.get("stage_status") == StageStatus.PROCESSING.value
+    ):
+        # Deliberately leaves `bag` unpersisted: the stored state is the fresher one.
+        logger.warning(
+            "[_submit_stage] Stage already submitted, skipping duplicate | "
+            "execution_id=%s | stage=%s | batch_job=%s",
+            execution.id,
+            stage,
+            in_flight_batch_id,
+        )
+        return True
+
+    from app.services.assessment.api.submission_store import open_submission_rows
+
     kind = _stage_kind(bag["pipeline"], stage)
-    input_columns = blob.assessment.params.get("input_schema")
-    rows, text_columns, attachments = build_rows(batch_input, input_columns)
-    subset = _row_subset(bag, stage, kind, len(rows))
+    input_columns = {
+        name: col.model_dump(exclude_none=True)
+        for name, col in blob.input_schema.items()
+    }
+    text_columns, attachments = column_kinds(list(input_columns), input_columns)
+    subset = _row_subset(bag, stage, kind, execution.total_items)
 
     if not subset:
         # No rows left for this stage (everything gated out upstream). Persist the
@@ -563,15 +665,19 @@ def _submit_stage(
         api.save_execution_state(session=session, execution=execution, state=bag)
         return False
 
+    wanted = set(subset)
+    with open_submission_rows(session=session, assessment=assessment) as stream:
+        rows = [row for idx, row in enumerate(stream) if idx in wanted]
+
     provider_name, model = _stage_provider_model(blob, stage)
     batch_job = _submit_provider_batch(
         session=session,
         provider_name=provider_name,
         model=model,
-        rows=[rows[i] for i in subset],
+        rows=rows,
         text_columns=text_columns,
         attachments=attachments,
-        prompt=_stage_prompt(batch_input, stage),
+        prompt=_stage_prompt(blob, stage),
         params=_stage_params(blob, stage),
         row_indices=subset,
         organization_id=organization_id,
@@ -596,8 +702,26 @@ def _submit_stage(
     return True
 
 
+def error_file_entries(provider: BatchProvider, file_id: str) -> list[dict[str, Any]]:
+    """Parsed lines of a provider error file (OpenAI only); an unparseable line is skipped."""
+    entries: list[dict[str, Any]] = []
+    for line in provider.download_file(file_id).splitlines():
+        if not line.strip():
+            continue
+        try:
+            entries.append(json.loads(line))
+        except json.JSONDecodeError:
+            logger.warning(
+                "[error_file_entries] Unparseable line skipped | file_id=%s", file_id
+            )
+    return entries
+
+
 def _poll_outcome(
-    session: Session, provider: BatchProvider, batch_job: BatchJob
+    session: Session,
+    provider: BatchProvider,
+    batch_job: BatchJob,
+    assessment_id: UUID,
 ) -> tuple[str, list[dict[str, Any]] | None]:
     """Poll a stage batch. Returns ('processing'|'completed'|'failed', results)."""
     status_result = poll_batch_status(
@@ -616,8 +740,25 @@ def _poll_outcome(
             return "failed", None
         if batch_job.provider_output_file_id:
             results, _ = process_completed_batch(
-                session=session, provider=provider, batch_job=batch_job
+                session=session,
+                provider=provider,
+                batch_job=batch_job,
+                subdirectory=stage_batch_prefix(assessment_id, batch_job.id),
             )
+            # Rows OpenAI rejected live only in the error file; without them they would
+            # read as "no output, no error" and the stage could finish COMPLETED.
+            if batch_job.provider_error_file_id:
+                try:
+                    results = [
+                        *results,
+                        *error_file_entries(provider, batch_job.provider_error_file_id),
+                    ]
+                except Exception:
+                    logger.warning(
+                        "[_poll_outcome] Provider error file unreadable | batch_job_id=%s",
+                        batch_job.id,
+                        exc_info=True,
+                    )
             return "completed", results
         return "processing", None  # output not ready yet
     if status in _FAILED_STATUSES:
@@ -632,6 +773,7 @@ def _finalize(
     bag: BatchRunState,
 ) -> None:
     from app.services.assessment.api.callbacks import deliver
+    from app.services.assessment.api.result_files import finalize_result_files
     from app.services.assessment.api.results import build_result
 
     bag["stage"] = ApiStage.ASSESSMENT.value
@@ -657,13 +799,20 @@ def _finalize(
         errors,
     )
 
+    # Before the callback check: durability must not depend on a callback existing.
+    finalize_result_files(
+        session=session, execution=execution, assessment=assessment, bag=bag
+    )
+
     callback_url = bag.get("callback_url")
     if callback_url:
         deliver(
+            session=session,
             assessment=assessment,
             result=result,
             callback_url=callback_url,
             request_metadata=bag.get("request_metadata"),
+            failure_message=None,
         )
 
 
@@ -675,6 +824,7 @@ def _fail(
     message: str,
 ) -> None:
     from app.services.assessment.api.callbacks import deliver
+    from app.services.assessment.api.result_files import finalize_result_files
     from app.services.assessment.api.results import build_result
 
     bag["stage_status"] = StageStatus.FAILED.value
@@ -687,14 +837,25 @@ def _fail(
         "[_fail] Execution failed | execution_id=%s | message=%s", execution.id, message
     )
 
+    # Before the callback check: durability must not depend on a callback existing.
+    finalize_result_files(
+        session=session,
+        execution=execution,
+        assessment=assessment,
+        bag=bag,
+        failure_message=message,
+    )
+
     callback_url = bag.get("callback_url")
     if callback_url:
         result = build_result(session=session, assessment=assessment)
         deliver(
+            session=session,
             assessment=assessment,
             result=result,
             callback_url=callback_url,
             request_metadata=bag.get("request_metadata"),
+            failure_message=message,
         )
 
 
@@ -704,7 +865,6 @@ def _advance_or_finalize(
     execution: AssessmentRun,
     assessment: Assessment,
     blob: AssessmentConfigBlob,
-    batch_input: BatchInput,
     bag: BatchRunState,
     stage: str,
     organization_id: int,
@@ -716,6 +876,8 @@ def _advance_or_finalize(
     (``_submit_stage`` returns False); it is treated as completed and skipped, recursing
     so a chain of empty stages still terminates at ``_finalize``.
     """
+    from app.services.assessment.api.submission_store import SubmissionUnavailableError
+
     nxt = next_stage(bag["pipeline"], stage)
     if nxt is None:
         _finalize(session, execution, assessment, bag)
@@ -726,13 +888,23 @@ def _advance_or_finalize(
         submitted = _submit_stage(
             session=session,
             execution=execution,
+            assessment=assessment,
             blob=blob,
-            batch_input=batch_input,
             bag=bag,
             stage=nxt,
             organization_id=organization_id,
             project_id=project_id,
         )
+    except SubmissionUnavailableError as exc:
+        # Storage blip, not a bad run: the stage is still PENDING, so retry the task.
+        logger.warning(
+            "[_advance_or_finalize] Submission unreadable, will retry | "
+            "execution_id=%s | stage=%s | %s",
+            execution.id,
+            nxt,
+            exc,
+        )
+        return {"requeue": True}
     except Exception as exc:
         _fail(session, execution, assessment, bag, str(exc))
         return {"requeue": False}
@@ -744,7 +916,6 @@ def _advance_or_finalize(
             execution=execution,
             assessment=assessment,
             blob=blob,
-            batch_input=batch_input,
             bag=bag,
             stage=nxt,
             organization_id=organization_id,
@@ -756,15 +927,26 @@ def _advance_or_finalize(
 def run_batch_stage(
     *, execution_id: int, organization_id: int, project_id: int
 ) -> dict[str, bool]:
-    """Drive one tick of the staged pipeline. Returns ``{"requeue": bool}``.
+    """Run one step of the staged pipeline. Returns ``{"requeue": bool}``.
 
     Idempotent: keyed off ``stage_status`` in the bag — a redelivery either re-polls
     the in-flight batch or re-submits a stage that was never dispatched.
     """
+    # Lazy (like callbacks/results below): result_files imports ApiStage from this module.
+    from app.services.assessment.api.result_files import record_stage_dump
+    from app.services.assessment.api.submission_store import SubmissionUnavailableError
+
     with Session(engine) as session:
-        execution = session.get(AssessmentRun, execution_id)
+        execution = session.exec(
+            select(AssessmentRun)
+            .where(col(AssessmentRun.id) == execution_id)
+            .with_for_update(skip_locked=True)
+        ).first()
         if execution is None:
-            logger.error("[run_batch_stage] execution_id=%s not found", execution_id)
+            logger.warning(
+                "[run_batch_stage] execution_id=%s missing or held by another task",
+                execution_id,
+            )
             return {"requeue": False}
         assessment = session.get(Assessment, execution.assessment_id)
         if assessment is None:
@@ -789,11 +971,18 @@ def run_batch_stage(
             )
             return {"requeue": False}
 
+        # Entry log: distinguishes "the task never ran" from "it ran and did nothing".
+        logger.info(
+            "[run_batch_stage] Step | execution_id=%s | stage=%s | stage_status=%s",
+            execution_id,
+            stage,
+            stage_status,
+        )
+
         # Resolving the stored blob can raise (deleted config version -> 404, or an
         # invalid/old-shape blob). Route these to _fail so the client gets a terminal
         # callback instead of the run stranding in PROCESSING.
         try:
-            batch_input = BatchInput.model_validate(assessment.input)
             blob = AssessmentConfigBlob.model_validate(
                 _resolve_blob(session, execution, project_id)
             )
@@ -806,13 +995,23 @@ def run_batch_stage(
                 submitted = _submit_stage(
                     session=session,
                     execution=execution,
+                    assessment=assessment,
                     blob=blob,
-                    batch_input=batch_input,
                     bag=bag,
                     stage=stage,
                     organization_id=organization_id,
                     project_id=project_id,
                 )
+            except SubmissionUnavailableError as exc:
+                # Storage blip, not a bad run: the stage stays PENDING, retry the task.
+                logger.warning(
+                    "[run_batch_stage] Submission unreadable, will retry | "
+                    "execution_id=%s | stage=%s | %s",
+                    execution_id,
+                    stage,
+                    exc,
+                )
+                return {"requeue": True}
             except Exception as exc:
                 # Credential/provider/network errors from _submit_provider_batch, not
                 # just ValueError — all are terminal for this run.
@@ -830,7 +1029,6 @@ def run_batch_stage(
                     execution=execution,
                     assessment=assessment,
                     blob=blob,
-                    batch_input=batch_input,
                     bag=bag,
                     stage=stage,
                     organization_id=organization_id,
@@ -854,7 +1052,9 @@ def run_batch_stage(
                 organization_id=organization_id,
                 project_id=project_id,
             )
-            outcome, results = _poll_outcome(session, provider, batch_job)
+            outcome, results = _poll_outcome(
+                session, provider, batch_job, assessment.id
+            )
         except Exception as exc:
             # Transient (network/provider hiccup) — the batch is still running; retry.
             logger.warning(
@@ -882,7 +1082,22 @@ def run_batch_stage(
         parsed = parse_batch_results(results or [], bag["provider"])
         _record_stage(bag, stage, kind, parsed)
         bag["stage_status"] = StageStatus.COMPLETED.value
+
+        stage_errors: dict[str, str] = {}
+        for idx, out in parsed.items():
+            error = out.get("error")
+            if error:
+                stage_errors[str(idx)] = error
+        bag.setdefault("stage_errors", {})[stage] = stage_errors
+
         bag.setdefault("stage_output_urls", {})[stage] = batch_job.raw_output_url
+        # Per stage, not only at terminal time: a run that never terminates still has dumps.
+        record_stage_dump(
+            session=session,
+            assessment=assessment,
+            stage=stage,
+            url=batch_job.raw_output_url,
+        )
         api.save_execution_state(session=session, execution=execution, state=bag)
 
         return _advance_or_finalize(
@@ -890,7 +1105,6 @@ def run_batch_stage(
             execution=execution,
             assessment=assessment,
             blob=blob,
-            batch_input=batch_input,
             bag=bag,
             stage=stage,
             organization_id=organization_id,

@@ -86,6 +86,8 @@ from .document import (
     DocTransformationJobsPublic,
     Document,
     DocumentPublic,
+    DocumentUploadInitiateResponse,
+    DocumentUploadRequest,
     DocumentUploadResponse,
     TransformationJobInfo,
     TransformedDocumentPublic,
@@ -100,6 +102,15 @@ from .evaluation import (
     EvaluationRunPublic,
     EvaluationRunUpdate,
     RunModeEnum,
+)
+from .evaluation_iteration import (
+    EvaluationIterationCreateRequest,
+    EvaluationIterationReportPublic,
+    EvaluationIterationRoundPublic,
+    EvaluationIterationRun,
+    EvaluationIterationRunImmediatePublic,
+    EvaluationIterationRunUpdate,
+    EvaluationIterationStatusEnum,
 )
 from .feature_flag import (
     FeatureFlag,
@@ -161,7 +172,7 @@ from .notification import (
     NotificationStatus,
     NotificationType,
 )
-from .onboarding import OnboardingRequest, OnboardingRequestV2, OnboardingResponse
+from .onboarding import OnboardingRequest, OnboardingResponse
 from .openai_conversation import (
     OpenAIConversation,
     OpenAIConversationBase,

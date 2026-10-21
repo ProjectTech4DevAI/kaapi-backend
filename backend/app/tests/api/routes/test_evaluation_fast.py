@@ -12,7 +12,6 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-import openai
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -22,34 +21,37 @@ from app.core.config import settings
 from app.core.util import now
 from app.crud.evaluations.cron import dispatch_fast_evaluation_barriers
 from app.crud.evaluations.fast import (
+    _merge_response_chunks,
+    _stage2_embeddings,
+    run_fast_evaluation,
+    run_response_chunk,
+)
+from app.crud.evaluations.fast_chunks import (
     CHUNK_CONFIG_INDEX,
     CHUNK_CONFIG_RUN_ID,
     JOB_TYPE_EMBEDDING_FAST,
     JOB_TYPE_EVALUATION_FAST,
     JOB_TYPE_EVALUATION_FAST_CHUNK,
-    _create_response,
-    _get_chunk_job,
-    _is_failure_threshold_breached,
-    _merge_response_chunks,
-    _stage2_embeddings,
-    _stage3_score_and_trace,
+    get_chunk_job,
     list_response_chunk_jobs,
-    run_fast_evaluation,
-    run_response_chunk,
 )
+from app.crud.evaluations.fast_results import is_failure_threshold_breached
 from app.models import Config, EvaluationDataset, EvaluationRun
 from app.models.batch_job import BatchJob
 from app.models.evaluation import RunModeEnum
+from app.models.llm import Usage
 from app.models.llm.request import (
     ConfigBlob,
-    KaapiCompletionConfig,
-    TextLLMParams,
+    NativeCompletionConfig,
+    build_kaapi_completion_config,
 )
 from app.services.evaluations.fast import (
     execute_fast_evaluation_chunk,
     validate_and_start_fast_evaluation,
 )
+from app.services.llm.chain.types import BlockResult
 from app.tests.utils.auth import TestAuthContext
+from app.tests.utils.llm import text_llm_call_response
 from app.tests.utils.test_data import (
     create_test_config,
     create_test_evaluation_dataset,
@@ -73,60 +75,18 @@ def _seeded_random() -> Iterator[None]:
 
 
 class TestFailureThreshold:
-    """`_is_failure_threshold_breached` controls run-level fail-fast."""
+    """`is_failure_threshold_breached` controls run-level fail-fast."""
 
     def test_returns_false_when_total_is_zero(self) -> None:
-        assert _is_failure_threshold_breached(failed_rows=0, total_rows=0) is False
+        assert is_failure_threshold_breached(failed_rows=0, total_rows=0) is False
 
     def test_returns_true_above_threshold(self) -> None:
         # default EVAL_FAST_FAILURE_THRESHOLD = 0.5
-        assert _is_failure_threshold_breached(failed_rows=6, total_rows=10) is True
+        assert is_failure_threshold_breached(failed_rows=6, total_rows=10) is True
 
     def test_returns_false_at_threshold(self) -> None:
         # 0.5 / 1.0 is NOT greater-than the threshold, so do not breach
-        assert _is_failure_threshold_breached(failed_rows=5, total_rows=10) is False
-
-
-class TestCallWithRetry:
-    """FR-8: transient OpenAI errors retry; permanent ones do not."""
-
-    def test_returns_immediately_on_success(self) -> None:
-        client = MagicMock()
-        client.responses.create.return_value = "ok"
-
-        result = _create_response(client, {"model": "gpt-4o"})
-
-        assert result == "ok"
-        assert client.responses.create.call_count == 1
-
-    def test_retries_on_transient_then_succeeds(self, monkeypatch) -> None:
-        # tenacity sleeps via tenacity.nap.sleep — make backoff a no-op.
-        monkeypatch.setattr("tenacity.nap.sleep", lambda *_: None)
-
-        client = MagicMock()
-        client.responses.create.side_effect = [
-            # APIConnectionError needs a request; pass a minimal object.
-            openai.APIConnectionError(request=MagicMock()),
-            openai.APIConnectionError(request=MagicMock()),
-            "ok",
-        ]
-
-        result = _create_response(client, {"model": "gpt-4o"})
-
-        assert result == "ok"
-        assert client.responses.create.call_count == 3
-
-    def test_does_not_retry_on_permanent_error(self) -> None:
-        client = MagicMock()
-        # AuthenticationError is a non-retryable OpenAIError subclass.
-        client.responses.create.side_effect = openai.AuthenticationError(
-            message="bad key", response=MagicMock(), body=None
-        )
-
-        with pytest.raises(openai.AuthenticationError):
-            _create_response(client, {"model": "gpt-4o"})
-
-        assert client.responses.create.call_count == 1
+        assert is_failure_threshold_breached(failed_rows=5, total_rows=10) is False
 
 
 # Shared factories + mock boundaries
@@ -157,7 +117,7 @@ def _make_text_openai_config(db: Session, project_id: int) -> Config:
     exact model name is immaterial to every assertion here.
     """
     blob = ConfigBlob(
-        completion=KaapiCompletionConfig(
+        completion=build_kaapi_completion_config(
             provider="openai",
             type="text",
             params={"model": "gpt-4o-fast-eval-test", "temperature": 0.7},
@@ -231,6 +191,15 @@ def _resp_result(
         "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2},
         "question_id": question_id,
         "failed": failed,
+    }
+
+
+def _blocked_resp_result(item_id: str, question: str = "Q") -> dict[str, Any]:
+    """A Stage-1 row guardrails hard-blocked: empty output, but `failed=False`."""
+    return {
+        **_resp_result(item_id, question),
+        "generated_output": "",
+        "guardrail": "blocked: input flagged as abusive",
     }
 
 
@@ -402,46 +371,6 @@ class TestFastEvaluationRoute:
         assert "101" in error_str
         _patch_dispatch.assert_not_called()
 
-    def test_fr1_rejects_non_text_config(
-        self,
-        client: TestClient,
-        user_api_key_header: dict[str, str],
-        db: Session,
-        user_api_key: TestAuthContext,
-        _patch_dispatch,
-    ):
-        """FR-1: non-text config for fast mode → 422 config_type_unsupported."""
-        dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
-        config = _make_text_openai_config(db, user_api_key.project_id)
-
-        fake_blob = ConfigBlob(
-            completion=KaapiCompletionConfig(
-                provider="openai",
-                type="stt",
-                params={"model": "whisper-1"},
-            )
-        )
-
-        with patch(
-            "app.services.evaluations.fast.resolve_evaluation_config",
-            return_value=(fake_blob, None),
-        ):
-            resp = client.post(
-                "/api/v1/evaluations",
-                json={
-                    "experiment_name": "fr1-fast-run",
-                    "dataset_id": dataset.id,
-                    "config_id": str(config.id),
-                    "config_version": 1,
-                    "run_mode": "fast",
-                },
-                headers=user_api_key_header,
-            )
-
-        assert resp.status_code == 422
-        assert "config_type_unsupported" in _api_error(resp.json())
-        _patch_dispatch.assert_not_called()
-
     def test_fr3_rejects_duplicate_run_name(
         self,
         client: TestClient,
@@ -532,16 +461,6 @@ class TestDatasetListEligibleForFast:
 # Response fixtures for the OpenAI SDK shapes
 
 
-def _fake_openai_response(text: str = "answer", item_id: str = "item-1"):
-    """Mimic the SDK's response.responses.create return shape."""
-    return SimpleNamespace(
-        id=f"resp_{item_id}",
-        output_text=text,
-        output=[],
-        usage=SimpleNamespace(input_tokens=10, output_tokens=20, total_tokens=30),
-    )
-
-
 def _fake_embedding_response():
     """Mimic openai.embeddings.create return shape (2 identical vectors)."""
     return SimpleNamespace(
@@ -556,6 +475,31 @@ def _fake_embedding_response():
 # run_response_chunk: one parallel responses chunk + idempotency
 
 
+def _kaapi_config_blob(model: str = "gpt-4o") -> ConfigBlob:
+    return ConfigBlob(
+        completion=build_kaapi_completion_config(
+            provider="openai",
+            type="text",
+            params={"model": model, "temperature": 0.7},
+        )
+    )
+
+
+def _native_config_blob(model: str = "gpt-5-native") -> ConfigBlob:
+    return ConfigBlob(
+        completion=NativeCompletionConfig(
+            provider="openai-native", type="text", params={"model": model}
+        )
+    )
+
+
+def _ok_block_result() -> BlockResult:
+    return BlockResult(
+        response=text_llm_call_response(),
+        usage=Usage(input_tokens=5, output_tokens=7, total_tokens=12),
+    )
+
+
 class TestRunResponseChunk:
     def test_writes_chunk_job_and_partial_unit(
         self,
@@ -566,34 +510,86 @@ class TestRunResponseChunk:
         eval_run = _make_fast_run(db=db, user_api_key=user_api_key)
         items = [_dataset_item("item-1", "Q1"), _dataset_item("item-2", "Q2")]
 
-        fake_openai = MagicMock()
-        fake_openai.responses.create.side_effect = lambda **_: _fake_openai_response()
-
         with patch(
-            "app.crud.evaluations.fast.map_kaapi_to_openai_params",
-            return_value=({"model": "gpt-4o"}, []),
-        ):
+            "app.crud.evaluations.fast.execute_llm_call",
+            return_value=_ok_block_result(),
+        ) as mock_execute:
             run_response_chunk(
                 session=db,
-                openai_client=fake_openai,
                 eval_run=eval_run,
-                config=TextLLMParams(model="gpt-4o", instructions="x"),
+                config_blob=_kaapi_config_blob(),
                 dataset_items_slice=items,
                 chunk_index=0,
-                log_prefix="[t]",
             )
 
-        assert fake_openai.responses.create.call_count == 2
+        assert mock_execute.call_count == 2
 
-        job = _get_chunk_job(session=db, eval_run_id=eval_run.id, chunk_index=0)
+        job = get_chunk_job(session=db, eval_run_id=eval_run.id, chunk_index=0)
         assert job is not None
         assert job.job_type == JOB_TYPE_EVALUATION_FAST_CHUNK
         assert job.config[CHUNK_CONFIG_RUN_ID] == eval_run.id
         assert job.config[CHUNK_CONFIG_INDEX] == 0
+        assert job.config["model"] == "gpt-4o"
+        assert job.config["usage"]["total_tokens"] == 24
         assert job.raw_output_url == f"s3://bucket/responses_{eval_run.id}_0.json"
         assert len(_s3_store[job.raw_output_url]) == 2
 
-    def test_idempotent_skips_openai_when_chunk_already_done(
+    def test_reads_the_batch_job_model_from_native_dict_params(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        _s3_store,
+    ):
+        eval_run = _make_fast_run(db=db, user_api_key=user_api_key)
+
+        with patch(
+            "app.crud.evaluations.fast.execute_llm_call",
+            return_value=_ok_block_result(),
+        ):
+            run_response_chunk(
+                session=db,
+                eval_run=eval_run,
+                config_blob=_native_config_blob("gpt-5-native"),
+                dataset_items_slice=[_dataset_item("item-1", "Q1")],
+                chunk_index=0,
+            )
+
+        job = get_chunk_job(session=db, eval_run_id=eval_run.id, chunk_index=0)
+        assert job.config["model"] == "gpt-5-native"
+
+    def test_worker_gets_the_resolved_config_blob_and_tenant_ids(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        _s3_store,
+    ):
+        eval_run = _make_fast_run(db=db, user_api_key=user_api_key)
+        config_blob = _kaapi_config_blob()
+        captured: dict[str, Any] = {}
+
+        def _capture(*, config, project_id, organization_id, item):
+            captured.update(
+                config=config, project_id=project_id, organization_id=organization_id
+            )
+            return {"item_id": item["id"], "failed": False, "usage": {}}
+
+        with patch(
+            "app.crud.evaluations.fast._llm_call_for_item", side_effect=_capture
+        ):
+            run_response_chunk(
+                session=db,
+                eval_run=eval_run,
+                config_blob=config_blob,
+                dataset_items_slice=[_dataset_item("item-1", "Q1")],
+                chunk_index=0,
+            )
+
+        assert captured["config"].is_stored_config is False
+        assert captured["config"].blob is config_blob
+        assert captured["project_id"] == eval_run.project_id
+        assert captured["organization_id"] == eval_run.organization_id
+
+    def test_idempotent_skips_generation_when_chunk_already_done(
         self,
         db: Session,
         user_api_key: TestAuthContext,
@@ -601,29 +597,24 @@ class TestRunResponseChunk:
     ):
         eval_run = _make_fast_run(db=db, user_api_key=user_api_key)
         items = [_dataset_item("item-1", "Q1"), _dataset_item("item-2", "Q2")]
-
-        fake_openai = MagicMock()
-        fake_openai.responses.create.side_effect = lambda **_: _fake_openai_response()
-
         kwargs = {
             "session": db,
-            "openai_client": fake_openai,
             "eval_run": eval_run,
-            "config": TextLLMParams(model="gpt-4o", instructions="x"),
+            "config_blob": _kaapi_config_blob(),
             "dataset_items_slice": items,
             "chunk_index": 0,
-            "log_prefix": "[t]",
         }
-        with patch(
-            "app.crud.evaluations.fast.map_kaapi_to_openai_params",
-            return_value=({"model": "gpt-4o"}, []),
-        ):
-            run_response_chunk(**kwargs)
-            assert fake_openai.responses.create.call_count == 2
 
-            # Second run for the same (run, index) must not re-charge OpenAI.
+        with patch(
+            "app.crud.evaluations.fast.execute_llm_call",
+            return_value=_ok_block_result(),
+        ) as mock_execute:
             run_response_chunk(**kwargs)
-            assert fake_openai.responses.create.call_count == 2
+            assert mock_execute.call_count == 2
+
+            # Second run for the same (run, index) must not re-charge the provider.
+            run_response_chunk(**kwargs)
+            assert mock_execute.call_count == 2
 
         jobs = list_response_chunk_jobs(session=db, eval_run_id=eval_run.id)
         assert len([j for j in jobs if j.config[CHUNK_CONFIG_INDEX] == 0]) == 1
@@ -771,11 +762,107 @@ class TestStageSkipping:
                         "failed": False,
                     }
                 ],
-                log_prefix="[t]",
             )
 
         assert results == cached
         fake_openai.embeddings.create.assert_not_called()
+
+
+class TestStage2GuardrailBlocked:
+    def test_blocked_rows_are_neither_embedded_nor_counted_as_failures(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        _s3_store,
+    ):
+        eval_run = _make_fast_run(db=db, user_api_key=user_api_key, total_items=4)
+        response_results = [_resp_result("item-1", "Q1")] + [
+            _blocked_resp_result(f"item-{n}", f"Q{n}") for n in (2, 3, 4)
+        ]
+        fake_openai = MagicMock()
+        fake_openai.embeddings.create.return_value = _fake_embedding_response()
+
+        _, results = _stage2_embeddings(
+            session=db,
+            openai_client=fake_openai,
+            eval_run=eval_run,
+            response_results=response_results,
+        )
+
+        # 3/4 blocked would exceed the 0.5 failure threshold if counted as failed.
+        assert [r["item_id"] for r in results] == ["item-1"]
+        assert fake_openai.embeddings.create.call_count == 1
+        assert fake_openai.embeddings.create.call_args.kwargs["input"] == [
+            "answer to Q1",
+            "A",
+        ]
+
+    def test_a_rephrased_row_is_embedded_like_any_answered_row(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        _s3_store,
+    ):
+        eval_run = _make_fast_run(db=db, user_api_key=user_api_key, total_items=2)
+        rephrased = {
+            **_resp_result("item-1", "Q1"),
+            "generated_output": "I can't help with that, but here's what I can do.",
+            "guardrail": "rephrased",
+        }
+        fake_openai = MagicMock()
+        fake_openai.embeddings.create.return_value = _fake_embedding_response()
+
+        _, results = _stage2_embeddings(
+            session=db,
+            openai_client=fake_openai,
+            eval_run=eval_run,
+            response_results=[rephrased, _blocked_resp_result("item-2", "Q2")],
+        )
+
+        assert [r["item_id"] for r in results] == ["item-1"]
+        assert fake_openai.embeddings.create.call_args.kwargs["input"] == [
+            "I can't help with that, but here's what I can do.",
+            "A",
+        ]
+
+    def test_every_row_blocked_still_writes_the_retry_skip_marker(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        _s3_store,
+    ):
+        eval_run = _make_fast_run(db=db, user_api_key=user_api_key, total_items=2)
+        response_results = [_blocked_resp_result("item-1"), _blocked_resp_result("i-2")]
+        fake_openai = MagicMock()
+
+        updated_run, results = _stage2_embeddings(
+            session=db,
+            openai_client=fake_openai,
+            eval_run=eval_run,
+            response_results=response_results,
+        )
+
+        assert results == []
+        fake_openai.embeddings.create.assert_not_called()
+        marker = db.get(BatchJob, updated_run.embedding_batch_job_id)
+        assert marker.job_type == JOB_TYPE_EMBEDDING_FAST
+        assert _s3_store[marker.raw_output_url] == []
+
+        # The marker is what makes the stage skippable, so a rerun must reload it.
+        _, rerun_results = _stage2_embeddings(
+            session=db,
+            openai_client=fake_openai,
+            eval_run=updated_run,
+            response_results=response_results,
+        )
+        assert rerun_results == []
+        embedding_jobs = db.exec(
+            select(BatchJob).where(
+                BatchJob.project_id == eval_run.project_id,
+                BatchJob.job_type == JOB_TYPE_EMBEDDING_FAST,
+            )
+        ).all()
+        assert len(embedding_jobs) == 1
 
 
 # End-to-end aggregate pipeline with mocked externals (FR-9..FR-14)
@@ -1114,11 +1201,7 @@ class TestChunkFailureIsolation:
             ),
             patch(
                 "app.services.evaluations.fast._resolve_config_and_clients",
-                return_value=(
-                    TextLLMParams(model="gpt-4o", instructions="x"),
-                    MagicMock(),
-                    MagicMock(),
-                ),
+                return_value=(_kaapi_config_blob(), MagicMock()),
             ),
             patch(
                 "app.services.evaluations.fast.fetch_dataset_items",
@@ -1150,20 +1233,14 @@ class TestFanOutPartition:
         monkeypatch,
     ):
         monkeypatch.setattr(settings, "EVAL_FAST_CHUNK_SIZE", 2)
-        dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
+        dataset = _make_fast_eligible_dataset(
+            db=db, user_api_key=user_api_key, original_items_count=5
+        )
         config = _make_text_openai_config(db, user_api_key.project_id)
-        items = [_dataset_item(f"item-{i}") for i in range(5)]
 
-        with (
-            patch("app.services.evaluations.fast.get_langfuse_client"),
-            patch(
-                "app.services.evaluations.fast.fetch_dataset_items",
-                return_value=items,
-            ),
-            patch(
-                "app.services.evaluations.fast.start_fast_evaluation_chunk"
-            ) as mock_start,
-        ):
+        with patch(
+            "app.services.evaluations.fast.start_fast_evaluation_chunk"
+        ) as mock_start:
             run = validate_and_start_fast_evaluation(
                 session=db,
                 dataset_id=dataset.id,
@@ -1175,6 +1252,7 @@ class TestFanOutPartition:
             )
 
         # ceil(5 / 2) = 3 chunks, indices 0..2, no gaps or dupes.
+        # total_items now computed from dataset metadata, not by loading items.
         assert mock_start.call_count == 3
         dispatched = {c.kwargs["chunk_index"] for c in mock_start.call_args_list}
         assert dispatched == {0, 1, 2}
@@ -1209,11 +1287,7 @@ class TestFanOutPartition:
             ),
             patch(
                 "app.services.evaluations.fast._resolve_config_and_clients",
-                return_value=(
-                    TextLLMParams(model="gpt-4o", instructions="x"),
-                    MagicMock(),
-                    MagicMock(),
-                ),
+                return_value=(_kaapi_config_blob(), MagicMock()),
             ),
             patch(
                 "app.services.evaluations.fast.fetch_dataset_items",
@@ -1238,24 +1312,23 @@ class TestFanOutPartition:
 
 
 class TestValidateAndStartFailure:
-    def test_dataset_fetch_error_marks_run_failed_and_raises_500(
+    def test_chunk_dispatch_error_marks_run_failed_and_raises_500(
         self,
         db: Session,
         user_api_key: TestAuthContext,
     ):
+        """Chunk dispatch failure (e.g., broker down) marks run failed and raises 500.
+
+        total_items is now computed from dataset metadata in the trigger, so item-fetch
+        errors no longer occur here; the only failure scenario is a dispatch error.
+        """
         dataset = _make_fast_eligible_dataset(db=db, user_api_key=user_api_key)
         config = _make_text_openai_config(db, user_api_key.project_id)
-        run_name = f"fetch-fail-{random_lower_string()}"
+        run_name = f"dispatch-fail-{random_lower_string()}"
 
-        with (
-            patch("app.services.evaluations.fast.get_langfuse_client"),
-            patch(
-                "app.services.evaluations.fast.fetch_dataset_items",
-                side_effect=RuntimeError("langfuse down"),
-            ),
-            patch(
-                "app.services.evaluations.fast.start_fast_evaluation_chunk"
-            ) as mock_start,
+        with patch(
+            "app.services.evaluations.fast.start_fast_evaluation_chunk",
+            side_effect=RuntimeError("broker down"),
         ):
             with pytest.raises(HTTPException) as exc:
                 validate_and_start_fast_evaluation(
@@ -1269,7 +1342,6 @@ class TestValidateAndStartFailure:
                 )
 
         assert exc.value.status_code == 500
-        mock_start.assert_not_called()
         failed = db.exec(
             select(EvaluationRun).where(EvaluationRun.run_name == run_name)
         ).first()

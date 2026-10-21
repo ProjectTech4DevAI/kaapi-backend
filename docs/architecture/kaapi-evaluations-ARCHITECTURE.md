@@ -713,6 +713,14 @@ built for processing many requests at once). The accepted downsides:
 
 ### 12.2 Fast evals (planned — design not finalised)
 
+> **Status update.** Fast mode now shares `/llm/call`'s code: it calls
+> `services/llm/jobs.py::execute_llm_call` in-process with `record_call=False`, not the HTTP
+> endpoint, so it gets the same config resolution, mappers, provider routing and guardrails
+> without touching the `high_priority` queue or writing `LlmCall` rows. The rest of this
+> section is the original design note and is stale in places; see
+> `docs/wiki/modules/evaluations.md` for what is built. (§3.4's claim that eval does not reuse
+> the mappers has been false for a while too.) Batch mode is unchanged and still bypasses it.
+
 The planned fix for the slow feedback loop in 12.1: a **"fast evals"** mode for
 _small_ golden sets that runs over the live **`/llm/call`** endpoint instead of a
 batch. Fast evals are **still fully scored** (cosine similarity _and_
