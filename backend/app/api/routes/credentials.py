@@ -5,11 +5,8 @@ from fastapi import APIRouter, Depends
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.core.exception_handlers import HTTPException
-from app.core.providers import (
-    CredentialPayload,
-    mask_credential_fields,
-    validate_provider,
-)
+from app.core.providers import mask_credential_fields, validate_provider
+from app.models.provider_credentials import CredentialPayload
 from app.crud.credentials import (
     get_creds_by_org,
     get_provider_credential,
