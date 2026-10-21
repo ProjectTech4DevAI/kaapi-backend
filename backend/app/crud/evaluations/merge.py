@@ -21,10 +21,9 @@ from app.crud.evaluations.score import (
     EvaluationScore,
     NumericSummaryScore,
     SummaryScore,
-    TraceData,
-    TraceScore,
     UNSCOREABLE_REASONS,
 )
+from app.models.evaluation import TraceData, TraceScore
 
 logger = logging.getLogger(__name__)
 
