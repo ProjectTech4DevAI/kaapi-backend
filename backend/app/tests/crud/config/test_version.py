@@ -650,3 +650,57 @@ class TestStripUnsupportedParams:
         # prior_blob must NOT have been mutated through the shared reference
         assert prior_blob["completion"]["params"]["temperature"] == 0.7
         assert shared_params["temperature"] == 0.7
+
+
+class TestReadLatest:
+    def test_returns_highest_version(self, db: Session) -> None:
+        config = create_test_config(db)
+        create_test_version(db, config_id=config.id, project_id=config.project_id)
+        create_test_version(db, config_id=config.id, project_id=config.project_id)
+        version_crud = ConfigVersionCrud(
+            session=db, project_id=config.project_id, config_id=config.id
+        )
+
+        latest = version_crud.read_latest()
+
+        assert latest is not None
+        assert latest.version == 3
+
+    def test_skips_soft_deleted_versions(self, db: Session) -> None:
+        config = create_test_config(db)
+        create_test_version(db, config_id=config.id, project_id=config.project_id)
+        version_crud = ConfigVersionCrud(
+            session=db, project_id=config.project_id, config_id=config.id
+        )
+        version_crud.delete_or_raise(2)
+
+        latest = version_crud.read_latest()
+
+        assert latest is not None
+        assert latest.version == 1
+
+    def test_returns_none_when_every_version_deleted(self, db: Session) -> None:
+        config = create_test_config(db)
+        version_crud = ConfigVersionCrud(
+            session=db, project_id=config.project_id, config_id=config.id
+        )
+        version_crud.delete_or_raise(1)
+
+        assert version_crud.read_latest() is None
+
+    def test_config_in_other_project_raises_404(self, db: Session) -> None:
+        config = create_test_config(db)
+        other_project = create_test_project(db)
+        # An explicit tag skips the constructor's lookup, so the scope check
+        # inside read_latest is the one that has to reject the foreign config.
+        version_crud = ConfigVersionCrud(
+            session=db,
+            project_id=other_project.id,
+            config_id=config.id,
+            tag=ConfigTag.DEFAULT,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            version_crud.read_latest()
+
+        assert exc_info.value.status_code == 404
