@@ -1,5 +1,4 @@
-# Rewrite the PR body with Claude using .claude/skills/pr-ready/SKILL.md when a PR
-# is labeled ready-for-review (same label that triggers the CodeRabbit auto-review).
+# Rewrite PR body with Claude (pr-ready skill) on ready-for-review label.
 name: PR Ready Body
 
 on:
@@ -55,7 +54,7 @@ jobs:
               pull_number: pr.number,
               mediaType: { format: 'diff' },
             });
-            // Keep the request well inside the context window on huge PRs (lockfiles, fixtures).
+            // Cap huge diffs (lockfiles, fixtures) to fit context.
             const DIFF_CHAR_CAP = 400000;
             const diff = rawDiff.length > DIFF_CHAR_CAP
               ? rawDiff.slice(0, DIFF_CHAR_CAP) + '\n\n[diff truncated]'
