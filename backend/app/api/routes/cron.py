@@ -57,8 +57,11 @@ PENDING_JOBS_CRON_MONITOR_CONFIG: MonitorConfig = {
 
 
 LLM_CALL_RETENTION_CRON_MONITOR_CONFIG: MonitorConfig = {
-    "schedule": {"type": "crontab", "value": "0 9 * * *"},
-    "timezone": "Asia/Kolkata",
+    "schedule": {
+        "type": "crontab",
+        "value": settings.LLM_CALL_RETENTION_CRON_SCHEDULE,
+    },
+    "timezone": settings.LLM_CALL_RETENTION_CRON_TIMEZONE,
     "checkin_margin": 5,
     "max_runtime": 30,
     "failure_issue_threshold": 1,
@@ -175,22 +178,14 @@ def daily_stats_cron_job(session: SessionDep) -> dict[str, list[StatRow]]:
     monitor_config=LLM_CALL_RETENTION_CRON_MONITOR_CONFIG,
 )
 def llm_call_retention_cron_job(session: SessionDep) -> LlmCallRedactionResult:
-    logger.info("[llm_call_retention_cron_job] Cron job invoked")
-
     try:
-        result = redact_aged_llm_calls(session=session)
-        logger.info(
-            f"[llm_call_retention_cron_job] Completed: "
-            f"rows_redacted={result.rows_redacted}, "
-            f"cutoff={result.cutoff}"
-        )
-        return result
+        update_result = redact_aged_llm_calls(session=session)
+        return update_result
     except Exception as e:
         logger.error(
             f"[llm_call_retention_cron_job] Error executing cron job: {e}",
             exc_info=True,
         )
-        sentry_sdk.capture_exception(e)
         raise
 
 

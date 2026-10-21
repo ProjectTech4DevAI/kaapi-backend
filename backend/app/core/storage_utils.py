@@ -10,7 +10,6 @@ import logging
 import mimetypes
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from enum import StrEnum
 from io import BytesIO
 from pathlib import Path
 from typing import Literal
@@ -20,6 +19,7 @@ from uuid import UUID
 from starlette.datastructures import Headers, UploadFile
 
 from app.core.cloud.storage import LLM_AUDIO_PREFIX, CloudStorage, CloudStorageError
+from app.models.llm.constants import LlmAudioKindEnum
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +62,7 @@ def upload_to_object_store(
         filename: Name of the file
         subdirectory: Subdirectory path in object store (e.g., "datasets", "stt_datasets")
         content_type: MIME type of the content (default: "application/octet-stream")
-        root_prefix: Literal prefix ahead of the project's storage path, see
-            ``CloudStorage.url_for``
+        root_prefix: Optional prefix ahead of the project's storage path
 
     Returns:
         Object store URL as string if successful, None if failed
@@ -229,11 +228,6 @@ _MIME_TO_EXT: dict[str, str] = {
 }
 
 
-class LlmAudioKindEnum(StrEnum):
-    STT = "stt"
-    TTS = "tts"
-
-
 def upload_audio_bytes_to_s3(
     storage: CloudStorage,
     audio_bytes: bytes,
@@ -242,10 +236,6 @@ def upload_audio_bytes_to_s3(
     kind: LlmAudioKindEnum,
 ) -> str | None:
     """Upload LLM call audio to S3 and return the s3:// URI.
-
-    The key is ``llm-audio/<storage_path>/<kind>/<call_id>.<ext>``: the literal
-    ``LLM_AUDIO_PREFIX`` lets one lifecycle rule expire it, and tenant ids stay out
-    of the key, which reaches clients inside presigned URLs.
 
     Args:
         storage: CloudStorage instance

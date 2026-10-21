@@ -16,7 +16,7 @@ def _stub_redact(
         calls.append(kwargs)
         return returns
 
-    monkeypatch.setattr(retention, "redact_llm_calls", fake_redact)
+    monkeypatch.setattr(retention, "redact_llm_call_records", fake_redact)
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def test_cutoff_is_naive_utc(db: Session, redact_calls: list[dict]) -> None:
     # llm_call.updated_at is a naive TIMESTAMP; a tz-aware cutoff would raise on compare.
     result = redact_aged_llm_calls(session=db)
 
-    cutoff = redact_calls[0]["cutoff"]
+    cutoff = redact_calls[0]["retention_cutoff"]
     assert cutoff.tzinfo is None
     assert result.cutoff == cutoff
 
@@ -63,7 +63,7 @@ def test_cutoff_trails_now_by_the_configured_rolling_window(
 
     redact_aged_llm_calls(session=db)
 
-    assert redact_calls[0]["cutoff"] == datetime(2026, 2, 22, 12, 0, 0)
+    assert redact_calls[0]["retention_cutoff"] == datetime(2026, 2, 22, 12, 0, 0)
 
 
 def test_passes_session_to_crud(db: Session, redact_calls: list[dict]) -> None:

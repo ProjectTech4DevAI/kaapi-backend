@@ -177,9 +177,6 @@ class SimpleStorageName:
 PENDING_PREFIX = "pending"
 PENDING_TTL_DAYS = 1
 
-# LLM call audio (STT input, TTS output). Its own literal prefix so one lifecycle
-# rule can expire it in step with the llm_call retention cron, which redacts the
-# only DB pointer to each object.
 LLM_AUDIO_PREFIX = "llm-audio"
 
 

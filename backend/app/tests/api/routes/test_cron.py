@@ -368,19 +368,19 @@ def test_llm_call_retention_cron_job_requires_superuser(
     assert "Insufficient permissions" in response.json()["error"]
 
 
-def test_llm_call_retention_cron_job_captures_and_reraises_on_error() -> None:
-    """On failure the job reports to Sentry and re-raises."""
+def test_llm_call_retention_cron_job_logs_and_reraises_on_error() -> None:
+    """On failure the job logs the error (Sentry picks it up) and re-raises."""
     with (
         patch(
             "app.api.routes.cron.redact_aged_llm_calls",
             side_effect=RuntimeError("boom"),
         ),
-        patch("app.api.routes.cron.sentry_sdk") as sentry,
+        patch("app.api.routes.cron.logger") as logger,
     ):
         with pytest.raises(RuntimeError):
             cron.llm_call_retention_cron_job(session=MagicMock())
 
-    sentry.capture_exception.assert_called_once()
+    logger.error.assert_called_once()
 
 
 def test_evaluation_cron_job_not_in_schema(

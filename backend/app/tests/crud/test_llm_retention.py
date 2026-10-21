@@ -5,7 +5,8 @@ from sqlalchemy import text
 from sqlmodel import Session
 
 from app.models import Job
-from app.crud.llm import REDACTED_SENTINEL, redact_llm_calls
+from app.crud.llm import redact_llm_call_records
+from app.models.llm.constants import REDACTION_PLACEHOLDER
 from app.models.llm import LlmCall
 from app.tests.utils.llm import create_aged_llm_call, create_llm_job
 
@@ -39,12 +40,12 @@ def test_redacts_input_and_content_value_only(db: Session, job: Job) -> None:
         content=TEXT_CONTENT,
     )
 
-    redacted = redact_llm_calls(session=db, cutoff=CUTOFF)
+    redacted = redact_llm_call_records(session=db, retention_cutoff=CUTOFF)
 
     assert redacted == 1
     row = _reload(db, llm_call)
-    assert row.input == REDACTED_SENTINEL
-    assert row.content["content"]["value"] == REDACTED_SENTINEL
+    assert row.input == REDACTION_PLACEHOLDER
+    assert row.content["content"]["value"] == REDACTION_PLACEHOLDER
     assert row.content["content"]["format"] == "text"
     assert row.content["type"] == "text"
 
@@ -58,7 +59,7 @@ def test_leaves_rows_newer_than_cutoff_untouched(db: Session, job: Job) -> None:
         content=TEXT_CONTENT,
     )
 
-    redacted = redact_llm_calls(session=db, cutoff=CUTOFF)
+    redacted = redact_llm_call_records(session=db, retention_cutoff=CUTOFF)
 
     assert redacted == 0
     row = _reload(db, llm_call)
@@ -74,15 +75,15 @@ def test_row_exactly_at_cutoff_is_redacted(db: Session, job: Job) -> None:
         content=TEXT_CONTENT,
     )
 
-    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 1
-    assert _reload(db, llm_call).input == REDACTED_SENTINEL
+    assert redact_llm_call_records(session=db, retention_cutoff=CUTOFF) == 1
+    assert _reload(db, llm_call).input == REDACTION_PLACEHOLDER
 
 
 def test_second_run_skips_already_redacted_rows(db: Session, job: Job) -> None:
     create_aged_llm_call(db, updated_at=AGED, job_id=job.id, content=TEXT_CONTENT)
 
-    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 1
-    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 0
+    assert redact_llm_call_records(session=db, retention_cutoff=CUTOFF) == 1
+    assert redact_llm_call_records(session=db, retention_cutoff=CUTOFF) == 0
 
 
 def test_row_with_null_content_is_redacted_without_error(db: Session, job: Job) -> None:
@@ -104,15 +105,15 @@ def test_row_with_null_content_is_redacted_without_error(db: Session, job: Job) 
         == "null"
     )
 
-    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 1
+    assert redact_llm_call_records(session=db, retention_cutoff=CUTOFF) == 1
     row = _reload(db, llm_call)
-    assert row.input == REDACTED_SENTINEL
+    assert row.input == REDACTION_PLACEHOLDER
     assert row.content is None
 
 
 @pytest.mark.usefixtures("job")
 def test_returns_zero_when_no_rows_match(db: Session) -> None:
-    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 0
+    assert redact_llm_call_records(session=db, retention_cutoff=CUTOFF) == 0
 
 
 def test_redacts_only_aged_rows_in_a_mixed_table(db: Session, job: Job) -> None:
@@ -123,8 +124,8 @@ def test_redacts_only_aged_rows_in_a_mixed_table(db: Session, job: Job) -> None:
         db, updated_at=RECENT, job_id=job.id, input="recent", content=TEXT_CONTENT
     )
 
-    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 1
-    assert _reload(db, aged).input == REDACTED_SENTINEL
+    assert redact_llm_call_records(session=db, retention_cutoff=CUTOFF) == 1
+    assert _reload(db, aged).input == REDACTION_PLACEHOLDER
     assert _reload(db, recent).input == "recent"
 
 
@@ -135,19 +136,19 @@ def test_redacts_content_value_of_row_whose_input_is_already_sentinel(
         db,
         updated_at=AGED,
         job_id=job.id,
-        input=REDACTED_SENTINEL,
+        input=REDACTION_PLACEHOLDER,
         content={"type": "audio", "content": {"format": "uri", "value": "s3://a.wav"}},
     )
 
-    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 1
-    assert _reload(db, llm_call).content["content"]["value"] == REDACTED_SENTINEL
+    assert redact_llm_call_records(session=db, retention_cutoff=CUTOFF) == 1
+    assert _reload(db, llm_call).content["content"]["value"] == REDACTION_PLACEHOLDER
 
 
 def test_second_run_skips_redacted_row_with_null_content(db: Session, job: Job) -> None:
     create_aged_llm_call(db, updated_at=AGED, job_id=job.id, content=None)
 
-    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 1
-    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 0
+    assert redact_llm_call_records(session=db, retention_cutoff=CUTOFF) == 1
+    assert redact_llm_call_records(session=db, retention_cutoff=CUTOFF) == 0
 
 
 def test_second_run_skips_redacted_row_without_content_value(
@@ -157,6 +158,6 @@ def test_second_run_skips_redacted_row_without_content_value(
         db, updated_at=AGED, job_id=job.id, content={"type": "text"}
     )
 
-    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 1
-    assert redact_llm_calls(session=db, cutoff=CUTOFF) == 0
+    assert redact_llm_call_records(session=db, retention_cutoff=CUTOFF) == 1
+    assert redact_llm_call_records(session=db, retention_cutoff=CUTOFF) == 0
     assert _reload(db, llm_call).content == {"type": "text"}

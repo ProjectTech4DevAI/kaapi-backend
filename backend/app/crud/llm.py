@@ -5,11 +5,11 @@ from datetime import datetime
 from uuid import UUID
 from typing import Any, Literal
 
-from sqlalchemy import text
 from sqlmodel import Session, select
 
 from app.core.util import now
 from app.models.llm import LlmCall, LLMCallRequest, ConfigBlob
+from app.models.llm.constants import REDACT_LLM_CALL_RECORDS_SQL, REDACTION_PLACEHOLDER
 from app.models.llm.request import (
     TextInput,
     AudioInput,
@@ -347,37 +347,17 @@ def get_llm_call_by_id(
     return session.exec(statement).first()
 
 
-REDACTED_SENTINEL = "[redacted]"
-
-REDACT_LLM_CALLS_SQL = text(
-    """
-    UPDATE llm_call
-    SET input = :redacted_sentinel,
-        content = CASE
-            WHEN jsonb_typeof(content) = 'object'
-            THEN jsonb_set(content, '{content,value}', to_jsonb(CAST(:redacted_sentinel AS text)), false)
-            ELSE content
-        END
-    WHERE updated_at <= :cutoff
-      AND (
-        input <> :redacted_sentinel
-        OR (
-            jsonb_typeof(content) = 'object'
-            AND content #>> '{content,value}' <> :redacted_sentinel
-        )
-      )
-    """
-)
-
-
-def redact_llm_calls(*, session: Session, cutoff: datetime) -> int:
-    result = session.connection().execute(
-        REDACT_LLM_CALLS_SQL,
-        {"cutoff": cutoff, "redacted_sentinel": REDACTED_SENTINEL},
+def redact_llm_call_records(*, session: Session, retention_cutoff: datetime) -> int:
+    update_result = session.connection().execute(
+        REDACT_LLM_CALL_RECORDS_SQL,
+        {
+            "retention_cutoff": retention_cutoff,
+            "redaction_placeholder": REDACTION_PLACEHOLDER,
+        },
     )
     session.commit()
 
-    return result.rowcount
+    return update_result.rowcount
 
 
 def get_llm_calls_by_job_id(

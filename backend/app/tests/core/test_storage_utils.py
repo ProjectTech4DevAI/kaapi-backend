@@ -9,8 +9,8 @@ from uuid import uuid4
 import pytest
 
 from app.core.cloud.storage import AmazonCloudStorage, CloudStorageError
+from app.models.llm.constants import LlmAudioKindEnum
 from app.core.storage_utils import (
-    LlmAudioKindEnum,
     generate_timestamped_filename,
     get_mime_from_url,
     load_json_from_object_store,

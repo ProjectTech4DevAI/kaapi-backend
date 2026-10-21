@@ -61,7 +61,8 @@ from app.models.llm.request import (
     TextInput,
 )
 from app.core.cloud.storage import get_cloud_storage
-from app.core.storage_utils import LlmAudioKindEnum, upload_audio_bytes_to_s3
+from app.core.storage_utils import upload_audio_bytes_to_s3
+from app.models.llm.constants import LlmAudioKindEnum
 from app.models.llm.response import (
     AudioOutput,
     LLMCallResponse,
