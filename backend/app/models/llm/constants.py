@@ -175,7 +175,7 @@ def normalize_bcp47_language(value: str) -> str:
     return value
 
 
-DEFAULT_STT_MODEL = "gemini-2.5-pro"
+DEFAULT_STT_MODEL = "gemini-3.8-flash"
 DEFAULT_TTS_MODEL = "gemini-3.8-flash-tts"
 DEFAULT_TTS_VOICE = "Kore"
 DEFAULT_RAG_MODEL = "gpt-4o"
