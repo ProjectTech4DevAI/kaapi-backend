@@ -7,7 +7,7 @@ from asgi_correlation_id import correlation_id
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import DataError, IntegrityError, OperationalError, SQLAlchemyError
+from sqlalchemy.exc import DataError, OperationalError, SQLAlchemyError
 from starlette.status import (
     HTTP_409_CONFLICT,
     HTTP_422_UNPROCESSABLE_CONTENT,
@@ -20,32 +20,10 @@ from app.utils import APIResponse
 logger = logging.getLogger(__name__)
 
 GENERIC_ERROR_DETAIL = "An unexpected error occurred."
-DB_ERROR_DETAIL = "Database error: request could not be completed."
+DB_ERROR_DETAIL = "The request could not be completed."
 
 UNIQUE_VIOLATION_SQLSTATE = "23505"
 FOREIGN_KEY_VIOLATION_SQLSTATE = "23503"
-
-# Other IntegrityError codes (e.g. not-null 23502) mean our write was wrong: 500.
-_INTEGRITY_ERROR_HINTS: dict[str, tuple[int, str]] = {
-    UNIQUE_VIOLATION_SQLSTATE: (
-        HTTP_409_CONFLICT,
-        "Database error: request conflicts with existing data.",
-    ),
-    FOREIGN_KEY_VIOLATION_SQLSTATE: (
-        HTTP_422_UNPROCESSABLE_CONTENT,
-        "Database error: request references a record that does not exist.",
-    ),
-}
-
-# Unique violations on these constraints get a specific message; values stay out of it.
-_UNIQUE_CONSTRAINT_DETAILS: dict[str, str] = {
-    "uq_config_project_id_name_active": "A config with this name already exists in this project.",
-    "uq_config_version_config_id_version": "A version with this number already exists for this config.",
-    "uq_credential_org_project_provider": "Credentials for this provider already exist for this organization and project.",
-    "ix_organization_name": "An organization with this name already exists.",
-    "uq_project_name_org_id": "A project with this name already exists in this organization.",
-    "ix_user_email": "A user with this email already exists.",
-}
 
 _BRANCH_PATTERN = re.compile(r"^[A-Z]|[\[\]()]")
 
@@ -129,25 +107,20 @@ def _db_error_constraint(exc: SQLAlchemyError) -> tuple[str | None, str | None]:
 
 def _db_error_response(exc: SQLAlchemyError) -> tuple[int, str]:
     """Map a DB exception to a status and a client-safe hint; SQL and parameters stay server-side."""
-    if isinstance(exc, IntegrityError):
-        sqlstate, constraint = _db_error_constraint(exc)
-        if (
-            sqlstate == UNIQUE_VIOLATION_SQLSTATE
-            and constraint in _UNIQUE_CONSTRAINT_DETAILS
-        ):
-            return HTTP_409_CONFLICT, _UNIQUE_CONSTRAINT_DETAILS[constraint]
-        return _INTEGRITY_ERROR_HINTS.get(
-            sqlstate, (HTTP_500_INTERNAL_SERVER_ERROR, DB_ERROR_DETAIL)
-        )
+    sqlstate, _ = _db_error_constraint(exc)
+    if sqlstate == UNIQUE_VIOLATION_SQLSTATE:
+        return HTTP_409_CONFLICT, "Record already exists."
+    if sqlstate == FOREIGN_KEY_VIOLATION_SQLSTATE:
+        return HTTP_422_UNPROCESSABLE_CONTENT, "Referenced record not found."
     if isinstance(exc, DataError):
         return (
             HTTP_422_UNPROCESSABLE_CONTENT,
-            "Database error: a value is invalid or too long.",
+            "A value in the request is invalid or too long.",
         )
     if isinstance(exc, OperationalError):
         return (
             HTTP_503_SERVICE_UNAVAILABLE,
-            "Database error: service temporarily unavailable, please retry.",
+            "Service temporarily unavailable. Please retry.",
         )
     return HTTP_500_INTERNAL_SERVER_ERROR, DB_ERROR_DETAIL
 

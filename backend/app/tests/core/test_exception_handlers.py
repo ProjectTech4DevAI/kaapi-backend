@@ -255,7 +255,6 @@ class TestDbErrorHandler:
         response = _app_raising(exc).get("/boom")
 
         assert response.status_code == status_code
-        assert response.json()["error"].startswith("Database error:")
         assert "INSERT" not in response.text
         assert "9876543210" not in response.text
 
@@ -266,27 +265,14 @@ class TestDbErrorHandler:
 
         assert response.json()["error"] == DB_ERROR_DETAIL
 
-    @pytest.mark.parametrize(
-        ("constraint", "detail"),
-        [
-            ("uq_config_project_id_name_active", "A config with this name"),
-            ("uq_credential_org_project_provider", "Credentials for this provider"),
-            ("ix_user_email", "A user with this email"),
-        ],
-    )
-    def test_known_unique_constraint_gets_specific_message(
-        self, constraint: str, detail: str
-    ) -> None:
-        response = _app_raising(make_integrity_error("23505", constraint)).get("/boom")
+    def test_constraint_name_stays_out_of_client_message(self) -> None:
+        response = _app_raising(
+            make_integrity_error("23505", "uq_credential_org_project_provider")
+        ).get("/boom")
 
         assert response.status_code == 409
-        assert response.json()["error"].startswith(detail)
-
-    def test_unknown_unique_constraint_gets_generic_conflict(self) -> None:
-        response = _app_raising(make_integrity_error("23505", "uq_other")).get("/boom")
-
-        assert response.status_code == 409
-        assert response.json()["error"].startswith("Database error:")
+        assert response.json()["error"] == "Record already exists."
+        assert "uq_credential" not in response.text
 
     def test_client_side_db_error_logs_warning(self) -> None:
         with (

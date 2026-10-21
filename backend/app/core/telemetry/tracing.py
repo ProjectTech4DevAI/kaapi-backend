@@ -151,13 +151,6 @@ def setup_telemetry(service_name: str | None = None) -> None:
         logger.exception("[setup_telemetry] Failed to instrument Celery")
 
     try:
-        from opentelemetry.instrumentation.redis import RedisInstrumentor
-
-        RedisInstrumentor().instrument()
-    except Exception:
-        logger.exception("[setup_telemetry] Failed to instrument Redis")
-
-    try:
         from opentelemetry.instrumentation.botocore import BotocoreInstrumentor
 
         BotocoreInstrumentor().instrument()  # type: ignore[no-untyped-call]

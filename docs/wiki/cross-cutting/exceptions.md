@@ -3,8 +3,8 @@
 All paths relative to `backend/app/`.
 
 ## Global handlers
-- `core/exception_handlers.py` — registered on the FastAPI app; maps exception types to HTTP responses. The `Exception` catch-all returns a fixed message, never `str(exc)`, so provider bodies and DB text don't reach callers. Unhandled `SQLAlchemyError` gets its own handler: a "Database error: ..." hint with 409 (unique violation, SQLSTATE 23505), 422 (foreign key 23503, or `DataError`), 503 (`OperationalError`) or 500 (any other); 4xx logs at warning, 5xx at error; SQL and parameters only go to logs.
-- DB errors are classified only in `db_error_handler`: crud/services let `SQLAlchemyError` propagate (rollback, then `raise`), never catch `IntegrityError` to build a 409 or match error text. A unique violation on a constraint listed in `_UNIQUE_CONSTRAINT_DETAILS` gets that message; add the constraint there for a specific 409. Sentry events carry `http.status_code`, `error.class` and `db.constraint` tags. Exception: eval `run_name` keeps its own 409 (`run_name_already_exists` is a client contract).
+- `core/exception_handlers.py` — registered on the FastAPI app; maps exception types to HTTP responses. The `Exception` catch-all returns a fixed message, never `str(exc)`, so provider bodies and DB text don't reach callers. Unhandled `SQLAlchemyError` gets its own handler: a short generic message with 409 (unique violation, SQLSTATE 23505), 422 (foreign key 23503, or `DataError`), 503 (`OperationalError`) or 500 (any other); 4xx logs at warning, 5xx at error; SQL and parameters only go to logs.
+- DB errors are classified only in `db_error_handler`: crud/services let `SQLAlchemyError` propagate (rollback, then `raise`), never catch `IntegrityError` to build a 409 or match error text. Clients get a short generic message per status; the SQLSTATE and constraint name go only to the log and the `db.constraint` Sentry tag. Sentry events carry `http.status_code`, `error.class` and `db.constraint` tags. Exception: eval `run_name` keeps its own 409 (`run_name_already_exists` is a client contract).
 - `core/middleware.py` — request-level middleware.
 
 ## Status-code selection
