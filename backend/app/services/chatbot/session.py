@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -12,13 +13,23 @@ from app.crud.chatbot import (
     list_chatbot_session_messages,
     update_chatbot_session_progress,
 )
-from app.models import ChatbotMessageRoleEnum, ChatbotSessionMessage
+from app.models import (
+    ChatbotMessageRoleEnum,
+    ChatbotSessionMessage,
+    ChatbotSessionStatusEnum,
+)
 from app.services.chatbot.agents.onboarding.graph import run_chatbot_turn
 from app.services.chatbot.config import resolve_chatbot_model_settings
 from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
 from app.services.chatbot.types import ChatbotMessageDict
 from app.services.chatbot.utils import ChatbotModelSettings
 from app.utils import get_webhook_secret, send_callback
+
+logger = logging.getLogger(__name__)
+
+SUPERSEDED_SESSION_ERROR = (
+    "[KAAPI] Chatbot session was superseded by a newer session; start a new session."
+)
 
 
 def _split_pending_turn(
@@ -89,6 +100,19 @@ def process_chatbot_session_message(
         )
         if chatbot_session is None:
             return
+        # The turn may have been queued before a newer session superseded this one.
+        if chatbot_session.status == ChatbotSessionStatusEnum.INACTIVE:
+            logger.warning(
+                f"[process_chatbot_session_message] {SUPERSEDED_SESSION_ERROR} | "
+                f"session_id: {session_id}, project_id: {project_id}"
+            )
+            _send_failure_webhook(
+                session_id=session_id,
+                webhook_url=webhook_url,
+                webhook_secret=webhook_secret,
+                error=SUPERSEDED_SESSION_ERROR,
+            )
+            return
 
         stored_messages = list_chatbot_session_messages(session, session_id=session_id)
         if (
@@ -98,6 +122,7 @@ def process_chatbot_session_message(
             return
 
         system_prompt = chatbot_session.system_prompt
+        chatbot_ref = chatbot_session.chatbot_ref
         session_status = chatbot_session.status.value
         collected_fields = dict(chatbot_session.collected_fields)
 
@@ -168,6 +193,7 @@ def process_chatbot_session_message(
         "success": True,
         "data": {
             "session_id": str(session_id),
+            "chatbot_ref": chatbot_ref,
             "reply": reply,
             "status": session_status,
             "completion_status": completion_status.value,

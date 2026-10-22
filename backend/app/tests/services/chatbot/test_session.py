@@ -129,6 +129,7 @@ class TestProcessChatbotSessionMessage:
                     "success": True,
                     "data": {
                         "session_id": str(chatbot_session.id),
+                        "chatbot_ref": chatbot_session.chatbot_ref,
                         "reply": "Hi! What's your name?",
                         "status": "active",
                         "completion_status": "in_progress",
@@ -402,6 +403,7 @@ class TestSessionFieldProgress:
                 "success": True,
                 "data": {
                     "session_id": str(chatbot_session.id),
+                    "chatbot_ref": chatbot_session.chatbot_ref,
                     "reply": "Thanks, all set!",
                     "status": "active",
                     "completion_status": "complete",

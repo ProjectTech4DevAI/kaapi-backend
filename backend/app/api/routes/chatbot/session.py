@@ -8,23 +8,30 @@ from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.celery.utils import start_chatbot_session_message
 from app.crud.chatbot import (
+    ChatbotSessionConflictError,
     create_chatbot_session,
     create_chatbot_session_message,
     get_chatbot_session,
-    get_latest_chatbot_session_by_contact_ref,
+    get_latest_chatbot_session,
     list_chatbot_session_messages,
 )
 from app.models import (
+    CHATBOT_REF_MAX_LENGTH,
     CONTACT_REF_MAX_LENGTH,
     ChatbotMessageRoleEnum,
+    ChatbotSessionStatusEnum,
     ChatbotSessionSummary,
     CreateChatbotSessionRequest,
     CreateChatbotSessionResponse,
     SendChatbotSessionMessageRequest,
     SendChatbotSessionMessageResponse,
 )
+from app.services.chatbot.chatbot_ref import generate_chatbot_ref
 from app.services.chatbot.config import resolve_chatbot_model_settings
-from app.services.chatbot.exceptions import ChatbotInputError
+from app.services.chatbot.exceptions import (
+    ChatbotInputError,
+    ChatbotRefGenerationError,
+)
 from app.utils import APIResponse, load_description, validate_callback_url
 
 DEFAULT_TRACE_ID = "N/A"
@@ -57,18 +64,31 @@ def start_chatbot_session(
     except ChatbotInputError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    chatbot_session = create_chatbot_session(
-        session,
-        organization_id=auth_context.organization_.id,
-        project_id=project_id,
-        name=request.name,
-        contact_ref=request.contact_ref,
-        config_id=request.config_id,
-        config_version=request.config_version,
-        system_prompt=request.system_prompt,
-    )
+    chatbot_ref = request.chatbot_ref
+    if chatbot_ref is None:
+        try:
+            chatbot_ref = generate_chatbot_ref(session, project_id=project_id)
+        except ChatbotRefGenerationError as e:
+            raise HTTPException(status_code=503, detail=str(e))
+
+    try:
+        chatbot_session = create_chatbot_session(
+            session,
+            organization_id=auth_context.organization_.id,
+            project_id=project_id,
+            name=request.name,
+            contact_ref=request.contact_ref,
+            chatbot_ref=chatbot_ref,
+            config_id=request.config_id,
+            config_version=request.config_version,
+            system_prompt=request.system_prompt,
+        )
+    except ChatbotSessionConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     return APIResponse.success_response(
-        CreateChatbotSessionResponse(session_id=chatbot_session.id)
+        CreateChatbotSessionResponse(
+            session_id=chatbot_session.id, chatbot_ref=chatbot_session.chatbot_ref
+        )
     )
 
 
@@ -78,7 +98,7 @@ def start_chatbot_session(
     response_model=APIResponse[ChatbotSessionSummary],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
-def get_latest_chatbot_session(
+def read_latest_chatbot_session(
     contact_ref: Annotated[
         str,
         Query(
@@ -87,24 +107,35 @@ def get_latest_chatbot_session(
             description="Caller-side identifier of the end user whose latest session to fetch",
         ),
     ],
+    chatbot_ref: Annotated[
+        str,
+        Query(
+            min_length=1,
+            max_length=CHATBOT_REF_MAX_LENGTH,
+            description="Caller-side identifier of the chatbot whose latest session to fetch",
+        ),
+    ],
     session: SessionDep,
     auth_context: AuthContextDep,
 ) -> APIResponse[ChatbotSessionSummary]:
-    chatbot_session = get_latest_chatbot_session_by_contact_ref(
+    chatbot_session = get_latest_chatbot_session(
         session,
-        contact_ref=contact_ref,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
+        contact_ref=contact_ref,
+        chatbot_ref=chatbot_ref,
     )
     if chatbot_session is None:
         raise HTTPException(
-            status_code=404, detail="No chatbot session found for this contact_ref"
+            status_code=404,
+            detail="No chatbot session found for this contact_ref and chatbot_ref",
         )
     return APIResponse.success_response(
         ChatbotSessionSummary(
             session_id=chatbot_session.id,
             name=chatbot_session.name,
             contact_ref=chatbot_session.contact_ref,
+            chatbot_ref=chatbot_session.chatbot_ref,
             status=chatbot_session.status,
             completion_status=chatbot_session.completion_status,
             collected_fields=chatbot_session.collected_fields,
@@ -145,6 +176,11 @@ def send_chatbot_session_message(
     )
     if chatbot_session is None:
         raise HTTPException(status_code=404, detail="Chatbot session not found")
+    if chatbot_session.status == ChatbotSessionStatusEnum.INACTIVE:
+        raise HTTPException(
+            status_code=409,
+            detail="Chatbot session is inactive; start a new session",
+        )
 
     if request.message is None:
         if list_chatbot_session_messages(session, session_id=session_id):

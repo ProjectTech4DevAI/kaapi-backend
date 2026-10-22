@@ -102,6 +102,7 @@ def create_test_chatbot_session(
     config: Config,
     name: str = DEFAULT_CHATBOT_NAME,
     contact_ref: str | None = None,
+    chatbot_ref: str | None = None,
     config_version: int | None = None,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
 ) -> ChatbotSession:
@@ -113,6 +114,7 @@ def create_test_chatbot_session(
         project_id=project.id,
         name=name,
         contact_ref=contact_ref or f"contact-{random_lower_string()}",
+        chatbot_ref=chatbot_ref or f"chatbot-{random_lower_string()}",
         config_id=config.id,
         config_version=config_version,
         system_prompt=system_prompt,

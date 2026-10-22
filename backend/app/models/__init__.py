@@ -36,6 +36,8 @@ from .batch_job import (
     BatchJobUpdate,
 )
 from .chatbot import (
+    ACTIVE_CHATBOT_SESSION_UNIQUE_INDEX,
+    CHATBOT_REF_MAX_LENGTH,
     CONTACT_REF_MAX_LENGTH,
     DEFAULT_CHATBOT_NAME,
     ChatbotCompletionStatusEnum,
