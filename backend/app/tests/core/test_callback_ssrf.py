@@ -1,3 +1,4 @@
+import itertools
 import json
 import socket
 from typing import Any
@@ -15,6 +16,8 @@ from app.utils import (
     send_callback,
     sign_webhook_payload,
 )
+
+pytestmark = pytest.mark.usefixtures("no_retry_backoff")
 
 
 class TestIsPrivateIP:
@@ -237,7 +240,7 @@ class TestSendCallback:
         """Test successful callback execution."""
         mock_session = MagicMock()
         mock_response = MagicMock()
-        mock_response.raise_for_status.return_value = None
+        mock_response.status_code = 200
         mock_response.iter_content.return_value = [b"test"]
         mock_session.post.return_value = mock_response
         mock_session_class.return_value.__enter__.return_value = mock_session
@@ -272,7 +275,7 @@ class TestSendCallback:
         """Test that callback returns False on HTTP errors."""
         mock_session = MagicMock()
         mock_response = MagicMock()
-        mock_response.raise_for_status.side_effect = requests.HTTPError("404 Not Found")
+        mock_response.status_code = 404
         mock_session.post.return_value = mock_response
         mock_session_class.return_value.__enter__.return_value = mock_session
 
@@ -288,7 +291,7 @@ class TestSendCallback:
         """Test that redirects are disabled to prevent redirect-based SSRF."""
         mock_session = MagicMock()
         mock_response = MagicMock()
-        mock_response.raise_for_status.return_value = None
+        mock_response.status_code = 200
         mock_response.iter_content.return_value = [b"test"]
         mock_session.post.return_value = mock_response
         mock_session_class.return_value.__enter__.return_value = mock_session
@@ -306,7 +309,7 @@ class TestSendCallback:
         """Test that callback uses configured timeouts."""
         mock_session = MagicMock()
         mock_response = MagicMock()
-        mock_response.raise_for_status.return_value = None
+        mock_response.status_code = 200
         mock_response.iter_content.return_value = [b"test"]
         mock_session.post.return_value = mock_response
         mock_session_class.return_value.__enter__.return_value = mock_session
@@ -326,7 +329,7 @@ class TestSendCallback:
         """Test that callback sends data as JSON."""
         mock_session = MagicMock()
         mock_response = MagicMock()
-        mock_response.raise_for_status.return_value = None
+        mock_response.status_code = 200
         mock_response.iter_content.return_value = [b"test"]
         mock_session.post.return_value = mock_response
         mock_session_class.return_value.__enter__.return_value = mock_session
@@ -378,3 +381,57 @@ class TestSignWebhookPayload:
         sig, returned_ts = sign_webhook_payload(secret, body, timestamp_ms=ts)
         assert sig == expected
         assert returned_ts == ts
+
+
+def _callback_response(status_code: int) -> requests.Response:
+    response = requests.Response()
+    response.status_code = status_code
+    return response
+
+
+@patch("app.utils.validate_callback_url")
+class TestSendCallbackRetry:
+    URL = "https://api.example.com/callback"
+
+    def test_recovers_after_transient_failures(self, _validate: Any) -> None:
+        # 302 counts as a failure: redirects are off, so nothing was delivered.
+        outcomes = [
+            _callback_response(302),
+            requests.ConnectionError("reset"),
+            _callback_response(200),
+        ]
+        with patch.object(requests.Session, "post", side_effect=outcomes) as post:
+            assert send_callback(self.URL, {"status": "done"}) is True
+        assert post.call_count == 3
+
+    @pytest.mark.parametrize("status_code", [503, 404])
+    def test_gives_up_after_four_attempts(
+        self, _validate: Any, status_code: int
+    ) -> None:
+        with patch.object(
+            requests.Session, "post", return_value=_callback_response(status_code)
+        ) as post:
+            assert send_callback(self.URL, {"status": "done"}) is False
+        assert post.call_count == 4
+
+    def test_each_attempt_is_signed_with_a_fresh_timestamp(
+        self, _validate: Any
+    ) -> None:
+        with (
+            patch("app.utils.time.time", side_effect=itertools.count(1_700_000_000)),
+            patch.object(
+                requests.Session, "post", return_value=_callback_response(503)
+            ) as post,
+        ):
+            send_callback(self.URL, {"status": "done"}, webhook_secret="s3cret")
+
+        timestamps = {
+            c.kwargs["headers"]["X-Webhook-Timestamp"] for c in post.mock_calls
+        }
+        assert len(timestamps) == 4
+
+    def test_invalid_url_is_never_posted(self, validate: Any) -> None:
+        validate.side_effect = ValueError("private IP")
+        with patch.object(requests.Session, "post") as post:
+            assert send_callback(self.URL, {"status": "done"}) is False
+        post.assert_not_called()

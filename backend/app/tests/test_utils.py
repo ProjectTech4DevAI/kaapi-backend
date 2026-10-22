@@ -396,9 +396,7 @@ class TestSendCallbackWithSigning:
     @patch("requests.Session")
     def test_includes_signature_headers(self, mock_session_cls, mock_validate) -> None:
         mock_session = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_session.post.return_value = mock_resp
+        mock_session.post.return_value = MagicMock(status_code=200)
         mock_session_cls.return_value.__enter__.return_value = mock_session
 
         result = send_callback(
@@ -419,6 +417,7 @@ class TestSendCallbackWithSigning:
         assert result is False
 
 
+@pytest.mark.usefixtures("no_retry_backoff")
 class TestSendCallbackLogging:
     _payload = {
         "success": True,
@@ -433,10 +432,7 @@ class TestSendCallbackLogging:
         self, mock_session_cls, mock_validate, caplog: pytest.LogCaptureFixture
     ) -> None:
         mock_session = MagicMock()
-        error_response = MagicMock(status_code=502)
-        mock_session.post.return_value.raise_for_status.side_effect = (
-            requests.HTTPError("502 Bad Gateway", response=error_response)
-        )
+        mock_session.post.return_value = MagicMock(status_code=502)
         mock_session_cls.return_value.__enter__.return_value = mock_session
 
         with caplog.at_level("ERROR", logger="app.utils"):
