@@ -6,10 +6,15 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.models import ChatbotCompletionStatusEnum
 from app.services.chatbot.agents.onboarding.graph import run_chatbot_turn
+from app.services.chatbot.agents.onboarding.prompts import EXTRACTION_INSTRUCTION
 from app.services.chatbot.agents.onboarding.types import FieldExtraction
 from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
 from app.services.chatbot.utils import ChatbotModelSettings
-from app.tests.utils.chatbot import ScriptedChatModel, patch_chat_model
+from app.tests.utils.chatbot import (
+    ScriptedChatModel,
+    extracted_fields,
+    patch_chat_model,
+)
 
 SYSTEM_PROMPT = "Collect the user's name and city."
 SUMMARY_TEXT = "User is Asha from Pune."
@@ -277,7 +282,7 @@ class TestHistorySummarization:
             token_count=5000,
             extractions=[
                 FieldExtraction(
-                    collected_fields={"name": "Asha"},
+                    collected_fields=extracted_fields({"name": "Asha"}),
                     missing_fields=["city"],
                     is_complete=False,
                 )
@@ -319,7 +324,7 @@ class TestFieldExtraction:
             replies=["Hi! What's your name?"],
             extractions=[
                 FieldExtraction(
-                    collected_fields={"name": "invented"},
+                    collected_fields=extracted_fields({"name": "invented"}),
                     missing_fields=[],
                     is_complete=True,
                 )
@@ -379,6 +384,7 @@ class TestFieldExtraction:
         [extraction_call] = chat_model.extraction_calls
         instruction, *conversation = extraction_call
         assert isinstance(instruction, SystemMessage)
+        assert instruction.text.startswith(EXTRACTION_INSTRUCTION)
         assert f"<flow_prompt>\n{SYSTEM_PROMPT}\n</flow_prompt>" in instruction.text
         assert (
             '<previously_collected>\n{"age": "30"}\n</previously_collected>'
@@ -399,7 +405,7 @@ class TestFieldExtraction:
             replies=["Noted."],
             extractions=[
                 FieldExtraction(
-                    collected_fields={"city": "Mumbai", "age": "30"},
+                    collected_fields=extracted_fields({"city": "Mumbai", "age": "30"}),
                     missing_fields=[],
                     is_complete=False,
                 )
@@ -442,7 +448,7 @@ class TestFieldExtraction:
             replies=["Thanks!"],
             extractions=[
                 FieldExtraction(
-                    collected_fields={"name": "Asha"},
+                    collected_fields=extracted_fields({"name": "Asha"}),
                     missing_fields=missing_fields,
                     is_complete=is_complete,
                 )
@@ -466,7 +472,7 @@ class TestProgressNote:
         [
             (
                 FieldExtraction(
-                    collected_fields={"name": "Asha"},
+                    collected_fields=extracted_fields({"name": "Asha"}),
                     missing_fields=["city"],
                     is_complete=False,
                 ),
@@ -475,7 +481,7 @@ class TestProgressNote:
             ),
             (
                 FieldExtraction(
-                    collected_fields={},
+                    collected_fields=extracted_fields({}),
                     missing_fields=["name", "city"],
                     is_complete=False,
                 ),
@@ -483,7 +489,7 @@ class TestProgressNote:
             ),
             (
                 FieldExtraction(
-                    collected_fields={"name": "Asha", "city": "Pune"},
+                    collected_fields=extracted_fields({"name": "Asha", "city": "Pune"}),
                     missing_fields=[],
                     is_complete=True,
                 ),
@@ -529,7 +535,9 @@ class TestProgressNote:
             replies=["Reply."],
             extractions=[
                 FieldExtraction(
-                    collected_fields={}, missing_fields=[], is_complete=False
+                    collected_fields=extracted_fields({}),
+                    missing_fields=[],
+                    is_complete=False,
                 )
             ],
         )
@@ -564,6 +572,19 @@ class TestProgressNote:
         assert reply_call[1].content == (
             f'{PROGRESS_PREFIX}{COLLECTED_PREFIX}{{"name": "Asha"}}.'
         )
+
+
+class TestFieldExtractionSchema:
+    def test_collected_fields_is_a_list_of_name_value_pairs(self) -> None:
+        # Anthropic's json_schema mode forces additionalProperties=false on every
+        # object, so a free-form dict here would only ever come back empty.
+        schema = FieldExtraction.model_json_schema()
+        collected = schema["properties"]["collected_fields"]
+        item = schema["$defs"][collected["items"]["$ref"].split("/")[-1]]
+
+        assert collected["type"] == "array"
+        assert set(item["properties"]) == {"name", "value"}
+        assert set(item["required"]) == {"name", "value"}
 
 
 class TestExtractionErrors:

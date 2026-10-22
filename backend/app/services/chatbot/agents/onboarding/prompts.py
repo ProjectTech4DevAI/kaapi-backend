@@ -8,9 +8,13 @@ EXTRACTION_INSTRUCTION = (
     "2. collected_fields: every field whose value the user has clearly provided in the "
     "conversation, including those in the previously collected map. Reuse the exact "
     "keys of the previously collected map; change a value only if the user corrected it.\n"
-    "3. Never invent, guess, or infer a value the user did not give.\n"
-    "4. missing_fields: the required fields the user has not answered yet.\n"
-    "5. is_complete: true only when no required field is missing."
+    "3. A value counts as collected only once every rule the flow prompt sets for that "
+    "field is met. For example, if the flow prompt says to confirm or verify a value, "
+    "include it only after the user has confirmed it; until then leave it out of "
+    "collected_fields and keep the field in missing_fields.\n"
+    "4. Never invent, guess, or infer a value the user did not give.\n"
+    "5. missing_fields: the required fields not yet collected under these rules.\n"
+    "6. is_complete: true only when no required field is missing."
 )
 EXTRACTION_FLOW_PROMPT_TEMPLATE = "\n\n<flow_prompt>\n{flow_prompt}\n</flow_prompt>"
 EXTRACTION_PRIOR_FIELDS_TEMPLATE = (

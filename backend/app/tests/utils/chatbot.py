@@ -19,13 +19,21 @@ from app.models import (
     Project,
 )
 from app.services.chatbot.agents.onboarding import graph as onboarding_graph
-from app.services.chatbot.agents.onboarding.types import FieldExtraction
+from app.services.chatbot.agents.onboarding.types import (
+    ExtractedField,
+    FieldExtraction,
+)
 from app.tests.utils.utils import random_lower_string
 
 DEFAULT_SYSTEM_PROMPT = "Collect the user's name and city."
 
+
+def extracted_fields(fields: dict[str, str]) -> list[ExtractedField]:
+    return [ExtractedField(name=name, value=value) for name, value in fields.items()]
+
+
 NOTHING_EXTRACTED = FieldExtraction(
-    collected_fields={}, missing_fields=[], is_complete=False
+    collected_fields=[], missing_fields=[], is_complete=False
 )
 
 

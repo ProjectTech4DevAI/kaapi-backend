@@ -8,7 +8,11 @@ from app.core.config import settings
 from app.models import Config
 from app.services.chatbot.agents.onboarding.types import FieldExtraction
 from app.tests.utils.auth import TestAuthContext
-from app.tests.utils.chatbot import ScriptedChatModel, patch_chat_model
+from app.tests.utils.chatbot import (
+    ScriptedChatModel,
+    extracted_fields,
+    patch_chat_model,
+)
 from app.tests.utils.test_data import (
     build_anthropic_text_config_blob,
     create_test_config,
@@ -72,7 +76,9 @@ class TestSendChatbotMessage:
                 replies=["Thanks, Asha from Pune!"],
                 extractions=[
                     FieldExtraction(
-                        collected_fields={"name": "Asha", "city": "Pune"},
+                        collected_fields=extracted_fields(
+                            {"name": "Asha", "city": "Pune"}
+                        ),
                         missing_fields=[],
                         is_complete=True,
                     )

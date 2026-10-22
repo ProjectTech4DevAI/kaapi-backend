@@ -131,7 +131,8 @@ def build_onboarding_graph(
                 conversation_view=conversation_view,
             ),
         )
-        merged_fields = {**prior_fields, **extraction.collected_fields}
+        extracted = {field.name: field.value for field in extraction.collected_fields}
+        merged_fields = {**prior_fields, **extracted}
         is_complete = extraction.is_complete and not extraction.missing_fields
         return {
             "context_messages": conversation_view,

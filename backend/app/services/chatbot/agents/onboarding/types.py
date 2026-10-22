@@ -13,12 +13,17 @@ class OnboardingState(TypedDict):
     is_complete: NotRequired[bool]
 
 
+class ExtractedField(BaseModel):
+    name: str = Field(description="snake_case field name.")
+    value: str = Field(description="Value the user clearly provided; never guessed.")
+
+
 class FieldExtraction(BaseModel):
     """Fields the admin's flow prompt asks for, as answered so far by the user."""
 
-    collected_fields: dict[str, str] = Field(
-        default_factory=dict,
-        description="snake_case field name -> value the user clearly provided; never guessed.",
+    collected_fields: list[ExtractedField] = Field(
+        default_factory=list,
+        description="Every field the user has clearly provided, one entry per field.",
     )
     missing_fields: list[str] = Field(
         default_factory=list,

@@ -28,6 +28,7 @@ from app.tests.utils.chatbot import (
     ScriptedChatModel,
     add_test_chatbot_messages,
     create_test_chatbot_session,
+    extracted_fields,
     patch_chat_model,
 )
 from app.tests.utils.test_data import (
@@ -363,7 +364,7 @@ class TestSessionFieldProgress:
             replies=["Thanks, all set!"],
             extractions=[
                 FieldExtraction(
-                    collected_fields={"city": "Pune"},
+                    collected_fields=extracted_fields({"city": "Pune"}),
                     missing_fields=[],
                     is_complete=True,
                 )
@@ -451,7 +452,7 @@ class TestSessionFieldProgress:
             replies=["You're welcome!"],
             extractions=[
                 FieldExtraction(
-                    collected_fields={"name": "Asha", "city": "Pune"},
+                    collected_fields=extracted_fields({"name": "Asha", "city": "Pune"}),
                     missing_fields=[],
                     is_complete=True,
                 )
