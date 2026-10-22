@@ -11,9 +11,10 @@ from app.models.llm import (
     NativeCompletionConfig,
     QueryParams,
 )
-from app.models.llm.constants import CompletionType
+
 from elevenlabs.core.api_error import ApiError
 
+from app.models.llm.constants import CompletionType, DEFAULT_ELEVENLABS_TTS_MODEL
 from app.services.llm.providers.eleven_ai import ElevenlabsAIProvider
 
 pytestmark = pytest.mark.usefixtures("no_retry_backoff")
@@ -407,7 +408,7 @@ class TestElevenlabsProviderTTS:
         assert result is not None
         # Verify the default model was used
         call_kwargs = mock_client.text_to_speech.convert.call_args.kwargs
-        assert call_kwargs["model_id"] == "eleven_v3"
+        assert call_kwargs["model_id"] == DEFAULT_ELEVENLABS_TTS_MODEL
 
     def test_tts_uses_default_voice_when_missing(
         self, provider, mock_client, query_params

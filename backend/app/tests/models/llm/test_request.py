@@ -7,6 +7,7 @@ from app.models.llm.request import (
     ConfigBlob,
     InlineValidator,
     NativeCompletionConfig,
+    TextLLMParams,
     Validator,
     build_kaapi_completion_config,
 )
@@ -78,6 +79,16 @@ class TestKaapiCompletionConfigTemperature:
         assert "temperature" not in kaapi_params_as_dict(
             round_tripped.completion.params
         )
+
+
+class TestTextLLMParamsThinkingLevel:
+    @pytest.mark.parametrize("level", ["minimal", "low", "medium", "high"])
+    def test_accepts_gemini_thinking_levels(self, level: str) -> None:
+        assert TextLLMParams(thinking_level=level).thinking_level == level
+
+    def test_rejects_unknown_thinking_level(self) -> None:
+        with pytest.raises(ValidationError):
+            TextLLMParams(thinking_level="extreme")
 
 
 def _blob(input_guardrails: list) -> ConfigBlob:
