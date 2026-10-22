@@ -177,34 +177,41 @@ class SimpleStorageName:
 PENDING_PREFIX = "pending"
 PENDING_TTL_DAYS = 1
 
+LLM_AUDIO_PREFIX = "llm-audio"
+
 
 class CloudStorage(ABC):
     def __init__(self, project_id: int, storage_path: UUID):
         self.project_id = project_id
         self.storage_path = str(storage_path)
 
-    def url_for(self, file_path: Path, is_pending: bool = False) -> SimpleStorageName:
+    def url_for(
+        self, file_path: Path, root_prefix: str | None = None
+    ) -> SimpleStorageName:
         """Resolve a project-relative path into a fully qualified storage name.
 
         The single place a key is built — callers never join storage_path themselves.
 
         Args:
             file_path: Path relative to the project's storage root.
-            is_pending: Place the key under ``PENDING_PREFIX`` — the holding area for
-                uploads that have not been registered yet. An S3 lifecycle rule deletes
-                everything there after ``PENDING_TTL_DAYS`` (1 day), so pass True only
-                for objects that are meant to disappear if registration never happens.
-                Registered documents use the default (False) and are never expired.
+            root_prefix: Literal prefix placed *ahead of* storage_path, so a single
+                S3 lifecycle rule matches it across every project. ``PENDING_PREFIX``
+                is the holding area for unregistered uploads, deleted after
+                ``PENDING_TTL_DAYS``; ``LLM_AUDIO_PREFIX`` holds LLM call audio,
+                deleted after the llm_call retention window. Leave as None for
+                objects that are never expired.
         """
         if file_path.is_absolute():
             raise ValueError("file_path must be relative to the project's storage root")
         roots = (
-            (PENDING_PREFIX, self.storage_path) if is_pending else (self.storage_path,)
+            (root_prefix, self.storage_path) if root_prefix else (self.storage_path,)
         )
         return SimpleStorageName(Path(*roots, file_path).as_posix())
 
     @abstractmethod
-    def put(self, source: UploadFile, filepath: Path) -> SimpleStorageName:
+    def put(
+        self, source: UploadFile, filepath: Path, root_prefix: str | None = None
+    ) -> SimpleStorageName:
         """Upload a file to storage"""
         pass
 
@@ -269,8 +276,10 @@ class AmazonCloudStorage(CloudStorage):
         super().__init__(project_id, storage_path)
         self.aws = AmazonCloudStorageClient()
 
-    def put(self, source: UploadFile, file_path: Path) -> SimpleStorageName:
-        destination = self.url_for(file_path)
+    def put(
+        self, source: UploadFile, file_path: Path, root_prefix: str | None = None
+    ) -> SimpleStorageName:
+        destination = self.url_for(file_path, root_prefix=root_prefix)
         kwargs = asdict(destination)
 
         try:
@@ -424,7 +433,7 @@ class AmazonCloudStorage(CloudStorage):
         """
         expires_in = min(expires_in, self.MAX_SIGNED_URL_EXPIRY)
 
-        name = self.url_for(file_path, is_pending=True)
+        name = self.url_for(file_path, root_prefix=PENDING_PREFIX)
         encoded = quote(filename)
         meta_field = f"x-amz-meta-{FILENAME_METADATA_KEY}"
         try:
