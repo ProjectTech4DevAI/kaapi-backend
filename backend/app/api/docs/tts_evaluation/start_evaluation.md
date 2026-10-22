@@ -9,7 +9,10 @@ Optional fields:
 
 The evaluation will:
 1. Process each text sample through the specified TTS models
-2. Generate speech audio using Gemini Batch API
-3. Store WAV audio files in S3 for human review
+2. Generate speech audio: Gemini models via the Gemini Batch API; Sarvam and ElevenLabs models via direct API calls in background workers
+3. Store 24 kHz mono WAV audio files in S3 for human review
 
-**Supported models:** `gemini-2.5-pro-preview-tts`
+Synthesis uses the dataset's language; datasets without a language are synthesized as `en-IN`.
+The response's `run_metadata.voices` lists the voice used per model.
+
+**Supported models:** `gemini-2.5-pro-preview-tts`, `gemini-3.1-flash-tts-preview`, `bulbul:v3` (Sarvam), `eleven_v3`, `eleven_v4` (ElevenLabs)
