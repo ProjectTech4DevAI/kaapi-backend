@@ -5,8 +5,8 @@ split of the responses stage. External boundaries (OpenAI, Langfuse, S3, Celery
 dispatch) are mocked; the DB is real (`db` fixture).
 
 Per-row timing is pinned at the worker level in `test_fast_llm_call.py` by
-patching `app.crud.evaluations.fast.time`, which swaps the whole `time` module
-object seen by `fast.py`; tests here never patch the clock because the thread
+patching `app.crud.evaluations.latency.time`, which swaps the whole `time` module
+object seen by `start_timer`/`elapsed_ms`; tests here never patch the clock because the thread
 pool interleaves `perf_counter` reads across rows.
 """
 

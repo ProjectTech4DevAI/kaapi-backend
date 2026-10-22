@@ -1,7 +1,7 @@
-"""Average OpenAI call latency for fast evaluation runs.
-"""
+"""Average OpenAI call latency for fast evaluation runs."""
 
 import logging
+import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -21,8 +21,20 @@ CALL_COUNT_KEY = "call_count"
 # Unrounded running total; internal to the rollup, never persisted.
 _SUM_MS_KEY = "sum_ms"
 
+StageEntry = dict[str, float | int]
 
-def _stage_entry(rows: Iterable[Mapping[str, Any]]) -> dict[str, float] | None:
+
+def start_timer() -> float:
+    """Monotonic reading to pass to `elapsed_ms`; the single clock seam tests patch."""
+    return time.perf_counter()
+
+
+def elapsed_ms(started: float) -> float:
+    """Milliseconds since `start_timer()`, rounded."""
+    return round((time.perf_counter() - started) * MS_PER_SECOND, LATENCY_MS_DECIMALS)
+
+
+def _stage_entry(rows: Iterable[Mapping[str, Any]]) -> StageEntry | None:
     """Unrounded `{sum_ms, call_count}` over successful timed rows; None if none."""
     sum_ms = 0.0
     count = 0
@@ -40,14 +52,14 @@ def _stage_entry(rows: Iterable[Mapping[str, Any]]) -> dict[str, float] | None:
     return {_SUM_MS_KEY: sum_ms, CALL_COUNT_KEY: count}
 
 
-def _emit_entry(sum_ms: float, count: int) -> dict[str, float]:
+def _emit_entry(sum_ms: float, count: int) -> StageEntry:
     return {
         AVG_LATENCY_MS_KEY: round(sum_ms / count, LATENCY_MS_DECIMALS),
         CALL_COUNT_KEY: count,
     }
 
 
-def _preserved_entry(entry: Mapping[str, Any] | None) -> dict[str, float] | None:
+def _preserved_entry(entry: Mapping[str, Any] | None) -> StageEntry | None:
     """Carry a persisted stage entry forward, with an approximate sum for the overall."""
     if not entry:
         return None
@@ -64,12 +76,12 @@ def _preserved_entry(entry: Mapping[str, Any] | None) -> dict[str, float] | None
 
 
 def _build_latency_dict(
-    response: dict[str, float] | None,
-    embedding: dict[str, float] | None,
-    judge: dict[str, float] | None,
+    response: StageEntry | None,
+    embedding: StageEntry | None,
+    judge: StageEntry | None,
 ) -> dict[str, Any] | None:
     """Combine present stages into the `eval_run.latency` payload; None if none."""
-    stages: dict[str, dict[str, float] | None] = {
+    stages: dict[str, StageEntry | None] = {
         STAGE_RESPONSE: response,
         STAGE_EMBEDDING: embedding,
         STAGE_JUDGE: judge,
@@ -116,7 +128,7 @@ def attach_latency(
             STAGE_JUDGE: judge_results,
         }
 
-        entries: dict[str, dict[str, float] | None] = {}
+        entries: dict[str, StageEntry | None] = {}
         for stage, rows in passed.items():
             if rows is None:
                 entries[stage] = _preserved_entry(existing.get(stage))

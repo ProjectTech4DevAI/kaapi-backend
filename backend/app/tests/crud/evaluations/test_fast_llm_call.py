@@ -211,10 +211,10 @@ class TestBlockResultMapping:
 def fast_clock() -> Iterator[MagicMock]:
     """1.5 s between the two reads, open-ended so an extra read never StopIterations.
 
-    Patches `fast.time` (the whole module object), never global perf_counter:
+    Patches `latency.time` (the whole module object), never global perf_counter:
     tenacity's own timing uses it.
     """
-    with patch("app.crud.evaluations.fast.time") as mock_time:
+    with patch("app.crud.evaluations.latency.time") as mock_time:
         mock_time.perf_counter.side_effect = itertools.chain(
             [0.0, 1.5], itertools.repeat(1.5)
         )

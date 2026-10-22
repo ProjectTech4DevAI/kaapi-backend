@@ -28,7 +28,6 @@ See `Fast Evaluation SRD.md` for the full design.
 """
 
 import logging
-import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -95,17 +94,13 @@ from app.crud.evaluations.fast_results import (
 )
 from app.crud.evaluations.fast_traces import build_trace_records
 from app.crud.evaluations.judge import METRIC_REGISTRY, JudgeMetricSpec, JudgeResult
-from app.crud.evaluations.latency import (
-    LATENCY_MS_DECIMALS,
-    MS_PER_SECOND,
-    attach_latency,
-)
 from app.crud.evaluations.judge_stage import (
     build_metric_summary_scores,
     judge_rows,
     resolve_config_prompt,
     select_judgeable_rows,
 )
+from app.crud.evaluations.latency import attach_latency, elapsed_ms, start_timer
 from app.crud.evaluations.langfuse import (
     create_langfuse_dataset_run,
     update_traces_with_cosine_scores,
@@ -246,16 +241,14 @@ def _llm_call_for_item(
         return failed_result("ERROR: missing question in dataset item")
 
     try:
-        started = time.perf_counter()
+        started = start_timer()
         result = _execute_llm_call_for_question(
             config=config,
             question=question,
             project_id=project_id,
             organization_id=organization_id,
         )
-        latency_ms = round(
-            (time.perf_counter() - started) * MS_PER_SECOND, LATENCY_MS_DECIMALS
-        )
+        latency_ms = elapsed_ms(started)
     except Exception as exc:
         logger.warning(
             f"[_llm_call_for_item] Item failed | item_id={item_id} | error={exc}",
@@ -314,16 +307,14 @@ def _embedding_call_for_pair(
         return build_embedding_failure(item_id, "empty output or ground_truth")
 
     try:
-        started = time.perf_counter()
+        started = start_timer()
         response = _create_embedding(
             openai_client,
             model=embedding_model,
             output_text=output_text,
             ground_truth=ground_truth,
         )
-        latency_ms = round(
-            (time.perf_counter() - started) * MS_PER_SECOND, LATENCY_MS_DECIMALS
-        )
+        latency_ms = elapsed_ms(started)
     except openai.OpenAIError as exc:
         logger.warning(
             f"[_embedding_call_for_pair] Item failed | item_id={item_id} | error={exc}"

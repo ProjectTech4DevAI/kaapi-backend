@@ -559,7 +559,7 @@ class TestGroundTruthScoring:
             store=_s3_store,
         )
 
-        with patch("app.crud.evaluations.judge.time") as mock_time:
+        with patch("app.crud.evaluations.latency.time") as mock_time:
             mock_time.perf_counter.side_effect = itertools.chain(
                 [1.0, 1.25], itertools.repeat(1.25)
             )

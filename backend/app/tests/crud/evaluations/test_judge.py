@@ -362,7 +362,7 @@ class TestJudgeRow:
             return_value=_judge_response(
                 {"ground_truth": {"score": 5, "reasoning": "same meaning"}}
             ),
-        ), patch("app.crud.evaluations.judge.time") as mock_time:
+        ), patch("app.crud.evaluations.latency.time") as mock_time:
             mock_time.perf_counter.side_effect = itertools.chain(
                 [1.0, 1.35], itertools.repeat(1.35)
             )

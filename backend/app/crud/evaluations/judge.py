@@ -9,7 +9,6 @@ remaining metrics.
 
 import json
 import logging
-import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -26,7 +25,7 @@ from app.crud.evaluations.judge_prompts import (
     KNOWLEDGE_BASE_JUDGE_PROMPT,
     PROMPT_JUDGE_PROMPT,
 )
-from app.crud.evaluations.latency import LATENCY_MS_DECIMALS, MS_PER_SECOND
+from app.crud.evaluations.latency import elapsed_ms, start_timer
 from app.crud.evaluations.response_parsing import extract_response_text
 from app.crud.evaluations.retry import retry_openai_call
 from app.crud.evaluations.score import (
@@ -307,11 +306,9 @@ def judge_row(
     }
 
     try:
-        started = time.perf_counter()
+        started = start_timer()
         response = _create_judge_response(openai_client, params)
-        latency_ms = round(
-            (time.perf_counter() - started) * MS_PER_SECOND, LATENCY_MS_DECIMALS
-        )
+        latency_ms = elapsed_ms(started)
     except openai.OpenAIError as exc:
         status = getattr(exc, "status_code", None)
         # 5xx is provider-side (alert-worthy); 4xx/None is caller/Kaapi-side noise.

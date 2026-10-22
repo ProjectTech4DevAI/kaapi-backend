@@ -568,7 +568,7 @@ class EvaluationRunPublic(SQLModel):
     is_score_updated: bool | None = None
     is_judge_run: bool | None = None
     cost: dict[str, Any] | None
-    latency: dict[str, Any] | None = None
+    latency: dict[str, Any] | None
     error_message: str | None
     organization_id: int
     project_id: int
