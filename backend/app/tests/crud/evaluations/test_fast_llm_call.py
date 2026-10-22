@@ -1,13 +1,17 @@
-"""Fast-eval generation against `execute_llm_call`."""
+"""Fast-eval per-item workers: generation via `execute_llm_call`, embedding pairs."""
 
+import itertools
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
+import openai
 import pytest
 
 from app.crud.evaluations.fast import (
+    _embedding_call_for_pair,
     _execute_llm_call_for_question,
     _llm_call_for_item,
 )
@@ -201,6 +205,155 @@ class TestBlockResultMapping:
 
         assert result["input_to_llm"] is None
         assert result["output_from_llm"] is None
+
+
+@pytest.fixture
+def fast_clock() -> Iterator[MagicMock]:
+    """1.5 s between the two reads, open-ended so an extra read never StopIterations.
+
+    Patches `latency.time` (the whole module object), never global perf_counter:
+    tenacity's own timing uses it.
+    """
+    with patch("app.crud.evaluations.latency.time") as mock_time:
+        mock_time.perf_counter.side_effect = itertools.chain(
+            [0.0, 1.5], itertools.repeat(1.5)
+        )
+        yield mock_time
+
+
+class TestResponseLatency:
+    def test_successful_call_records_wall_time_in_ms(
+        self, fast_clock: MagicMock
+    ) -> None:
+        result, _ = _run_item(
+            BlockResult(response=text_llm_call_response("answer"), usage=USAGE)
+        )
+
+        assert result["failed"] is False
+        assert result["latency_ms"] == 1500.0
+
+    def test_raised_exception_has_no_latency(self, fast_clock: MagicMock) -> None:
+        result, _ = _run_item(RuntimeError("boom"))
+
+        assert result["failed"] is True
+        assert result["latency_ms"] is None
+
+    def test_provider_error_has_no_latency(self, fast_clock: MagicMock) -> None:
+        result, _ = _run_item(BlockResult(error="provider 503", usage=USAGE))
+
+        assert result["failed"] is True
+        assert result["latency_ms"] is None
+
+    def test_retry_exhausted_row_has_no_latency(
+        self, fast_clock: MagicMock, no_backoff: list[float]
+    ) -> None:
+        with patch(
+            "app.crud.evaluations.fast.execute_llm_call",
+            return_value=BlockResult(error="provider 503", retryable=True),
+        ) as mock_execute:
+            result = _llm_call_for_item(
+                config=_config(),
+                project_id=PROJECT_ID,
+                organization_id=ORG_ID,
+                item=_item(),
+            )
+
+        assert mock_execute.call_count == 3
+        assert result["failed"] is True
+        assert result["latency_ms"] is None
+
+    def test_missing_question_has_no_latency(self, fast_clock: MagicMock) -> None:
+        result, _ = _run_item(
+            BlockResult(response=text_llm_call_response()), item=_item(question=None)
+        )
+
+        assert result["latency_ms"] is None
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            BlockResult(guardrail_outcome="blocked", error="uli", usage=USAGE),
+            BlockResult(
+                guardrail_outcome="rephrased",
+                response=text_llm_call_response("please rephrase"),
+                usage=USAGE,
+            ),
+        ],
+        ids=["blocked", "rephrased"],
+    )
+    def test_guardrail_short_circuit_is_not_a_timed_call(
+        self, fast_clock: MagicMock, block: BlockResult
+    ) -> None:
+        # Scored (failed=False) but may never have reached the LLM.
+        result, _ = _run_item(block)
+
+        assert result["failed"] is False
+        assert result["latency_ms"] is None
+
+    def test_guardrail_applied_row_is_still_timed(self, fast_clock: MagicMock) -> None:
+        result, _ = _run_item(
+            BlockResult(
+                response=text_llm_call_response("answer"),
+                usage=USAGE,
+                metadata={"input_guardrail": {"input_to_llm": "redacted q"}},
+            )
+        )
+
+        assert result["guardrail"] == "applied"
+        assert result["latency_ms"] == 1500.0
+
+
+class TestEmbeddingLatency:
+    @staticmethod
+    def _client(
+        *, data: list[tuple[int, list[float]]] | None = None, error=None
+    ) -> MagicMock:
+        client = MagicMock()
+        if error is not None:
+            client.embeddings.create.side_effect = error
+        else:
+            client.embeddings.create.return_value = SimpleNamespace(
+                data=[SimpleNamespace(index=i, embedding=v) for i, v in data or []],
+                usage=SimpleNamespace(prompt_tokens=4, total_tokens=4),
+            )
+        return client
+
+    def _embed(self, client: MagicMock, output_text: str = "out") -> dict[str, Any]:
+        return _embedding_call_for_pair(
+            openai_client=client,
+            embedding_model="text-embedding-3-small",
+            item_id="item-1",
+            output_text=output_text,
+            ground_truth="golden",
+        )
+
+    def test_successful_pair_records_wall_time_in_ms(
+        self, fast_clock: MagicMock
+    ) -> None:
+        result = self._embed(self._client(data=[(0, [1.0]), (1, [2.0])]))
+
+        assert result["failed"] is False
+        assert result["latency_ms"] == 1500.0
+
+    def test_openai_error_has_no_latency(self, fast_clock: MagicMock) -> None:
+        # Base OpenAIError is not in the retryable set, so no backoff runs.
+        result = self._embed(self._client(error=openai.OpenAIError("bad request")))
+
+        assert result["failed"] is True
+        assert result["latency_ms"] is None
+
+    def test_short_payload_has_no_latency(self, fast_clock: MagicMock) -> None:
+        result = self._embed(self._client(data=[(0, [1.0])]))
+
+        assert result["failed"] is True
+        assert result["latency_ms"] is None
+
+    def test_empty_side_is_not_called_or_timed(self, fast_clock: MagicMock) -> None:
+        client = self._client(data=[(0, [1.0]), (1, [2.0])])
+        result = self._embed(client, output_text="")
+
+        assert client.embeddings.create.call_count == 0
+        assert result["latency_ms"] is None
 
 
 class TestRowIsolation:
