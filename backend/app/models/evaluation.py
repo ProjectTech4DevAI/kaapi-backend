@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, NotRequired, Optional, TypedDict
 from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl
@@ -641,3 +641,57 @@ class PromptRecommendationJobPublic(SQLModel):
     recommendation_type: Literal["prompt"] = "prompt"
     config_version: ConfigVersionPublic | None = None
     error_message: str | None = None
+
+
+class TraceScore(TypedDict):
+    """A score attached to a trace."""
+
+    name: str
+    value: float | str
+    data_type: str
+    comment: NotRequired[str]
+    verdict: NotRequired[str]
+    # True for placeholder scores on unscoreable items; excluded from summary stats.
+    unscoreable: NotRequired[bool]
+
+
+class TraceData(TypedDict):
+    """Data for a single trace including Q&A and scores."""
+
+    trace_id: str
+    question: str
+    llm_answer: str
+    question_id: int | None
+    ground_truth_answer: str
+    category: NotRequired[str]
+    # "blocked: ..." | "rephrased" | "applied"; None if guardrails didn't fire.
+    guardrail: NotRequired[str | None]
+    # LLM input after input guardrails / output before output guardrails.
+    input_to_llm: NotRequired[str | None]
+    output_from_llm: NotRequired[str | None]
+    scores: list[TraceScore]
+
+
+class TraceScoreSummary(TypedDict):
+    """A TraceScore without the UI-only fields (data_type, verdict)."""
+
+    name: str
+    value: float | str
+    comment: NotRequired[str]
+    unscoreable: NotRequired[bool]
+
+
+class TraceAttempt(TypedDict):
+    """One run of a question: its answer and scores."""
+
+    llm_answer: str
+    scores: list[TraceScoreSummary]
+
+
+class TraceQuestion(TypedDict):
+    """A dataset question with one attempt per duplication-factor repeat."""
+
+    question_id: int | str | None
+    question: str
+    ground_truth_answer: str
+    attempts: list[TraceAttempt]

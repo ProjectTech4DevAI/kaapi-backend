@@ -4,13 +4,11 @@ import sqlalchemy as sa
 from pydantic import field_validator, model_validator
 from sqlmodel import Field, Relationship, SQLModel
 
-from app.core.providers import (
+from app.core import providers as core_providers
+from app.models.provider_credentials import (
     CredentialPayload,
     Provider,
     ProviderCredentials,
-    mask_credential_fields,
-    parse_provider_credentials,
-    validate_provider,
 )
 from app.core.util import now
 from app.models.organization import Organization
@@ -62,9 +60,9 @@ class CredsCreate(SQLModel):
             return value
 
         return {
-            validate_provider(provider).value: parse_provider_credentials(
-                provider, payload
-            )
+            core_providers.validate_provider(
+                provider
+            ).value: core_providers.parse_provider_credentials(provider, payload)
             for provider, payload in value.items()
         }
 
@@ -106,7 +104,7 @@ class CredsUpdate(SQLModel):
         if not isinstance(provider, str) or credential is None:
             return data
 
-        provider_key = validate_provider(provider).value
+        provider_key = core_providers.validate_provider(provider).value
         nested = credential.get(provider_key) if isinstance(credential, dict) else None
         if isinstance(nested, dict):
             credential = nested
@@ -115,7 +113,7 @@ class CredsUpdate(SQLModel):
         # credential, so it is rejected here rather than deferred to the
         # crud-level merge check.
         if isinstance(credential, dict) and not credential:
-            parse_provider_credentials(provider_key, credential)
+            core_providers.parse_provider_credentials(provider_key, credential)
 
         return {
             **data,
@@ -188,7 +186,7 @@ class Credential(CredsBase, table=True):
 
         decrypted = decrypt_credentials(self.credential) if self.credential else None
         if mask and decrypted:
-            decrypted = mask_credential_fields(self.provider, decrypted)
+            decrypted = core_providers.mask_credential_fields(self.provider, decrypted)
 
         return CredsPublic(
             id=self.id,
