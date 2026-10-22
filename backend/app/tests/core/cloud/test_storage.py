@@ -12,6 +12,8 @@ from moto import mock_aws
 
 from app.core.cloud.storage import (
     GCS_SCOPES,
+    LLM_AUDIO_PREFIX,
+    PENDING_PREFIX,
     AmazonCloudStorage,
     AmazonCloudStorageClient,
     CloudStorageError,
@@ -50,10 +52,17 @@ class TestUrlFor:
     def test_pending_prefix_leads_the_key(self) -> None:
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
 
-        name = storage.url_for(Path("report.pdf"), is_pending=True)
+        name = storage.url_for(Path("report.pdf"), root_prefix=PENDING_PREFIX)
 
         # Ahead of storage_path, not after it: one literal-prefix rule must match every project.
         assert name.Key == f"pending/{storage.storage_path}/report.pdf"
+
+    def test_llm_audio_prefix_leads_the_key(self) -> None:
+        storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
+
+        name = storage.url_for(Path("tts/call.wav"), root_prefix=LLM_AUDIO_PREFIX)
+
+        assert name.Key == f"llm-audio/{storage.storage_path}/tts/call.wav"
 
     def test_absolute_path_is_rejected(self) -> None:
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
@@ -139,7 +148,7 @@ class TestHead:
         aws = AmazonCloudStorageClient()
         aws.create()
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
-        name = storage.url_for(Path(str(uuid4())), is_pending=True)
+        name = storage.url_for(Path(str(uuid4())), root_prefix=PENDING_PREFIX)
         aws.client.put_object(
             Bucket=name.Bucket,
             Key=name.Key,
@@ -180,7 +189,7 @@ class TestCopy:
         aws = AmazonCloudStorageClient()
         aws.create()
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
-        source = storage.url_for(Path("waiting.pdf"), is_pending=True)
+        source = storage.url_for(Path("waiting.pdf"), root_prefix=PENDING_PREFIX)
         aws.client.put_object(
             Bucket=source.Bucket, Key=source.Key, Body=b"pending bytes"
         )
@@ -197,7 +206,7 @@ class TestCopy:
     def test_missing_source_raises_object_not_found(self) -> None:
         AmazonCloudStorageClient().create()
         storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
-        source = str(storage.url_for(Path("absent.pdf"), is_pending=True))
+        source = str(storage.url_for(Path("absent.pdf"), root_prefix=PENDING_PREFIX))
 
         with pytest.raises(ObjectNotFoundError):
             storage.copy(source, Path("final.pdf"))

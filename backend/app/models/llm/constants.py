@@ -1,6 +1,8 @@
 from enum import StrEnum
 from typing import Literal, Union
 
+from sqlalchemy import text
+
 
 class Provider(StrEnum):
     OPENAI = "openai"
@@ -244,3 +246,31 @@ ELEVENLABS_VOICE_TO_ID: dict[str, str] = {
     "Callum": "N2lVS1w4EtoT3dr4eOWO",
     "Liam": "TX3LPaxmHKxFdv7VOQHJ",
 }
+
+
+class LlmAudioKindEnum(StrEnum):
+    STT = "stt"
+    TTS = "tts"
+
+
+REDACTION_PLACEHOLDER = "[redacted]"
+
+REDACT_LLM_CALL_RECORDS_SQL = text(
+    """
+    UPDATE llm_call
+    SET input = :redaction_placeholder,
+        content = CASE
+            WHEN jsonb_typeof(content) = 'object'
+            THEN jsonb_set(content, '{content,value}', to_jsonb(CAST(:redaction_placeholder AS text)), false)
+            ELSE content
+        END
+    WHERE updated_at <= :retention_cutoff
+      AND (
+        input <> :redaction_placeholder
+        OR (
+            jsonb_typeof(content) = 'object'
+            AND content #>> '{content,value}' <> :redaction_placeholder
+        )
+      )
+    """
+)
