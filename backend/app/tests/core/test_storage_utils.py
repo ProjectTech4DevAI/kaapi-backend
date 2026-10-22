@@ -4,15 +4,18 @@ import json
 from datetime import datetime
 from io import BytesIO
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
-from app.core.cloud.storage import CloudStorageError
+from app.core.cloud.storage import AmazonCloudStorage, CloudStorageError
+from app.models.llm.constants import LlmAudioKindEnum
 from app.core.storage_utils import (
     generate_timestamped_filename,
     get_mime_from_url,
     load_json_from_object_store,
     upload_jsonl_to_object_store,
+    upload_audio_bytes_to_s3,
     upload_to_object_store,
 )
 
@@ -150,6 +153,32 @@ class TestUploadToObjectStore:
         )
 
         assert result is None
+
+
+class TestUploadAudioBytesToS3:
+    @pytest.mark.parametrize("kind", list(LlmAudioKindEnum))
+    def test_key_sits_under_llm_audio_prefix_without_tenant_ids(
+        self, kind: LlmAudioKindEnum
+    ) -> None:
+        storage = AmazonCloudStorage(project_id=42, storage_path=uuid4())
+        storage.aws = MagicMock()
+        call_id = uuid4()
+
+        url = upload_audio_bytes_to_s3(storage, b"RIFF", call_id, "audio/mpeg", kind)
+
+        assert url is not None
+        key = url.split("/", 3)[3]
+        assert key == f"llm-audio/{storage.storage_path}/{kind.value}/{call_id}.mp3"
+
+    def test_unknown_mime_type_falls_back_to_wav(self) -> None:
+        storage = AmazonCloudStorage(project_id=1, storage_path=uuid4())
+        storage.aws = MagicMock()
+
+        url = upload_audio_bytes_to_s3(
+            storage, b"RIFF", uuid4(), None, LlmAudioKindEnum.TTS
+        )
+
+        assert url is not None and url.endswith(".wav")
 
 
 class TestUploadJsonlToObjectStore:
