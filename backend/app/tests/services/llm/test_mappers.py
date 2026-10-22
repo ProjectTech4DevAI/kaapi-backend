@@ -7,6 +7,7 @@ Covers real-world scenarios, edge cases, and provider-specific requirements.
 
 from sqlmodel import Session
 
+from app.models.llm.constants import DEFAULT_ELEVENLABS_TTS_MODEL
 from app.models.llm.request import (
     NativeCompletionConfig,
     STTLLMParams,
@@ -210,7 +211,6 @@ class TestMapKaapiToGoogleParams:
 
         assert result == {
             "model": "gemini-2.5-pro",
-            "temperature": 0.7,
             "video_part_config": {"videoMetadata": {"fps": 1.0}},
             "media_resolution": "MEDIA_RESOLUTION_LOW",
         }
@@ -228,7 +228,7 @@ class TestMapKaapiToGoogleParams:
 
         assert result["model"] == "gemini-2.5-pro"
         assert result["reasoning"] == "high"
-        assert result["temperature"] == 0.5
+        assert "temperature" not in result
         assert warnings == []
 
     def test_text_completion_knowledge_base_passthrough(self):
@@ -271,8 +271,29 @@ class TestMapKaapiToGoogleParams:
             kaapi_params.model_dump(exclude_none=True), completion_type="text"
         )
 
-        assert result["top_p"] == 0.8
+        assert "top_p" not in result
         assert result["max_output_tokens"] == 512
+        assert warnings == []
+
+    def test_text_completion_temperature_and_top_p_dropped_silently(self):
+        kaapi_params = TextLLMParams(model="gemini-2.5-pro", temperature=0.0, top_p=0.5)
+
+        result, warnings = map_kaapi_to_google_params(
+            kaapi_params.model_dump(exclude_none=True), completion_type="text"
+        )
+
+        assert "temperature" not in result
+        assert "top_p" not in result
+        assert warnings == []
+
+    def test_stt_completion_drops_temperature_silently(self):
+        kaapi_params = STTLLMParams(model="gemini-2.5-pro", temperature=0.3)
+
+        result, warnings = map_kaapi_to_google_params(
+            kaapi_params.model_dump(exclude_none=True), completion_type="stt"
+        )
+
+        assert "temperature" not in result
         assert warnings == []
 
     def test_text_completion_thinking_level_maps_to_thinking_config(self):
@@ -336,9 +357,8 @@ class TestMapKaapiToGoogleParams:
 
         assert result["model"] == "gemini-2.5-pro"
         assert result["voice"] == "Orus"
-        assert (
-            result["language"] == "en"
-        )  # Mapped from en-IN to en via BCP47_LOCALE_TO_GEMINI_LANG
+        # Full locale is kept: collapsing en-IN to "en" loses the Indian accent.
+        assert result["language"] == "en-IN"
         assert result["response_format"] == "wav"  # Default
         assert warnings == []
 
@@ -400,12 +420,12 @@ class TestMapKaapiToGoogleParams:
         assert "language" not in result  # Not set = auto-detect
         assert warnings == []
 
-    def test_tts_unsupported_language_warns_and_auto_detects(self):
-        """Test TTS with unsupported language generates warning and uses auto-detect."""
+    @pytest.mark.parametrize("language", ["fr-FR", "as-IN"])
+    def test_tts_unsupported_language_falls_back_to_auto_detect(self, language):
         kaapi_params = TTSLLMParams(
             model="gemini-2.5-pro",
             voice="Kore",
-            language="fr-FR",  # French not in BCP47_LOCALE_TO_GEMINI_LANG
+            language=language,
         )
 
         result, warnings = map_kaapi_to_google_params(
@@ -414,14 +434,36 @@ class TestMapKaapiToGoogleParams:
 
         assert result["model"] == "gemini-2.5-pro"
         assert result["voice"] == "Kore"
-        assert result["response_format"] == "wav"  # Default
-        assert "language" not in result  # Not set, falls back to auto-detect
-        assert len(warnings) == 1
-        assert "Unsupported language 'fr-FR'" in warnings[0]
-        assert "auto-detect" in warnings[0]
+        assert result["response_format"] == "wav"
+        assert "language" not in result
+        assert warnings == [
+            f"Unsupported language '{language}' for Gemini TTS, using auto-detect"
+        ]
 
-    def test_tts_supported_language_maps_correctly(self):
-        """Test TTS with supported BCP-47 language maps to Gemini language code."""
+    def test_tts_odia_maps_to_standard_locale(self):
+        # Kaapi's canonical Odia tag is the non-standard od-IN.
+        kaapi_params = TTSLLMParams(
+            model="gemini-2.5-pro", voice="Kore", language="odia"
+        )
+
+        result, warnings = map_kaapi_to_google_params(
+            kaapi_params.model_dump(exclude_none=True), completion_type="tts"
+        )
+
+        assert result["language"] == "or-IN"
+        assert warnings == []
+
+    def test_tts_without_language_leaves_it_unset(self):
+        kaapi_params = TTSLLMParams(model="gemini-2.5-pro", voice="Kore")
+
+        result, warnings = map_kaapi_to_google_params(
+            kaapi_params.model_dump(exclude_none=True), completion_type="tts"
+        )
+
+        assert "language" not in result
+        assert warnings == []
+
+    def test_tts_indic_language_keeps_full_locale(self):
         kaapi_params = TTSLLMParams(
             model="gemini-2.5-pro", voice="Kore", language="hi-IN"
         )
@@ -432,9 +474,7 @@ class TestMapKaapiToGoogleParams:
 
         assert result["model"] == "gemini-2.5-pro"
         assert result["voice"] == "Kore"
-        assert (
-            result["language"] == "hi"
-        )  # BCP47_LOCALE_TO_GEMINI_LANG maps hi-IN -> hi
+        assert result["language"] == "hi-IN"
         assert result["response_format"] == "wav"  # Default
         assert warnings == []
 
@@ -898,7 +938,7 @@ class TestMapKaapiToElevenlabsParams:
             kaapi_params, completion_type="tts"
         )
 
-        assert result["model_id"] == "eleven_v3"
+        assert result["model_id"] == DEFAULT_ELEVENLABS_TTS_MODEL
         assert result["voice_id"] == "EXAVITQu4vr4xnSDxMaL"
         assert result["language_code"] == "en"
         assert warnings == []
@@ -1186,9 +1226,7 @@ class TestTransformGoogleVertexRouting:
         assert native_config.provider == "google-native"
         assert native_config.params["model"] == "gemini-2.5-pro"
 
-    def test_unsupported_language_emits_warning(self, db: Session):
-        """Languages not in BCP47_LOCALE_TO_GEMINI_LANG fall back to auto-detect
-        and surface a warning, rather than silently being dropped."""
+    def test_unlisted_language_falls_back_to_auto_detect(self, db: Session):
         kaapi_config = build_kaapi_completion_config(
             provider="google",
             type="tts",
@@ -1203,9 +1241,10 @@ class TestTransformGoogleVertexRouting:
         )
 
         assert native_config.provider == "google-native"
-        assert "language" not in native_config.params  # dropped
-        assert len(warnings) == 1
-        assert "xx-YY" in warnings[0]
+        assert "language" not in native_config.params
+        assert warnings == [
+            "Unsupported language 'xx-YY' for Gemini TTS, using auto-detect"
+        ]
 
 
 class TestTransformGoogleGCPRouting:
@@ -1424,7 +1463,7 @@ class TestTransformKaapiConfigToNative:
         assert result.provider == "google-aistudio-native"
         assert result.type == "text"
         assert result.params["model"] == "gemini-2.5-pro"
-        assert result.params["temperature"] == 0.7
+        assert "temperature" not in result.params
         assert result.params["reasoning"] == "high"
         assert warnings == []
 
@@ -1468,7 +1507,7 @@ class TestTransformKaapiConfigToNative:
         assert result.type == "tts"
         assert result.params["model"] == "gemini-2.5-flash-preview-tts"
         assert result.params["voice"] == "Kore"
-        assert result.params["language"] == "hi"  # Mapped from hi-IN
+        assert result.params["language"] == "hi-IN"
         assert result.params["response_format"] == "wav"  # Default
         assert warnings == []
 

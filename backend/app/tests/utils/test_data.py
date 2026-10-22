@@ -1,6 +1,6 @@
 from sqlmodel import Session
 
-from app.core.providers import Provider
+from app.models.provider_credentials import Provider
 from app.crud import (
     APIKeyCrud,
     create_fine_tuning_job,
