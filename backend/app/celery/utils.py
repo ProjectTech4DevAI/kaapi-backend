@@ -354,10 +354,6 @@ def start_chatbot_session_message(
         webhook_url=webhook_url,
         trace_id=trace_id,
     )
-    logger.info(
-        f"[start_chatbot_session_message] Enqueued chatbot turn | "
-        f"session_id: {session_id}, task_id: {task_id}"
-    )
     return task_id
 
 

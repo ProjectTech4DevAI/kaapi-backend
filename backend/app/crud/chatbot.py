@@ -1,4 +1,3 @@
-import logging
 from uuid import UUID
 
 from sqlmodel import Session, col, select
@@ -9,8 +8,6 @@ from app.models import (
     ChatbotSession,
     ChatbotSessionMessage,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def create_chatbot_session(
@@ -37,10 +34,6 @@ def create_chatbot_session(
     session.add(chatbot_session)
     session.commit()
     session.refresh(chatbot_session)
-    logger.info(
-        f"[create_chatbot_session] Chatbot session created | "
-        f"session_id: {chatbot_session.id}, project_id: {project_id}, config_id: {config_id}"
-    )
     return chatbot_session
 
 
@@ -75,18 +68,12 @@ def create_chatbot_session_message(
     session.add(message)
     session.commit()
     session.refresh(message)
-    logger.info(
-        f"[create_chatbot_session_message] Chatbot message stored | "
-        f"session_id: {session_id}, role: {role.value}, message_id: {message.id}"
-    )
     return message
 
 
 def list_chatbot_session_messages(
     session: Session, *, session_id: UUID
 ) -> list[ChatbotSessionMessage]:
-    # Unpaginated on purpose: the engine needs the whole transcript each turn
-    # and summarizes long histories itself.
     statement = (
         select(ChatbotSessionMessage)
         .where(ChatbotSessionMessage.session_id == session_id)

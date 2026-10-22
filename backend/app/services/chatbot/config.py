@@ -60,11 +60,7 @@ def resolve_chatbot_model_settings(
     max_tokens: int | None,
     history_token_limit: int | None,
 ) -> ChatbotModelSettings:
-    """Turn a saved config (+ request overrides) into chat-model settings.
-
-    Raises HTTPException(404) when the config/version isn't in the project and
-    ChatbotInputError when the config isn't a usable Anthropic text config.
-    """
+    """Turn a saved config (+ request overrides) into chat-model settings."""
     version_row = _get_config_version(
         session=session,
         project_id=project_id,

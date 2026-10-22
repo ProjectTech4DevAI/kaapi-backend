@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from typing import Any
 from uuid import UUID
 
@@ -19,8 +18,6 @@ from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderEr
 from app.services.chatbot.types import ChatbotMessageDict
 from app.services.chatbot.utils import ChatbotModelSettings
 from app.utils import get_webhook_secret, send_callback
-
-logger = logging.getLogger(__name__)
 
 
 def _split_pending_turn(
@@ -66,11 +63,8 @@ def _send_failure_webhook(
         "error": error,
         "data": {"session_id": str(session_id)},
     }
-    delivered = send_callback(webhook_url, payload, webhook_secret)
-    logger.info(
-        f"[_send_failure_webhook] Failure webhook dispatched | "
-        f"session_id: {session_id}, delivered: {delivered}"
-    )
+    send_callback(webhook_url, payload, webhook_secret)
+    return
 
 
 def process_chatbot_session_message(
@@ -80,11 +74,7 @@ def process_chatbot_session_message(
     project_id: int,
     webhook_url: str,
 ) -> None:
-    """Run the pending chatbot turn for a session and POST the reply to `webhook_url`.
-
-    Idempotent under Celery redelivery: if the transcript already ends on an
-    assistant turn, the pending turn was answered and nothing is re-run.
-    """
+    """Run the pending chatbot turn for a session and POST the reply to `webhook_url`."""
     webhook_secret = get_webhook_secret(project_id, organization_id)
 
     # The DB session is closed before the LLM call so a slow provider doesn't
@@ -97,10 +87,6 @@ def process_chatbot_session_message(
             project_id=project_id,
         )
         if chatbot_session is None:
-            logger.error(
-                f"[process_chatbot_session_message] Chatbot session not found | "
-                f"session_id: {session_id}, project_id: {project_id}"
-            )
             return
 
         stored_messages = list_chatbot_session_messages(session, session_id=session_id)
@@ -108,10 +94,6 @@ def process_chatbot_session_message(
             stored_messages
             and stored_messages[-1].role == ChatbotMessageRoleEnum.ASSISTANT
         ):
-            logger.warning(
-                f"[process_chatbot_session_message] Turn already answered, skipping | "
-                f"session_id: {session_id}"
-            )
             return
 
         system_prompt = chatbot_session.system_prompt
@@ -128,12 +110,6 @@ def process_chatbot_session_message(
                 history_token_limit=None,
             )
         except HTTPException as e:
-            # The config was resolvable at session creation; it has since been
-            # deleted or lost its version, and the caller only hears via webhook.
-            logger.warning(
-                f"[process_chatbot_session_message] Config no longer resolvable | "
-                f"session_id: {session_id}, detail: {e.detail}"
-            )
             _send_failure_webhook(
                 session_id=session_id,
                 webhook_url=webhook_url,
@@ -151,10 +127,6 @@ def process_chatbot_session_message(
             return
 
     history, user_message = _split_pending_turn(stored_messages)
-    logger.info(
-        f"[process_chatbot_session_message] Running turn | session_id: {session_id}, "
-        f"history_count: {len(history)}, has_user_message: {user_message is not None}"
-    )
 
     try:
         transcript = asyncio.run(
@@ -192,8 +164,5 @@ def process_chatbot_session_message(
             "collected_fields": collected_fields,
         },
     }
-    delivered = send_callback(webhook_url, payload, webhook_secret)
-    logger.info(
-        f"[process_chatbot_session_message] Turn completed | session_id: {session_id}, "
-        f"reply_length: {len(reply)}, webhook_delivered: {delivered}"
-    )
+    send_callback(webhook_url, payload, webhook_secret)
+    return
