@@ -205,8 +205,6 @@ class Settings(BaseSettings):
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
     LLM_CALL_RETENTION_HOURS: int = Field(default=168, ge=1)
-    LLM_CALL_RETENTION_CRON_SCHEDULE: str = "0 9 * * *"
-    LLM_CALL_RETENTION_CRON_TIMEZONE: str = "Asia/Kolkata"
 
     ANTHROPIC_API_KEY: str = ""
     PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"

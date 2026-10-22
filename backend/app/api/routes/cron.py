@@ -59,9 +59,9 @@ PENDING_JOBS_CRON_MONITOR_CONFIG: MonitorConfig = {
 LLM_CALL_RETENTION_CRON_MONITOR_CONFIG: MonitorConfig = {
     "schedule": {
         "type": "crontab",
-        "value": settings.LLM_CALL_RETENTION_CRON_SCHEDULE,
+        "value": "0 9 * * *",
     },
-    "timezone": settings.LLM_CALL_RETENTION_CRON_TIMEZONE,
+    "timezone": "Asia/Kolkata",
     "checkin_margin": 5,
     "max_runtime": 30,
     "failure_issue_threshold": 1,
