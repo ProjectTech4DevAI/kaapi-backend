@@ -1,3 +1,5 @@
+from typing import Any
+
 from sqlmodel import Session
 
 from app.models.provider_credentials import Provider
@@ -326,6 +328,17 @@ def create_test_config(
     config, version = config_crud.create_or_raise(config_create)
 
     return config
+
+
+def build_anthropic_text_config_blob(**params: Any) -> ConfigBlob:
+    """Kaapi-format Anthropic text config — the only shape the chatbot accepts."""
+    return ConfigBlob(
+        completion=build_kaapi_completion_config(
+            provider="anthropic",
+            type="text",
+            params={"model": "claude-sonnet-4-6", **params},
+        )
+    )
 
 
 def create_test_version(
