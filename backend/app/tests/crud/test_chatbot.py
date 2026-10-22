@@ -7,10 +7,12 @@ from app.crud.chatbot import (
     create_chatbot_session,
     create_chatbot_session_message,
     get_chatbot_session,
+    get_latest_chatbot_session_by_contact_ref,
     list_chatbot_session_messages,
-    list_chatbot_sessions_by_contact_ref,
+    update_chatbot_session_progress,
 )
 from app.models import (
+    ChatbotCompletionStatusEnum,
     ChatbotMessageRoleEnum,
     ChatbotSession,
     ChatbotSessionStatusEnum,
@@ -51,6 +53,7 @@ class TestCreateChatbotSession:
             db,
             organization_id=project.organization_id,
             project_id=project.id,
+            name="Onboarding Bot",
             contact_ref=contact_ref,
             config_id=config.id,
             config_version=1,
@@ -60,12 +63,14 @@ class TestCreateChatbotSession:
         db.expire_all()
         stored = db.get(ChatbotSession, created.id)
         assert stored is not None
+        assert stored.name == "Onboarding Bot"
         assert stored.contact_ref == contact_ref
         assert stored.config_id == config.id
         assert stored.config_version == 1
         assert stored.system_prompt == "Collect the user's name."
         assert stored.status == ChatbotSessionStatusEnum.ACTIVE
         assert stored.collected_fields == {}
+        assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS
         assert stored.inserted_at == stored.updated_at
 
 
@@ -179,12 +184,12 @@ class TestChatbotSessionMessages:
         assert list_chatbot_session_messages(db, session_id=chatbot_session.id) == []
 
 
-class TestListChatbotSessionsByContactRef:
-    def test_returns_newest_first_scoped_to_contact_and_project(
+class TestGetLatestChatbotSessionByContactRef:
+    def test_returns_newest_scoped_to_contact_and_project(
         self, db: Session, config: Config, project: Project
     ) -> None:
         contact_ref = f"contact-{random_lower_string()}"
-        oldest = create_test_chatbot_session(db, config=config, contact_ref=contact_ref)
+        create_test_chatbot_session(db, config=config, contact_ref=contact_ref)
         newest = create_test_chatbot_session(db, config=config, contact_ref=contact_ref)
         create_test_chatbot_session(db, config=config)
         other_config = create_test_config(
@@ -192,26 +197,86 @@ class TestListChatbotSessionsByContactRef:
         )
         create_test_chatbot_session(db, config=other_config, contact_ref=contact_ref)
 
-        sessions = list_chatbot_sessions_by_contact_ref(
+        latest = get_latest_chatbot_session_by_contact_ref(
             db,
             contact_ref=contact_ref,
             organization_id=project.organization_id,
             project_id=project.id,
         )
 
-        assert [s.id for s in sessions] == [newest.id, oldest.id]
+        assert latest is not None
+        assert latest.id == newest.id
 
-    def test_unknown_contact_returns_empty(
+    def test_unknown_contact_returns_none(
         self, db: Session, config: Config, project: Project
     ) -> None:
         create_test_chatbot_session(db, config=config)
 
         assert (
-            list_chatbot_sessions_by_contact_ref(
+            get_latest_chatbot_session_by_contact_ref(
                 db,
                 contact_ref=f"contact-{random_lower_string()}",
                 organization_id=project.organization_id,
                 project_id=project.id,
             )
-            == []
+            is None
+        )
+
+
+class TestUpdateChatbotSessionProgress:
+    def test_persists_fields_and_status_and_bumps_updated_at(
+        self, db: Session, config: Config
+    ) -> None:
+        chatbot_session = create_test_chatbot_session(db, config=config)
+        inserted_at = chatbot_session.inserted_at
+
+        returned = update_chatbot_session_progress(
+            db,
+            session_id=chatbot_session.id,
+            collected_fields={"name": "Asha", "city": "Pune"},
+            completion_status=ChatbotCompletionStatusEnum.COMPLETE,
+        )
+
+        assert returned is not None
+        db.expire_all()
+        stored = db.get(ChatbotSession, chatbot_session.id)
+        assert stored is not None
+        assert stored.collected_fields == {"name": "Asha", "city": "Pune"}
+        assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
+        assert stored.updated_at > inserted_at
+        assert stored.inserted_at == inserted_at
+
+    def test_replaces_rather_than_merges_fields(
+        self, db: Session, config: Config
+    ) -> None:
+        chatbot_session = create_test_chatbot_session(db, config=config)
+        update_chatbot_session_progress(
+            db,
+            session_id=chatbot_session.id,
+            collected_fields={"name": "Asha", "city": "Pune"},
+            completion_status=ChatbotCompletionStatusEnum.COMPLETE,
+        )
+
+        update_chatbot_session_progress(
+            db,
+            session_id=chatbot_session.id,
+            collected_fields={"name": "Asha"},
+            completion_status=ChatbotCompletionStatusEnum.IN_PROGRESS,
+        )
+
+        db.expire_all()
+        stored = db.get(ChatbotSession, chatbot_session.id)
+        assert stored is not None
+        assert stored.collected_fields == {"name": "Asha"}
+        assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS
+
+    def test_unknown_id_returns_none(self, db: Session) -> None:
+        assert (
+            update_chatbot_session_progress(
+                db,
+                session_id=uuid4(),
+                collected_fields={"name": "Asha"},
+                completion_status=ChatbotCompletionStatusEnum.COMPLETE,
+            )
+            is None
         )

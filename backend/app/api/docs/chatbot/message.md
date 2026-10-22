@@ -4,4 +4,6 @@ The chat model comes from a saved Kaapi config: `config_id` must be a config in 
 
 There is no server-side session yet: send the admin-authored `system_prompt` on every call, and send the previous response's `messages` back as `history`. The returned `messages` contain the system prompt followed by every user/assistant turn so far, ending with the new assistant reply. Any `system` entries in `history` are ignored in favour of `system_prompt`.
 
+Each turn also extracts the fields `system_prompt` asks to collect from the whole conversation: `collected_fields` is a flat `{field_name: value}` map (snake_case keys, only values the user actually gave) and `completion_status` is `complete` once nothing required is missing, else `in_progress`. Both are recomputed from the transcript on every call; the opening greeting returns `{}` and `in_progress`.
+
 On the very first call, send an empty `history` and omit `message` to get the bot's opening greeting. Once `history` is non-empty, `message` is required. Returns 404 if the config or version isn't found in the project, 422 for a missing `message` or a config that isn't a usable Anthropic text config, and 502 for provider failures.

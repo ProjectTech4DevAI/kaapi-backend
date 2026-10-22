@@ -11,8 +11,8 @@ from app.crud.chatbot import (
     create_chatbot_session,
     create_chatbot_session_message,
     get_chatbot_session,
+    get_latest_chatbot_session_by_contact_ref,
     list_chatbot_session_messages,
-    list_chatbot_sessions_by_contact_ref,
 )
 from app.models import (
     CONTACT_REF_MAX_LENGTH,
@@ -61,6 +61,7 @@ def start_chatbot_session(
         session,
         organization_id=auth_context.organization_.id,
         project_id=project_id,
+        name=request.name,
         contact_ref=request.contact_ref,
         config_id=request.config_id,
         config_version=request.config_version,
@@ -73,42 +74,46 @@ def start_chatbot_session(
 
 @router.get(
     "/sessions",
-    description=load_description("chatbot/list_sessions.md"),
-    response_model=APIResponse[list[ChatbotSessionSummary]],
+    description=load_description("chatbot/get_latest_session.md"),
+    response_model=APIResponse[ChatbotSessionSummary],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
-def list_chatbot_sessions(
+def get_latest_chatbot_session(
     contact_ref: Annotated[
         str,
         Query(
             min_length=1,
             max_length=CONTACT_REF_MAX_LENGTH,
-            description="Caller-side identifier of the end user whose sessions to list",
+            description="Caller-side identifier of the end user whose latest session to fetch",
         ),
     ],
     session: SessionDep,
     auth_context: AuthContextDep,
-) -> APIResponse[list[ChatbotSessionSummary]]:
-    chatbot_sessions = list_chatbot_sessions_by_contact_ref(
+) -> APIResponse[ChatbotSessionSummary]:
+    chatbot_session = get_latest_chatbot_session_by_contact_ref(
         session,
         contact_ref=contact_ref,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
     )
-    summaries: list[ChatbotSessionSummary] = []
-    for chatbot_session in chatbot_sessions:
-        summary = ChatbotSessionSummary(
+    if chatbot_session is None:
+        raise HTTPException(
+            status_code=404, detail="No chatbot session found for this contact_ref"
+        )
+    return APIResponse.success_response(
+        ChatbotSessionSummary(
             session_id=chatbot_session.id,
+            name=chatbot_session.name,
             contact_ref=chatbot_session.contact_ref,
             status=chatbot_session.status,
+            completion_status=chatbot_session.completion_status,
             collected_fields=chatbot_session.collected_fields,
             config_id=chatbot_session.config_id,
             config_version=chatbot_session.config_version,
             inserted_at=chatbot_session.inserted_at,
             updated_at=chatbot_session.updated_at,
         )
-        summaries.append(summary)
-    return APIResponse.success_response(summaries)
+    )
 
 
 @router.post(

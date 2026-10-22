@@ -6,6 +6,7 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.models import Config
+from app.services.chatbot.agents.onboarding.types import FieldExtraction
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.chatbot import ScriptedChatModel, patch_chat_model
 from app.tests.utils.test_data import (
@@ -57,6 +58,70 @@ class TestSendChatbotMessage:
             {"role": "user", "content": "Asha"},
             {"role": "assistant", "content": "Nice, which city?"},
         ]
+
+    def test_returns_extracted_fields_and_completion_status(
+        self,
+        client: TestClient,
+        user_api_key: TestAuthContext,
+        anthropic_config: Config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["Thanks, Asha from Pune!"],
+                extractions=[
+                    FieldExtraction(
+                        collected_fields={"name": "Asha", "city": "Pune"},
+                        missing_fields=[],
+                        is_complete=True,
+                    )
+                ],
+            ),
+        )
+
+        resp = client.post(
+            MESSAGE_URL,
+            headers={"X-API-KEY": user_api_key.key},
+            json={
+                "config_id": str(anthropic_config.id),
+                "system_prompt": SYSTEM_PROMPT,
+                "history": [
+                    {"role": "assistant", "content": "Hi! What's your name and city?"}
+                ],
+                "message": "Asha, Pune",
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()["data"]
+        assert body["collected_fields"] == {"name": "Asha", "city": "Pune"}
+        assert body["completion_status"] == "complete"
+
+    def test_greeting_returns_no_fields_in_progress(
+        self,
+        client: TestClient,
+        user_api_key: TestAuthContext,
+        anthropic_config: Config,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        patch_chat_model(
+            monkeypatch, ScriptedChatModel(replies=["Hi! What's your name?"])
+        )
+
+        resp = client.post(
+            MESSAGE_URL,
+            headers={"X-API-KEY": user_api_key.key},
+            json={
+                "config_id": str(anthropic_config.id),
+                "system_prompt": SYSTEM_PROMPT,
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()["data"]
+        assert body["collected_fields"] == {}
+        assert body["completion_status"] == "in_progress"
 
     def test_missing_message_with_history_returns_422(
         self,

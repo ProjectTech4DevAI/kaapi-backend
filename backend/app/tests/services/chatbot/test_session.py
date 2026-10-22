@@ -8,10 +8,20 @@ import httpx
 import pytest
 from sqlmodel import Session
 
-from app.crud.chatbot import list_chatbot_session_messages
+from app.crud.chatbot import (
+    list_chatbot_session_messages,
+    update_chatbot_session_progress,
+)
 from app.crud.config import ConfigVersionCrud
-from app.models import ChatbotMessageRoleEnum, ChatbotSession, Config, Project
+from app.models import (
+    ChatbotCompletionStatusEnum,
+    ChatbotMessageRoleEnum,
+    ChatbotSession,
+    Config,
+    Project,
+)
 from app.services.chatbot import session as session_service
+from app.services.chatbot.agents.onboarding.types import FieldExtraction
 from app.services.chatbot.session import process_chatbot_session_message
 from app.tests.utils.chatbot import (
     DEFAULT_SYSTEM_PROMPT,
@@ -120,6 +130,7 @@ class TestProcessChatbotSessionMessage:
                         "session_id": str(chatbot_session.id),
                         "reply": "Hi! What's your name?",
                         "status": "active",
+                        "completion_status": "in_progress",
                         "collected_fields": {},
                     },
                 },
@@ -338,3 +349,138 @@ class TestProcessChatbotSessionMessage:
         [payload] = callbacks.payloads
         assert payload["success"] is False
         assert "`message` is required" in payload["error"]
+
+
+class TestSessionFieldProgress:
+    def test_turn_persists_merged_fields_and_completion_and_webhook_reports_them(
+        self,
+        db: Session,
+        config: Config,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        chat_model = ScriptedChatModel(
+            replies=["Thanks, all set!"],
+            extractions=[
+                FieldExtraction(
+                    collected_fields={"city": "Pune"},
+                    missing_fields=[],
+                    is_complete=True,
+                )
+            ],
+        )
+        patch_chat_model(monkeypatch, chat_model)
+        chatbot_session = create_test_chatbot_session(db, config=config)
+        update_chatbot_session_progress(
+            db,
+            session_id=chatbot_session.id,
+            collected_fields={"name": "Asha"},
+            completion_status=ChatbotCompletionStatusEnum.IN_PROGRESS,
+        )
+        updated_before_turn = chatbot_session.updated_at
+        add_test_chatbot_messages(
+            db,
+            chatbot_session,
+            [
+                (ChatbotMessageRoleEnum.ASSISTANT, "Which city?"),
+                (ChatbotMessageRoleEnum.USER, "Pune"),
+            ],
+        )
+
+        _process(chatbot_session, db)
+
+        db.expire_all()
+        stored = db.get(ChatbotSession, chatbot_session.id)
+        assert stored is not None
+        # "name" only survives if the stored prior map was handed to the engine.
+        assert stored.collected_fields == {"name": "Asha", "city": "Pune"}
+        assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
+        assert stored.updated_at > updated_before_turn
+        assert callbacks.payloads == [
+            {
+                "success": True,
+                "data": {
+                    "session_id": str(chatbot_session.id),
+                    "reply": "Thanks, all set!",
+                    "status": "active",
+                    "completion_status": "complete",
+                    "collected_fields": {"name": "Asha", "city": "Pune"},
+                },
+            }
+        ]
+
+    def test_extraction_value_error_posts_failure_webhook_and_keeps_progress(
+        self,
+        db: Session,
+        config: Config,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        chat_model = ScriptedChatModel(
+            replies=["should never be used"],
+            extractions=[ValueError("thinking cannot be disabled for this model")],
+        )
+        patch_chat_model(monkeypatch, chat_model)
+        chatbot_session = create_test_chatbot_session(db, config=config)
+        add_test_chatbot_messages(
+            db, chatbot_session, [(ChatbotMessageRoleEnum.USER, "Asha")]
+        )
+
+        _process(chatbot_session, db)
+
+        [payload] = callbacks.payloads
+        assert payload["success"] is False
+        assert "[KAAPI] Unsupported model configuration" in payload["error"]
+        assert "thinking cannot be disabled for this model" in payload["error"]
+        assert payload["data"] == {"session_id": str(chatbot_session.id)}
+        assert _transcript(db, chatbot_session) == [("user", "Asha")]
+        db.expire_all()
+        stored = db.get(ChatbotSession, chatbot_session.id)
+        assert stored is not None
+        assert stored.collected_fields == {}
+        assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS
+
+    def test_complete_session_still_answers_new_messages(
+        self,
+        db: Session,
+        config: Config,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        chat_model = ScriptedChatModel(
+            replies=["You're welcome!"],
+            extractions=[
+                FieldExtraction(
+                    collected_fields={"name": "Asha", "city": "Pune"},
+                    missing_fields=[],
+                    is_complete=True,
+                )
+            ],
+        )
+        patch_chat_model(monkeypatch, chat_model)
+        chatbot_session = create_test_chatbot_session(db, config=config)
+        update_chatbot_session_progress(
+            db,
+            session_id=chatbot_session.id,
+            collected_fields={"name": "Asha", "city": "Pune"},
+            completion_status=ChatbotCompletionStatusEnum.COMPLETE,
+        )
+        add_test_chatbot_messages(
+            db,
+            chatbot_session,
+            [
+                (ChatbotMessageRoleEnum.ASSISTANT, "All set!"),
+                (ChatbotMessageRoleEnum.USER, "Thanks"),
+            ],
+        )
+
+        _process(chatbot_session, db)
+
+        assert _transcript(db, chatbot_session) == [
+            ("assistant", "All set!"),
+            ("user", "Thanks"),
+            ("assistant", "You're welcome!"),
+        ]
+        [payload] = callbacks.payloads
+        assert payload["success"] is True
+        assert payload["data"]["completion_status"] == "complete"

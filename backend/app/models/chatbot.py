@@ -55,20 +55,37 @@ class ChatbotTurnRequest(SQLModel):
     )
 
 
-class ChatbotTurnResponse(SQLModel):
-    messages: list[ChatbotMessage] = Field(
-        description="Full updated transcript (system prompt + every turn, including the new reply); resend it as `history` next call.",
-    )
-
-
 class ChatbotSessionStatusEnum(StrEnum):
     ACTIVE = "active"
     INACTIVE = "inactive"
 
 
+class ChatbotCompletionStatusEnum(StrEnum):
+    IN_PROGRESS = "in_progress"
+    COMPLETE = "complete"
+
+
+class ChatbotTurnResponse(SQLModel):
+    messages: list[ChatbotMessage] = Field(
+        description="Full updated transcript (system prompt + every turn, including the new reply); resend it as `history` next call.",
+    )
+    collected_fields: dict[str, Any] = Field(
+        description="Flat map of field name -> value the user has provided so far, as extracted from the transcript.",
+    )
+    completion_status: ChatbotCompletionStatusEnum = Field(
+        description="`complete` once every field the system prompt asks for has been collected, else `in_progress`.",
+    )
+
+
 _SESSION_STATUS_PG_ENUM = ENUM(
     ChatbotSessionStatusEnum,
     name="chatbotsessionstatusenum",
+    values_callable=lambda enum_cls: [member.value for member in enum_cls],
+    create_type=False,
+)
+_COMPLETION_STATUS_PG_ENUM = ENUM(
+    ChatbotCompletionStatusEnum,
+    name="chatbotcompletionstatusenum",
     values_callable=lambda enum_cls: [member.value for member in enum_cls],
     create_type=False,
 )
@@ -80,6 +97,8 @@ _MESSAGE_ROLE_PG_ENUM = ENUM(
 )
 
 CONTACT_REF_MAX_LENGTH = 500
+CHATBOT_NAME_MAX_LENGTH = 255
+DEFAULT_CHATBOT_NAME = "Untitled Chatbot"
 
 
 class ChatbotSession(SQLModel, table=True):
@@ -89,6 +108,11 @@ class ChatbotSession(SQLModel, table=True):
         default_factory=uuid4,
         primary_key=True,
         sa_column_kwargs={"comment": "Session identifier returned to the caller"},
+    )
+    name: str = Field(
+        default=DEFAULT_CHATBOT_NAME,
+        max_length=CHATBOT_NAME_MAX_LENGTH,
+        sa_column_kwargs={"comment": "Display name of the chatbot this session runs"},
     )
     contact_ref: str = Field(
         max_length=CONTACT_REF_MAX_LENGTH,
@@ -123,6 +147,15 @@ class ChatbotSession(SQLModel, table=True):
             _SESSION_STATUS_PG_ENUM,
             nullable=False,
             comment="Conversation lifecycle: active or inactive",
+        ),
+    )
+    completion_status: ChatbotCompletionStatusEnum = Field(
+        default=ChatbotCompletionStatusEnum.IN_PROGRESS,
+        sa_column=Column(
+            _COMPLETION_STATUS_PG_ENUM,
+            nullable=False,
+            server_default=ChatbotCompletionStatusEnum.IN_PROGRESS.value,
+            comment="Field collection progress: in_progress, or complete once every required field is gathered",
         ),
     )
     collected_fields: dict[str, Any] = Field(
@@ -197,6 +230,12 @@ class ChatbotSessionMessage(SQLModel, table=True):
 
 
 class CreateChatbotSessionRequest(SQLModel):
+    name: str = Field(
+        default=DEFAULT_CHATBOT_NAME,
+        min_length=1,
+        max_length=CHATBOT_NAME_MAX_LENGTH,
+        description=f"Display name of the chatbot; defaults to '{DEFAULT_CHATBOT_NAME}'.",
+    )
     config_id: UUID = Field(
         description="Saved Kaapi config (Anthropic text completion) that supplies the model and reasoning settings.",
     )
@@ -222,8 +261,10 @@ class CreateChatbotSessionResponse(SQLModel):
 
 class ChatbotSessionSummary(SQLModel):
     session_id: UUID
+    name: str
     contact_ref: str
     status: ChatbotSessionStatusEnum
+    completion_status: ChatbotCompletionStatusEnum
     collected_fields: dict[str, Any]
     config_id: UUID
     config_version: int | None

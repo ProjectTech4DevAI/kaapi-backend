@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.models import ChatbotMessage, ChatbotTurnRequest, ChatbotTurnResponse
+from app.services.chatbot.agents.onboarding.graph import run_chatbot_turn
 from app.services.chatbot.config import resolve_chatbot_model_settings
-from app.services.chatbot.engine import run_chatbot_turn
 from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
 from app.utils import APIResponse, load_description
 
@@ -35,7 +35,7 @@ async def send_chatbot_message(
             max_tokens=request.max_tokens,
             history_token_limit=request.history_token_limit,
         )
-        transcript = await run_chatbot_turn(
+        turn_result = await run_chatbot_turn(
             system_prompt=request.system_prompt,
             history=history,
             user_message=request.message,
@@ -47,6 +47,12 @@ async def send_chatbot_message(
         raise HTTPException(status_code=502, detail=str(e))
 
     messages: list[ChatbotMessage] = []
-    for entry in transcript:
+    for entry in turn_result.transcript:
         messages.append(ChatbotMessage.model_validate(entry))
-    return APIResponse.success_response(ChatbotTurnResponse(messages=messages))
+    return APIResponse.success_response(
+        ChatbotTurnResponse(
+            messages=messages,
+            collected_fields=turn_result.collected_fields,
+            completion_status=turn_result.completion_status,
+        )
+    )

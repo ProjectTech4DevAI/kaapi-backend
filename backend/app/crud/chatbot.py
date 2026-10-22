@@ -1,13 +1,18 @@
+import logging
+from typing import Any
 from uuid import UUID
 
 from sqlmodel import Session, col, select
 
 from app.core.util import now
 from app.models import (
+    ChatbotCompletionStatusEnum,
     ChatbotMessageRoleEnum,
     ChatbotSession,
     ChatbotSessionMessage,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def create_chatbot_session(
@@ -15,6 +20,7 @@ def create_chatbot_session(
     *,
     organization_id: int,
     project_id: int,
+    name: str,
     contact_ref: str,
     config_id: UUID,
     config_version: int | None,
@@ -24,6 +30,7 @@ def create_chatbot_session(
     chatbot_session = ChatbotSession(
         organization_id=organization_id,
         project_id=project_id,
+        name=name,
         contact_ref=contact_ref,
         config_id=config_id,
         config_version=config_version,
@@ -50,6 +57,35 @@ def get_chatbot_session(
         ChatbotSession.project_id == project_id,
     )
     return session.exec(statement).first()
+
+
+def update_chatbot_session_progress(
+    session: Session,
+    *,
+    session_id: UUID,
+    collected_fields: dict[str, Any],
+    completion_status: ChatbotCompletionStatusEnum,
+) -> ChatbotSession | None:
+    chatbot_session = session.get(ChatbotSession, session_id)
+    if chatbot_session is None:
+        return None
+
+    chatbot_session.sqlmodel_update(
+        {
+            "collected_fields": collected_fields,
+            "completion_status": completion_status,
+            "updated_at": now(),
+        }
+    )
+    session.add(chatbot_session)
+    session.commit()
+    session.refresh(chatbot_session)
+    logger.info(
+        f"[update_chatbot_session_progress] Session progress saved | "
+        f"session_id: {session_id}, completion_status: {completion_status.value}, "
+        f"field_count: {len(collected_fields)}"
+    )
+    return chatbot_session
 
 
 def create_chatbot_session_message(
@@ -82,13 +118,13 @@ def list_chatbot_session_messages(
     return list(session.exec(statement).all())
 
 
-def list_chatbot_sessions_by_contact_ref(
+def get_latest_chatbot_session_by_contact_ref(
     session: Session,
     *,
     contact_ref: str,
     organization_id: int,
     project_id: int,
-) -> list[ChatbotSession]:
+) -> ChatbotSession | None:
     statement = (
         select(ChatbotSession)
         .where(
@@ -97,5 +133,6 @@ def list_chatbot_sessions_by_contact_ref(
             ChatbotSession.project_id == project_id,
         )
         .order_by(col(ChatbotSession.inserted_at).desc())
+        .limit(1)
     )
-    return list(session.exec(statement).all())
+    return session.exec(statement).first()

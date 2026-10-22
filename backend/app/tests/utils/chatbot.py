@@ -5,21 +5,28 @@ import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.runnables import Runnable, RunnableLambda
 from pydantic import Field
 from sqlmodel import Session
 
 from app.crud.chatbot import create_chatbot_session, create_chatbot_session_message
 from app.models import (
+    DEFAULT_CHATBOT_NAME,
     ChatbotMessageRoleEnum,
     ChatbotSession,
     ChatbotSessionMessage,
     Config,
     Project,
 )
-from app.services.chatbot import engine
+from app.services.chatbot.agents.onboarding import graph as onboarding_graph
+from app.services.chatbot.agents.onboarding.types import FieldExtraction
 from app.tests.utils.utils import random_lower_string
 
 DEFAULT_SYSTEM_PROMPT = "Collect the user's name and city."
+
+NOTHING_EXTRACTED = FieldExtraction(
+    collected_fields={}, missing_fields=[], is_complete=False
+)
 
 
 class ScriptedChatModel(BaseChatModel):
@@ -29,6 +36,11 @@ class ScriptedChatModel(BaseChatModel):
     token_count: int = 0
     error: Exception | None = None
     calls: list[list[BaseMessage]] = Field(default_factory=list)
+    # Each entry is a FieldExtraction to return, an exception to raise, or any
+    # other object to simulate a wrongly-typed structured output.
+    extractions: list[Any] = Field(default_factory=list)
+    extraction_calls: list[list[BaseMessage]] = Field(default_factory=list)
+    structured_output_methods: list[str | None] = Field(default_factory=list)
 
     @property
     def _llm_type(self) -> str:
@@ -52,18 +64,35 @@ class ScriptedChatModel(BaseChatModel):
     ) -> int:
         return self.token_count
 
+    def with_structured_output(
+        self, schema: Any, *, method: str | None = None, **kwargs: Any
+    ) -> Runnable[Any, Any]:
+        self.structured_output_methods.append(method)
+
+        def _extract(messages: list[BaseMessage]) -> Any:
+            self.extraction_calls.append(list(messages))
+            outcome = self.extractions.pop(0) if self.extractions else NOTHING_EXTRACTED
+            if isinstance(outcome, BaseException):
+                raise outcome
+            return outcome
+
+        return RunnableLambda(_extract)
+
 
 def patch_chat_model(
     monkeypatch: pytest.MonkeyPatch, chat_model: ScriptedChatModel
 ) -> None:
     # The Anthropic SDK is the external boundary; everything above it runs for real.
-    monkeypatch.setattr(engine, "get_chat_model", lambda _settings: chat_model)
+    monkeypatch.setattr(
+        onboarding_graph, "get_chat_model", lambda _settings: chat_model
+    )
 
 
 def create_test_chatbot_session(
     db: Session,
     *,
     config: Config,
+    name: str = DEFAULT_CHATBOT_NAME,
     contact_ref: str | None = None,
     config_version: int | None = None,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
@@ -74,6 +103,7 @@ def create_test_chatbot_session(
         db,
         organization_id=project.organization_id,
         project_id=project.id,
+        name=name,
         contact_ref=contact_ref or f"contact-{random_lower_string()}",
         config_id=config.id,
         config_version=config_version,

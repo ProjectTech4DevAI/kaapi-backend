@@ -8,8 +8,18 @@ from sqlmodel import Session
 
 from app.api.routes.chatbot import session as session_routes
 from app.core.config import settings
-from app.crud.chatbot import get_chatbot_session, list_chatbot_session_messages
-from app.models import ChatbotMessageRoleEnum, ChatbotSession, Config
+from app.crud.chatbot import (
+    get_chatbot_session,
+    list_chatbot_session_messages,
+    update_chatbot_session_progress,
+)
+from app.models import (
+    DEFAULT_CHATBOT_NAME,
+    ChatbotCompletionStatusEnum,
+    ChatbotMessageRoleEnum,
+    ChatbotSession,
+    Config,
+)
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.chatbot import (
     add_test_chatbot_messages,
@@ -85,6 +95,7 @@ class TestCreateChatbotSession:
             SESSIONS_URL,
             headers=headers,
             json={
+                "name": "Onboarding Bot",
                 "config_id": str(anthropic_config.id),
                 "config_version": 1,
                 "contact_ref": contact_ref,
@@ -101,10 +112,39 @@ class TestCreateChatbotSession:
             project_id=user_api_key.project_id,
         )
         assert stored is not None
+        assert stored.name == "Onboarding Bot"
         assert stored.contact_ref == contact_ref
         assert stored.config_id == anthropic_config.id
         assert stored.config_version == 1
         assert stored.system_prompt == SYSTEM_PROMPT
+
+    def test_omitted_name_uses_default(
+        self,
+        client: TestClient,
+        db: Session,
+        headers: dict[str, str],
+        user_api_key: TestAuthContext,
+        anthropic_config: Config,
+    ) -> None:
+        resp = client.post(
+            SESSIONS_URL,
+            headers=headers,
+            json={
+                "config_id": str(anthropic_config.id),
+                "contact_ref": f"contact-{random_lower_string()}",
+                "system_prompt": SYSTEM_PROMPT,
+            },
+        )
+
+        assert resp.status_code == 201
+        stored = get_chatbot_session(
+            db,
+            session_id=resp.json()["data"]["session_id"],
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+        assert stored is not None
+        assert stored.name == DEFAULT_CHATBOT_NAME
 
     def test_unknown_config_returns_404(
         self, client: TestClient, headers: dict[str, str]
@@ -146,8 +186,8 @@ class TestCreateChatbotSession:
         assert "only supports configs" in resp.json()["error"]
 
 
-class TestListChatbotSessions:
-    def test_lists_contacts_sessions_newest_first_in_callers_project(
+class TestGetLatestChatbotSession:
+    def test_returns_contacts_newest_session_in_callers_project(
         self,
         client: TestClient,
         db: Session,
@@ -155,11 +195,15 @@ class TestListChatbotSessions:
         anthropic_config: Config,
     ) -> None:
         contact_ref = f"contact-{random_lower_string()}"
-        older = create_test_chatbot_session(
+        create_test_chatbot_session(
             db, config=anthropic_config, contact_ref=contact_ref
         )
         newer = create_test_chatbot_session(
-            db, config=anthropic_config, contact_ref=contact_ref, config_version=1
+            db,
+            config=anthropic_config,
+            name="Onboarding Bot",
+            contact_ref=contact_ref,
+            config_version=1,
         )
         create_test_chatbot_session(db, config=anthropic_config)
         foreign_config = create_test_config(
@@ -173,13 +217,51 @@ class TestListChatbotSessions:
 
         assert resp.status_code == 200
         body = resp.json()["data"]
-        assert [s["session_id"] for s in body] == [str(newer.id), str(older.id)]
-        assert body[0]["contact_ref"] == contact_ref
-        assert body[0]["status"] == "active"
-        assert body[0]["collected_fields"] == {}
-        assert body[0]["config_id"] == str(anthropic_config.id)
-        assert body[0]["config_version"] == 1
-        assert body[1]["config_version"] is None
+        assert body["session_id"] == str(newer.id)
+        assert body["name"] == "Onboarding Bot"
+        assert body["contact_ref"] == contact_ref
+        assert body["status"] == "active"
+        assert body["completion_status"] == "in_progress"
+        assert body["collected_fields"] == {}
+        assert body["config_id"] == str(anthropic_config.id)
+        assert body["config_version"] == 1
+
+    def test_reports_stored_field_progress(
+        self,
+        client: TestClient,
+        db: Session,
+        headers: dict[str, str],
+        chatbot_session: ChatbotSession,
+    ) -> None:
+        update_chatbot_session_progress(
+            db,
+            session_id=chatbot_session.id,
+            collected_fields={"name": "Asha", "city": "Pune"},
+            completion_status=ChatbotCompletionStatusEnum.COMPLETE,
+        )
+
+        resp = client.get(
+            SESSIONS_URL,
+            headers=headers,
+            params={"contact_ref": chatbot_session.contact_ref},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()["data"]
+        assert body["session_id"] == str(chatbot_session.id)
+        assert body["completion_status"] == "complete"
+        assert body["collected_fields"] == {"name": "Asha", "city": "Pune"}
+
+    def test_unknown_contact_returns_404(
+        self, client: TestClient, headers: dict[str, str]
+    ) -> None:
+        resp = client.get(
+            SESSIONS_URL,
+            headers=headers,
+            params={"contact_ref": f"contact-{random_lower_string()}"},
+        )
+
+        assert resp.status_code == 404
 
     def test_missing_contact_ref_returns_422(
         self, client: TestClient, headers: dict[str, str]

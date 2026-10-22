@@ -26,6 +26,13 @@ def upgrade():
             comment="Session identifier returned to the caller",
         ),
         sa.Column(
+            "name",
+            sqlmodel.sql.sqltypes.AutoString(length=255),
+            nullable=False,
+            server_default="Untitled Chatbot",
+            comment="Display name of the chatbot this session runs",
+        ),
+        sa.Column(
             "contact_ref",
             sqlmodel.sql.sqltypes.AutoString(length=500),
             nullable=False,
@@ -58,6 +65,17 @@ def upgrade():
             ),
             nullable=False,
             comment="Conversation lifecycle: active or inactive",
+        ),
+        sa.Column(
+            "completion_status",
+            sa.Enum(
+                "in_progress",
+                "complete",
+                name="chatbotcompletionstatusenum",
+            ),
+            nullable=False,
+            server_default="in_progress",
+            comment="Field collection progress: in_progress, or complete once every required field is gathered",
         ),
         sa.Column(
             "collected_fields",

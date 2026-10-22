@@ -10,10 +10,11 @@ from app.crud.chatbot import (
     create_chatbot_session_message,
     get_chatbot_session,
     list_chatbot_session_messages,
+    update_chatbot_session_progress,
 )
 from app.models import ChatbotMessageRoleEnum, ChatbotSessionMessage
+from app.services.chatbot.agents.onboarding.graph import run_chatbot_turn
 from app.services.chatbot.config import resolve_chatbot_model_settings
-from app.services.chatbot.engine import run_chatbot_turn
 from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
 from app.services.chatbot.types import ChatbotMessageDict
 from app.services.chatbot.utils import ChatbotModelSettings
@@ -26,7 +27,7 @@ def _split_pending_turn(
     """Split the stored transcript into (prior history, pending user message).
 
     The route persists the user's message before enqueueing, so it is the last
-    stored row; the engine wants it separately from the history before it.
+    stored row; run_chatbot_turn wants it separately from the history before it.
     """
     history: list[ChatbotMessageDict] = []
     for stored in stored_messages:
@@ -38,7 +39,7 @@ def _split_pending_turn(
     if not history:
         return history, None
     if history[-1]["role"] != ChatbotMessageRoleEnum.USER:
-        # No pending user turn; the engine rejects this with ChatbotInputError.
+        # No pending user turn; run_chatbot_turn rejects this with ChatbotInputError.
         return history, None
     pending = history.pop()
     return history, pending["content"]
@@ -129,15 +130,16 @@ def process_chatbot_session_message(
     history, user_message = _split_pending_turn(stored_messages)
 
     try:
-        transcript = asyncio.run(
+        turn_result = asyncio.run(
             run_chatbot_turn(
                 system_prompt=system_prompt,
                 history=history,
                 user_message=user_message,
                 model_settings=model_settings,
+                collected_fields=collected_fields,
             )
         )
-        reply = _extract_reply(transcript)
+        reply = _extract_reply(turn_result.transcript)
     except (ChatbotInputError, ChatbotProviderError) as e:
         _send_failure_webhook(
             session_id=session_id,
@@ -147,12 +149,19 @@ def process_chatbot_session_message(
         )
         return
 
+    completion_status = turn_result.completion_status
     with Session(engine) as session:
         create_chatbot_session_message(
             session,
             session_id=session_id,
             role=ChatbotMessageRoleEnum.ASSISTANT,
             content=reply,
+        )
+        update_chatbot_session_progress(
+            session,
+            session_id=session_id,
+            collected_fields=turn_result.collected_fields,
+            completion_status=completion_status,
         )
 
     payload: dict[str, Any] = {
@@ -161,7 +170,8 @@ def process_chatbot_session_message(
             "session_id": str(session_id),
             "reply": reply,
             "status": session_status,
-            "collected_fields": collected_fields,
+            "completion_status": completion_status.value,
+            "collected_fields": turn_result.collected_fields,
         },
     }
     send_callback(webhook_url, payload, webhook_secret)

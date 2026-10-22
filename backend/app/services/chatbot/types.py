@@ -1,10 +1,19 @@
-from typing import Annotated, TypedDict
+from dataclasses import dataclass
+from typing import Any
 
-from langchain_core.messages import BaseMessage
-from langgraph.graph.message import add_messages
+from app.models.chatbot import ChatbotCompletionStatusEnum
 
 ChatbotMessageDict = dict[str, str]
 
 
-class ChatbotState(TypedDict):
-    messages: Annotated[list[BaseMessage], add_messages]
+@dataclass(frozen=True)
+class ChatbotTurnResult:
+    transcript: list[ChatbotMessageDict]
+    collected_fields: dict[str, Any]
+    is_complete: bool
+
+    @property
+    def completion_status(self) -> ChatbotCompletionStatusEnum:
+        if self.is_complete:
+            return ChatbotCompletionStatusEnum.COMPLETE
+        return ChatbotCompletionStatusEnum.IN_PROGRESS
