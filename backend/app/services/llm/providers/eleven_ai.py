@@ -10,11 +10,9 @@ from elevenlabs import (
     SpeechToTextConvertResponse,
 )
 from elevenlabs.core.api_error import ApiError as ElevenLabsApiError
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 # from elevenlabs.types import SpeechToTextConvertResponse
 from app.core.audio_utils import AudioRef
-from app.core.retry import is_transient
 
 
 from app.models.llm import (
@@ -37,17 +35,6 @@ from app.services.llm.providers.base import BaseProvider
 
 
 logger = logging.getLogger(__name__)
-
-# The SDK's own `max_retries` is unusable: its counter starts at 2, and streaming TTS never retries.
-_retry_transient = retry(
-    stop=stop_after_attempt(4),
-    wait=wait_exponential(max=10),
-    retry=retry_if_exception(
-        lambda e: is_transient(e)
-        or (isinstance(e, ElevenLabsApiError) and (e.status_code or 0) >= 500)
-    ),
-    reraise=True,
-)
 
 
 class ElevenlabsAIProvider(BaseProvider):
@@ -145,9 +132,11 @@ class ElevenlabsAIProvider(BaseProvider):
         with resolved_input.to_path() as parsed_input_path, open(
             parsed_input_path, "rb"
         ) as audio_file:
-            elevenlabs_response: SpeechToTextConvertResponse = _retry_transient(
-                self.client.speech_to_text.convert
-            )(file=audio_file, model_id=model_id, **stt_kwargs)
+            elevenlabs_response: SpeechToTextConvertResponse = (
+                self.client.speech_to_text.convert(
+                    file=audio_file, model_id=model_id, **stt_kwargs
+                )
+            )
 
         if not elevenlabs_response.text:
             error_message = (
@@ -259,21 +248,17 @@ class ElevenlabsAIProvider(BaseProvider):
         if voice_settings:
             tts_kwargs["voice_settings"] = voice_settings
 
-        # convert() streams: the request is only sent while the iterator is consumed,
-        # so the retry must wrap the join too.
-        @_retry_transient
-        def _synthesize() -> bytes:
-            return b"".join(
-                self.client.text_to_speech.convert(
-                    voice_id=voice_id,
-                    text=parsed_text,
-                    model_id=model_id,
-                    output_format=output_format,
-                    **tts_kwargs,
-                )
-            )
+        # Call Elevenlabs TTS API
+        audio_iterator = self.client.text_to_speech.convert(
+            voice_id=voice_id,
+            text=parsed_text,
+            model_id=model_id,
+            output_format=output_format,
+            **tts_kwargs,
+        )
 
-        audio_bytes = _synthesize()
+        # Elevenlabs returns an iterator of audio bytes; collect and base64-encode
+        audio_bytes = b"".join(audio_iterator)
         if not audio_bytes:
             error_message = (
                 "[ELEVENLABS] TTS response contains no audio data. "

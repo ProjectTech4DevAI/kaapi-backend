@@ -132,7 +132,6 @@ class TestSarvamAIProviderSTT:
         # Verify translate mode was passed to API
         call_args = mock_client.speech_to_text.transcribe.call_args
         assert call_args.kwargs["mode"] == "translate"
-        assert call_args.kwargs["request_options"] == {"max_retries": 3}
 
     def test_stt_success_with_unknown_language(
         self, provider, mock_client, query_params, temp_audio_file
@@ -302,7 +301,6 @@ class TestSarvamAIProviderTTS:
         assert result.response.output.content.mime_type == "audio/mp3"
         call_args = mock_client.text_to_speech.convert.call_args
         assert call_args.kwargs["output_audio_codec"] == "mp3"
-        assert call_args.kwargs["request_options"] == {"max_retries": 3}
 
     def test_tts_with_ogg_codec(self, provider, mock_client, query_params):
         """Test TTS with OGG codec."""

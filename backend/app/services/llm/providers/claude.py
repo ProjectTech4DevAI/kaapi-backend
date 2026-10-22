@@ -99,7 +99,7 @@ class ClaudeProvider(BaseProvider):
     def create_client(credentials: dict[str, Any]) -> Any:
         if "api_key" not in credentials:
             raise ValueError("Anthropic credentials not configured for this project.")
-        return Anthropic(api_key=credentials["api_key"], max_retries=3)
+        return Anthropic(api_key=credentials["api_key"])
 
     @staticmethod
     def format_parts(

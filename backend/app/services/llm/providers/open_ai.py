@@ -36,7 +36,7 @@ class OpenAIProvider(BaseProvider):
     def create_client(credentials: dict[str, Any]) -> Any:
         if "api_key" not in credentials:
             raise ValueError("OpenAI credentials not configured for this project.")
-        return OpenAI(api_key=credentials["api_key"], max_retries=3)
+        return OpenAI(api_key=credentials["api_key"])
 
     @staticmethod
     def format_parts(

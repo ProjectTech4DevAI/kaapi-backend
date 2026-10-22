@@ -115,9 +115,7 @@ class SarvamAIProvider(BaseProvider):
 
             with open(parsed_input_path, "rb") as audio_file:
                 stt_kwargs["file"] = audio_file
-                sarvam_response = self.client.speech_to_text.transcribe(
-                    **stt_kwargs, request_options={"max_retries": 3}
-                )
+                sarvam_response = self.client.speech_to_text.transcribe(**stt_kwargs)
 
         if not sarvam_response.transcript:
             error_message = (
@@ -227,9 +225,7 @@ class SarvamAIProvider(BaseProvider):
             tts_kwargs["output_audio_codec"] = output_audio_codec
 
         # Call SarvamAI TTS with mapped parameters
-        sarvam_response = self.client.text_to_speech.convert(
-            **tts_kwargs, request_options={"max_retries": 3}
-        )
+        sarvam_response = self.client.text_to_speech.convert(**tts_kwargs)
 
         # SarvamAI returns a list of base64-encoded audio strings
         # For single text input, take the first audio
