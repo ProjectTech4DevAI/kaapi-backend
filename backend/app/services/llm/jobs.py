@@ -942,6 +942,10 @@ def _execute_proxy_call(
         )
         return BlockResult(error=f"Failed to create LLM call record: {str(e)}")
 
+    # End the read transaction so no pooled connection sits idle during the proxy
+    # request and its retry backoff; nothing is pending, so this only releases it.
+    session.commit()
+
     ctx.metrics_started(provider=Provider.PROXY.value, model="")
     proxy_data: dict | None = None
 
