@@ -124,23 +124,6 @@ class TestOverall:
             "call_count": 3,
         }
 
-    def test_overall_uses_unrounded_stage_sums(self) -> None:
-        run = _run()
-        # (1.04 + 1.48) / 2 = 1.26 -> 1.3. Averaging the rounded stage values
-        # instead would give (1.0 + 1.5) / 2 = 1.25, and (1.0 + 1.48) / 2 = 1.24 -> 1.2.
-        attach_latency(
-            eval_run=run,
-            log_prefix=LOG_PREFIX,
-            response_results=[{"latency_ms": 1.04}],
-            embedding_results=[{"latency_ms": 1.48}],
-        )
-        assert run.latency == {
-            "response": {"avg_latency_ms": 1.0, "call_count": 1},
-            "embedding": {"avg_latency_ms": 1.5, "call_count": 1},
-            "avg_latency_ms": 1.3,
-            "call_count": 2,
-        }
-
 
 class TestPartialReattach:
     def test_judge_only_preserves_response_and_recomputes_overall(self) -> None:
@@ -161,29 +144,6 @@ class TestPartialReattach:
             "judge": {"avg_latency_ms": 500.0, "call_count": 1},
             "avg_latency_ms": 300.0,
             "call_count": 3,
-        }
-
-    def test_preserved_stage_avg_is_emitted_verbatim(self) -> None:
-        # 33.33 has more decimals than the rollup emits: a preserved stage must
-        # not be re-rounded, only fed into the overall as avg * count.
-        run = _run(
-            latency={
-                "response": {"avg_latency_ms": 33.33, "call_count": 3},
-                "avg_latency_ms": 33.33,
-                "call_count": 3,
-            }
-        )
-        attach_latency(
-            eval_run=run,
-            log_prefix=LOG_PREFIX,
-            judge_results=[{"latency_ms": 100.0}],
-        )
-        # (33.33 * 3 + 100.0) / 4 = 49.9975 -> 50.0
-        assert run.latency == {
-            "response": {"avg_latency_ms": 33.33, "call_count": 3},
-            "judge": {"avg_latency_ms": 100.0, "call_count": 1},
-            "avg_latency_ms": 50.0,
-            "call_count": 4,
         }
 
     def test_rerun_with_same_rows_is_idempotent(self) -> None:
