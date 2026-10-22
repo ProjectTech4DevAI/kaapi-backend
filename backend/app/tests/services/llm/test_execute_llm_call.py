@@ -23,6 +23,8 @@ from app.services.llm.chain.types import BlockResult
 from app.services.llm.jobs import execute_llm_call
 from app.tests.utils.utils import get_project
 
+pytestmark = pytest.mark.usefixtures("no_retry_backoff")
+
 VALIDATOR_CONFIG_ID = "00000000-0000-0000-0000-000000000001"
 PROXY_URL = "https://api.tap.example/v1/predictions"
 
@@ -381,10 +383,19 @@ class TestRetryableFlag:
 
         assert result.retryable is True
 
-    def test_proxy_transport_failure_is_retryable(
+    def test_proxy_connect_failure_is_not_retryable_after_inline_retries(
         self, db: Session, provider, proxy_http
     ):
         proxy_http.post.side_effect = httpx.ConnectError("connection refused")
+
+        result = call(db, build_blob(PROXY_COMPLETION))
+
+        assert result.error.startswith("Proxy call failed:")
+        assert result.retryable is False
+
+    def test_proxy_4xx_is_retryable(self, db: Session, provider, proxy_http):
+        request = httpx.Request("POST", PROXY_URL)
+        proxy_http.post.return_value = httpx.Response(400, request=request)
 
         result = call(db, build_blob(PROXY_COMPLETION))
 
