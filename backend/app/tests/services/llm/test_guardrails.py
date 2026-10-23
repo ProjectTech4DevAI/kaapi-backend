@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -24,11 +25,14 @@ from app.services.llm.guardrails import (
     GuardrailsOutcome,
     apply_guardrails,
     list_validators_config,
+    proxy_guardrails_request,
     run_guardrails_validation,
     summarize_validator_results,
 )
 from app.tests.utils.utils import get_project
 
+
+pytestmark = pytest.mark.usefixtures("no_retry_backoff")
 
 TEST_JOB_ID = uuid.uuid4()
 TEST_TEXT = "hello world"
@@ -740,3 +744,92 @@ class TestGuardrailsOutcomeBlocked:
 
         assert outcome.bypassed is True
         assert outcome.blocked is False
+
+
+def _guardrails_response(code: int, body: Any = None) -> httpx.Response:
+    request = httpx.Request("GET", f"{settings.KAAPI_GUARDRAILS_URL}/x")
+    return httpx.Response(code, json=body, request=request)
+
+
+class TestGuardrailsRetry:
+    def _validate(self, *responses: httpx.Response) -> tuple[dict[str, Any], int]:
+        with patch.object(httpx.Client, "post", side_effect=responses) as post:
+            result = run_guardrails_validation(
+                TEST_TEXT,
+                TEST_CONFIG,
+                TEST_JOB_ID,
+                TEST_PROJECT_ID,
+                TEST_ORGANIZATION_ID,
+            )
+        return result, post.call_count
+
+    def test_validation_recovers_from_503(self) -> None:
+        result, calls = self._validate(
+            _guardrails_response(503), _guardrails_response(200, {"success": True})
+        )
+
+        assert result == {"success": True}
+        assert calls == 2
+
+    def test_validation_bypasses_after_exhausting_503s(self) -> None:
+        result, calls = self._validate(*[_guardrails_response(503)] * 4)
+
+        assert result["bypassed"] is True
+        assert calls == 4
+
+    def test_validation_auth_error_is_not_retried(self) -> None:
+        result, calls = self._validate(
+            _guardrails_response(401), _guardrails_response(200, {"success": True})
+        )
+
+        assert result["auth_error"] is True
+        assert calls == 1
+
+    def test_list_validators_config_retries_connect_error(self) -> None:
+        validator = {"type": "uli_slur_match", "stage": "input"}
+        outcomes = [
+            httpx.ConnectError("refused"),
+            _guardrails_response(200, {"success": True, "data": [validator]}),
+        ]
+        with patch.object(httpx.Client, "get", side_effect=outcomes):
+            input_guardrails, _ = list_validators_config(
+                input_validator_configs=[Validator(validator_config_id=uuid4())],
+                output_validator_configs=[],
+                organization_id=TEST_ORGANIZATION_ID,
+                project_id=TEST_PROJECT_ID,
+            )
+
+        assert input_guardrails == [validator]
+
+    def test_proxy_connect_failure_retries_then_502(self) -> None:
+        with patch.object(
+            httpx.Client, "request", side_effect=httpx.ConnectError("refused")
+        ) as request:
+            with pytest.raises(HTTPException) as exc:
+                proxy_guardrails_request(
+                    "POST",
+                    "/validators/configs/",
+                    organization_id=TEST_ORGANIZATION_ID,
+                    project_id=TEST_PROJECT_ID,
+                    json_body={"type": "pii_remover"},
+                )
+
+        assert exc.value.status_code == 502
+        assert request.call_count == 4
+
+    def test_proxy_upstream_5xx_is_passed_through_without_retry(self) -> None:
+        with patch.object(
+            httpx.Client,
+            "request",
+            return_value=_guardrails_response(503, {"detail": "down"}),
+        ) as request:
+            status, body = proxy_guardrails_request(
+                "GET",
+                "/validators/configs/",
+                organization_id=TEST_ORGANIZATION_ID,
+                project_id=TEST_PROJECT_ID,
+            )
+
+        assert status == 503
+        assert body == {"detail": "down"}
+        assert request.call_count == 1

@@ -18,7 +18,8 @@ from uuid import UUID
 
 from starlette.datastructures import Headers, UploadFile
 
-from app.core.cloud.storage import CloudStorage, CloudStorageError
+from app.core.cloud.storage import LLM_AUDIO_PREFIX, CloudStorage, CloudStorageError
+from app.models.llm.constants import LlmAudioKindEnum
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ def upload_to_object_store(
     filename: str,
     subdirectory: str,
     content_type: str = "application/octet-stream",
+    root_prefix: str | None = None,
 ) -> str | None:
     """
     Upload content to object store.
@@ -60,6 +62,7 @@ def upload_to_object_store(
         filename: Name of the file
         subdirectory: Subdirectory path in object store (e.g., "datasets", "stt_datasets")
         content_type: MIME type of the content (default: "application/octet-stream")
+        root_prefix: Optional prefix ahead of the project's storage path
 
     Returns:
         Object store URL as string if successful, None if failed
@@ -84,7 +87,9 @@ def upload_to_object_store(
             headers=headers,
         )
 
-        destination = storage.put(source=upload_file, file_path=file_path)
+        destination = storage.put(
+            source=upload_file, file_path=file_path, root_prefix=root_prefix
+        )
         object_store_url = str(destination)
 
         logger.info(
@@ -228,16 +233,16 @@ def upload_audio_bytes_to_s3(
     audio_bytes: bytes,
     call_id: UUID,
     mime_type: str | None,
-    prefix: str,
+    kind: LlmAudioKindEnum,
 ) -> str | None:
-    """Upload decoded audio bytes to S3 and return the s3:// URI.
+    """Upload LLM call audio to S3 and return the s3:// URI.
 
     Args:
         storage: CloudStorage instance
         audio_bytes: Raw audio bytes
         call_id: LLM call UUID used as the filename stem
         mime_type: MIME type of the audio (determines file extension)
-        prefix: S3 subdirectory, e.g. "llm/tts/audio" or "llm/stt/audio"
+        kind: Whether this is STT input or TTS output
 
     Returns:
         s3:// URI if successful, None on failure
@@ -245,7 +250,12 @@ def upload_audio_bytes_to_s3(
     ext = _MIME_TO_EXT.get(mime_type or "", "wav")
     filename = f"{call_id}.{ext}"
     return upload_to_object_store(
-        storage, audio_bytes, filename, prefix, mime_type or "audio/wav"
+        storage,
+        audio_bytes,
+        filename,
+        kind.value,
+        mime_type or "audio/wav",
+        root_prefix=LLM_AUDIO_PREFIX,
     )
 
 

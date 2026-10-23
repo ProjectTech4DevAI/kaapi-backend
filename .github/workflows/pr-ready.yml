@@ -27,7 +27,7 @@ jobs:
         with:
           sparse-checkout: |
             .claude/skills/pr-ready/SKILL.md
-            .github/pull_request_template.md
+            .github/PULL_REQUEST_TEMPLATE.md
           sparse-checkout-cone-mode: false
           persist-credentials: false
 
@@ -46,7 +46,7 @@ jobs:
             }
 
             const skill = fs.readFileSync('.claude/skills/pr-ready/SKILL.md', 'utf8');
-            const template = fs.readFileSync('.github/pull_request_template.md', 'utf8');
+            const template = fs.readFileSync('.github/PULL_REQUEST_TEMPLATE.md', 'utf8');
 
             const { data: rawDiff } = await github.rest.pulls.get({
               owner: context.repo.owner,

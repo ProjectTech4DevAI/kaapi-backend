@@ -9,8 +9,10 @@ from uuid import UUID
 import httpx
 from fastapi import HTTPException
 from opentelemetry import trace
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
+from app.core.retry import is_transient
 from app.models.llm.request import InlineValidator, InlineValidatorTypeEnum, Validator
 
 logger = logging.getLogger(__name__)
@@ -91,7 +93,13 @@ def proxy_guardrails_request(
             ),
             httpx.Client(timeout=GUARDRAILS_PROXY_TIMEOUT_SECONDS) as client,
         ):
-            response = client.request(
+            # Status isn't raised, so only connect failures retry: safe for any method.
+            response = retry(
+                stop=stop_after_attempt(4),
+                wait=wait_exponential(max=10),
+                retry=retry_if_exception(is_transient),
+                reraise=True,
+            )(client.request)(
                 method, url, params=query, json=json_body, headers=headers
             )
     except httpx.RequestError as e:
@@ -371,19 +379,29 @@ def run_guardrails_validation(
             ),
             httpx.Client(timeout=45.0) as client,
         ):
-            response = client.post(
-                url,
-                json=payload,
-                params={"suppress_pass_logs": str(suppress_pass_logs).lower()},
-                headers=headers,
+
+            @retry(
+                stop=stop_after_attempt(4),
+                wait=wait_exponential(max=10),
+                retry=retry_if_exception(is_transient),
+                reraise=True,
             )
-            elapsed_ms = int((time.monotonic() - started) * 1000)
-            logger.info(
-                f"[run_guardrails_validation] Response received | job_id={job_id}, "
-                f"status={response.status_code}, elapsed_ms={elapsed_ms}, "
-            )
-            response.raise_for_status()
-            return response.json()
+            def _post() -> dict[str, Any]:
+                response = client.post(
+                    url,
+                    json=payload,
+                    params={"suppress_pass_logs": str(suppress_pass_logs).lower()},
+                    headers=headers,
+                )
+                elapsed_ms = int((time.monotonic() - started) * 1000)
+                logger.info(
+                    f"[run_guardrails_validation] Response received | job_id={job_id}, "
+                    f"status={response.status_code}, elapsed_ms={elapsed_ms}, "
+                )
+                response.raise_for_status()
+                return response.json()
+
+            return _post()
     except Exception as e:
         elapsed_ms = int((time.monotonic() - started) * 1000)
         if _is_auth_error(e):
@@ -458,6 +476,12 @@ def list_validators_config(
             httpx.Client(timeout=10.0) as client,
         ):
 
+            @retry(
+                stop=stop_after_attempt(4),
+                wait=wait_exponential(max=10),
+                retry=retry_if_exception(is_transient),
+                reraise=True,
+            )
             def _fetch_by_ids(validator_ids: list[UUID]) -> list[dict[str, Any]]:
                 if not validator_ids:
                     return []
