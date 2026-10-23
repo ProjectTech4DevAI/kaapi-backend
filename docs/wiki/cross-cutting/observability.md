@@ -18,7 +18,7 @@ OTel-first, Sentry as sole in-process sink (`instrumenter="otel"`). Init at `mai
 - Trace propagation: OTel's `CeleryInstrumentor` parents the worker's `run/...` span to `apply_async`; never inject/extract trace context by hand around tasks (it reparents task spans to the API request and Sentry splits them into separate transactions). `CeleryIntegration(propagate_traces=True)` links API to worker as one trace; poll-loop re-enqueues pass `SENTRY_NO_PROPAGATE_HEADERS` (`celery/tasks/job_execution.py`) to start a fresh trace.
 - Error capture: handlers in `core/exception_handlers.py` report via `logger.error(exc_info=exc)` (5xx only). Don't add `capture_exception` next to it: on sentry-sdk 2.54 Dedupe does not merge the two, so each error becomes two events.
 - Tenant impact (both in `core/telemetry/context.py`, called from `api/deps.py`): `set_request_log_context` puts org/project in the log context + Sentry tags; `bind_sentry_user` binds user/org/project via `sentry_sdk.set_user` so issues report users/orgs affected. The user binding is scope-only — ids in the log context would stamp per-user cardinality on every INFO record `enable_logs` ships. Per-request identity is the `correlation_id` tag (`core/middleware.py`), not the user binding.
-- Crons: `@sentry_sdk.monitor` on `/cron/*` endpoints (`api/routes/cron.py`).
+- Crons: `@sentry_sdk.monitor` on `/cron/*` endpoints (`api/routes/cron.py`), e.g. `llm-call-retention-cron-job` (daily 09:00 IST).
 - Runbook (alerts/dashboards/debugging): `features/sentry-utilization/SENTRY-RUNBOOK.md`.
 
 ## Telemetry / misc

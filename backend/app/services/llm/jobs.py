@@ -16,10 +16,12 @@ from celery.exceptions import SoftTimeLimitExceeded
 from gevent import Timeout
 from opentelemetry import trace
 from sqlmodel import Session
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.celery.utils import start_llm_chain_job, start_llm_job
 from app.core.db import engine
-from app.models.provider_credentials import Provider
+from app.core.providers import Provider
+from app.core.retry import is_transient
 from app.core.langfuse.langfuse import observe_llm_execution
 from app.core.telemetry import (
     LogModuleEnum,
@@ -62,6 +64,7 @@ from app.models.llm.request import (
 )
 from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import upload_audio_bytes_to_s3
+from app.models.llm.constants import LlmAudioKindEnum
 from app.models.llm.response import (
     AudioOutput,
     LLMCallResponse,
@@ -859,6 +862,28 @@ def _run_output_guardrails(
     return result
 
 
+# ReadTimeout isn't retried: the proxy may already have run (and billed) the call.
+@retry(
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(max=10),
+    retry=retry_if_exception(is_transient),
+    reraise=True,
+)
+def _post_to_proxy(url: str, api_key: str, input_text: str) -> dict:
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            json={"input": input_text},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
 def _execute_proxy_call(
     session: Session,
     *,
@@ -918,6 +943,10 @@ def _execute_proxy_call(
         )
         return BlockResult(error=f"Failed to create LLM call record: {str(e)}")
 
+    # End the read transaction so no pooled connection sits idle during the proxy
+    # request and its retry backoff; nothing is pending, so this only releases it.
+    session.commit()
+
     ctx.metrics_started(provider=Provider.PROXY.value, model="")
     proxy_data: dict | None = None
 
@@ -927,18 +956,9 @@ def _execute_proxy_call(
 
         try:
             with suppress_http_instrumentation():
-                with httpx.Client(timeout=60.0) as client:
-                    resp = client.post(
-                        client_llm_url,
-                        headers={
-                            "Authorization": f"Bearer {creds['api_key']}",
-                            "Content-Type": "application/json",
-                            "Accept": "application/json",
-                        },
-                        json={"input": query.input.content.value},
-                    )
-                    resp.raise_for_status()
-                    proxy_data = resp.json()
+                proxy_data = _post_to_proxy(
+                    client_llm_url, creds["api_key"], query.input.content.value
+                )
         except httpx.HTTPError as e:
             proxy_span.record_exception(e)
             proxy_span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
@@ -950,7 +970,8 @@ def _execute_proxy_call(
             return BlockResult(
                 error=f"Proxy call failed: {str(e)}",
                 llm_call_id=ctx.llm_call_id,
-                retryable=True,
+                # Transient failures were already retried; don't stack fast-eval retries.
+                retryable=not is_transient(e),
             )
 
     try:
@@ -1082,13 +1103,12 @@ def _upload_stt_input(session: Session, query: QueryParams, ctx: _CallContext) -
             stt_bytes = base64.b64decode(query.input.content.value)
 
         storage = get_cloud_storage(session, ctx.project_id)
-        subfolder_path = f"orgs/{ctx.organization_id}/{ctx.project_id}/audio/stt"
         s3_url = upload_audio_bytes_to_s3(
             storage,
             stt_bytes,
             ctx.llm_call_id,
             query.input.content.mime_type,
-            subfolder_path,
+            LlmAudioKindEnum.STT,
         )
         if s3_url:
             stt_input_record = json.dumps(
@@ -1121,13 +1141,12 @@ def _upload_tts_output(output: AudioOutput, ctx: _CallContext) -> dict | None:
         with Session(engine) as s3_session:
             storage = get_cloud_storage(s3_session, ctx.project_id)
         tts_bytes = base64.b64decode(output.content.value)
-        subfolder_path = f"orgs/{ctx.organization_id}/{ctx.project_id}/audio/tts"
         s3_url = upload_audio_bytes_to_s3(
             storage,
             tts_bytes,
             ctx.llm_call_id,
             output.content.mime_type,
-            subfolder_path,
+            LlmAudioKindEnum.TTS,
         )
         if s3_url:
             output.content.uri = s3_url

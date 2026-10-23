@@ -1,3 +1,4 @@
+import httpx
 import pytest
 from fastapi import HTTPException
 from unittest.mock import patch, MagicMock
@@ -36,10 +37,14 @@ from app.services.llm.jobs import (
     handle_job_error,
     execute_job,
     execute_chain_job,
+    execute_llm_call,
     resolve_config_blob,
+    _post_to_proxy,
 )
 from app.tests.utils.utils import get_project
 from app.tests.utils.test_data import create_test_config
+
+pytestmark = pytest.mark.usefixtures("no_retry_backoff")
 
 VALIDATOR_CONFIG_ID_1 = "00000000-0000-0000-0000-000000000001"
 VALIDATOR_CONFIG_ID_2 = "00000000-0000-0000-0000-000000000002"
@@ -548,6 +553,61 @@ class TestExecuteJob:
         assert result["data"]["response"]["provider"] == "proxy"
         assert result["data"]["response"]["model"] == "gpt-5"
         assert result["data"]["usage"]["total_tokens"] == 18
+
+    @pytest.mark.parametrize(
+        "record_call", [False, True], ids=["fast_eval", "recorded"]
+    )
+    def test_proxy_call_holds_no_transaction_during_request(
+        self, db, job_env, job_for_execution, record_call
+    ):
+        """The proxy request and its retry backoff must not pin a pooled connection."""
+        project = get_project(db)
+        in_transaction_during_request: list[bool] = []
+
+        def read_credentials(**kwargs):
+            # The real lookup is a SELECT, which opens the read transaction.
+            db.exec(select(1))
+            return {"api_key": "tap-token"}
+
+        def fake_post(url, api_key, input_text):
+            in_transaction_during_request.append(db.in_transaction())
+            return {
+                "id": "resp_abc",
+                "model": "gpt-5",
+                "output": [{"content": [{"type": "output_text", "text": "ok"}]}],
+                "usage": {},
+            }
+
+        with (
+            patch(
+                "app.services.llm.jobs.get_provider_credential",
+                side_effect=read_credentials,
+            ),
+            patch("app.services.llm.jobs._post_to_proxy", side_effect=fake_post),
+        ):
+            result = execute_llm_call(
+                config=LLMCallConfig(
+                    blob={
+                        "completion": {
+                            "type": "proxy",
+                            "provider": None,
+                            "params": {
+                                "client_llm_url": "https://api.tap.example/v1/predictions"
+                            },
+                        }
+                    }
+                ),
+                query=QueryParams(input="Brief overview of land rights."),
+                job_id=job_for_execution.id,
+                project_id=project.id,
+                organization_id=project.organization_id,
+                request_metadata=None,
+                langfuse_credentials=None,
+                record_call=record_call,
+            )
+
+        assert result.error is None
+        assert in_transaction_during_request == [False]
 
     def test_proxy_config_missing_credentials_fails(
         self, db, job_env, job_for_execution
@@ -2994,3 +3054,41 @@ class TestResolveConfigBlob:
         assert error_kaapi is None
         assert isinstance(resolved_kaapi.completion, KaapiTextCompletionConfig)
         assert resolved_kaapi.completion.provider == "openai"
+
+
+class TestPostToProxyRetry:
+    URL = "https://proxy.example/v1/predict"
+
+    def _post(self, *outcomes: int | Exception) -> tuple[dict | Exception, int]:
+        request = httpx.Request("POST", self.URL)
+        side_effect = [
+            httpx.Response(o, json={"ok": o}, request=request)
+            if isinstance(o, int)
+            else o
+            for o in outcomes
+        ]
+        with patch.object(httpx.Client, "post", side_effect=side_effect) as post:
+            try:
+                result: dict | Exception = _post_to_proxy(self.URL, "key", "hi")
+            except httpx.HTTPError as e:
+                result = e
+        return result, post.call_count
+
+    def test_recovers_from_connect_error_and_5xx(self) -> None:
+        result, calls = self._post(httpx.ConnectError("refused"), 502, 200)
+
+        assert result == {"ok": 200}
+        assert calls == 3
+
+    def test_read_timeout_is_not_retried(self) -> None:
+        result, calls = self._post(httpx.ReadTimeout("slow"), 200)
+
+        assert isinstance(result, httpx.ReadTimeout)
+        assert calls == 1
+
+    def test_4xx_is_not_retried(self) -> None:
+        result, calls = self._post(400, 200)
+
+        assert isinstance(result, httpx.HTTPStatusError)
+        assert result.response.status_code == 400
+        assert calls == 1
