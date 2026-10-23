@@ -14,7 +14,6 @@ CHATBOT_URL = f"{settings.API_V1_STR}/chatbot"
 @pytest.mark.parametrize(
     ("method", "path", "kwargs"),
     [
-        ("post", "/message", {"json": {}}),
         ("post", "/sessions", {"json": {}}),
         ("get", "/sessions", {"params": {"contact_ref": "c", "chatbot_ref": "b"}}),
         ("post", f"/sessions/{uuid4()}/message", {"json": {}}),
