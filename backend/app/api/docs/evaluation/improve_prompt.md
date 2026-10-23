@@ -56,4 +56,4 @@ LLM and trace-download failures surface only via the failure callback, not on th
 - `409 source_config_unavailable` — the run's config or config_version has been deleted.
 - `422 traces_not_available` — the run has no `score_trace_url`; trace file is required.
 - `422 invalid_callback_url` — `callback_url` is missing, not `https://`, or resolves to a blocked (private/loopback/metadata) address.
-- `503 prompt_improvement_enqueue_failed` — the job could not be queued; retry shortly.
+- `500 prompt_improvement_enqueue_failed` — the job could not be queued.

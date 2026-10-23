@@ -227,8 +227,7 @@ def start_stt_evaluation_batch(
         except Exception as e:
             logger.error(
                 f"[start_stt_evaluation_batch] Failed to submit batch | "
-                f"model: {model}, error: {str(e)}",
-                exc_info=True,
+                f"model: {model}, error: {str(e)}"
             )
 
     if not batch_jobs:

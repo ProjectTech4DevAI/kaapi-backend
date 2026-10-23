@@ -502,7 +502,7 @@ class TestStartJobRoute:
         assert "invalid_callback_url" in resp.json()["error"], resp.text
         enqueue.assert_not_called()
 
-    def test_enqueue_failure_marks_job_failed_and_raises_503(
+    def test_enqueue_failure_marks_job_failed_and_raises_500(
         self,
         db: Session,
         auth: TestAuthContext,
@@ -521,7 +521,7 @@ class TestStartJobRoute:
                     callback_url=_CALLBACK_URL,
                 )
 
-        assert exc.value.status_code == 503
+        assert exc.value.status_code == 500
 
         job = db.exec(
             select(Job)

@@ -4,7 +4,6 @@ from typing import Any, cast
 from uuid import UUID
 
 from langfuse import Langfuse
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from app.core.cloud.storage import get_cloud_storage
@@ -18,8 +17,8 @@ from app.crud.evaluations.score import (
     EvaluationScore,
 )
 from app.models import EvaluationRun, EvaluationRunUpdate
-from app.models.config.config import ConfigTag
 from app.models.evaluation import RunModeEnum, TraceData
+from app.models.config.config import ConfigTag
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.models.stt_evaluation import EvaluationType
 from app.services.llm.jobs import resolve_config_blob
@@ -129,15 +128,9 @@ def create_evaluation_run(
     try:
         session.commit()
         session.refresh(eval_run)
-    except IntegrityError:
-        session.rollback()
-        raise  # caller classifies: run_name conflict is a 409, the rest an error
     except Exception as e:
         session.rollback()
-        logger.error(
-            f"[create_evaluation_run] Failed to create EvaluationRun: {e}",
-            exc_info=True,
-        )
+        logger.error(f"Failed to create EvaluationRun: {e}", exc_info=True)
         raise
 
     logger.info(
@@ -220,12 +213,12 @@ def get_evaluation_run_by_id(
 
     if eval_run:
         logger.info(
-            f"[get_evaluation_run_by_id] Found evaluation run {evaluation_id}: status={eval_run.status}, "
+            f"Found evaluation run {evaluation_id}: status={eval_run.status}, "
             f"batch_job_id={eval_run.batch_job_id}"
         )
     else:
         logger.warning(
-            f"[get_evaluation_run_by_id] Evaluation run {evaluation_id} not found or not accessible "
+            f"Evaluation run {evaluation_id} not found or not accessible "
             f"for org_id={organization_id}, project_id={project_id}"
         )
 
@@ -273,10 +266,7 @@ def update_evaluation_run(
         session.refresh(eval_run)
     except Exception as e:
         session.rollback()
-        logger.error(
-            f"[update_evaluation_run] Failed to update EvaluationRun: {e}",
-            exc_info=True,
-        )
+        logger.error(f"Failed to update EvaluationRun: {e}", exc_info=True)
         raise
 
     if should_notify:

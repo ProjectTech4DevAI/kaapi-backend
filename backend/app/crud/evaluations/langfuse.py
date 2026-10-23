@@ -205,8 +205,7 @@ def create_langfuse_dataset_run(
                 if getattr(e, "status_code", None) == 429:
                     logger.error(
                         f"[create_langfuse_dataset_run] Langfuse rate limit (429) | "
-                        f"item_id={item_id}",
-                        exc_info=True,
+                        f"item_id={item_id}"
                     )
                 else:
                     logger.error(
@@ -616,8 +615,7 @@ def fetch_trace_scores_from_langfuse(
                             f"[fetch_trace_scores_from_langfuse] Circuit breaker triggered | "
                             f"consecutive_failures={consecutive_failures} | "
                             f"total_failures={total_failures} | "
-                            f"total_traces={len(trace_ids)}",
-                            exc_info=True,
+                            f"total_traces={len(trace_ids)}"
                         )
                         raise RuntimeError(
                             f"Langfuse API unavailable: {consecutive_failures} consecutive "

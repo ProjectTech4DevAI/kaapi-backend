@@ -8,12 +8,9 @@ This module handles:
 """
 
 import logging
-from fastapi import HTTPException
 from typing import Any
 
 from langfuse import Langfuse
-from langfuse.api import NotFoundError as LangfuseNotFoundError
-from langfuse.api.core import ApiError as LangfuseApiError
 from sqlmodel import Session
 
 from app.core.batch import (
@@ -47,46 +44,18 @@ def fetch_dataset_items(langfuse: Langfuse, dataset_name: str) -> list[dict[str,
         List of dataset items with input and expected_output
 
     Raises:
-        HTTPException: 404 if the dataset is missing, 502 if Langfuse errored
-            or was unreachable, 422 if the dataset is empty.
+        ValueError: If dataset not found or empty
     """
     try:
         dataset = langfuse.get_dataset(dataset_name)
-    except LangfuseNotFoundError as e:
+    except Exception as e:
         logger.warning(
-            f"[fetch_dataset_items] Dataset not found | dataset={dataset_name} | {e}"
+            f"[fetch_dataset_items] Failed to fetch dataset | dataset={dataset_name} | {e}"
         )
-        raise HTTPException(
-            status_code=404, detail=f"Dataset '{dataset_name}' not found in Langfuse."
-        )
-    except LangfuseApiError as e:
-        logger.error(
-            f"[fetch_dataset_items] Langfuse rejected the request | "
-            f"dataset={dataset_name}, code={getattr(e, 'status_code', 'unknown')}",
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=502,
-            detail=f"Langfuse could not return dataset '{dataset_name}' "
-            f"(code: {getattr(e, 'status_code', 'unknown')}). Retry shortly.",
-        )
-    except Exception:
-        logger.error(
-            f"[fetch_dataset_items] Failed to reach Langfuse | dataset={dataset_name}",
-            exc_info=True,
-        )
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not reach Langfuse to fetch dataset '{dataset_name}'. Retry shortly.",
-        )
+        raise ValueError(f"Dataset '{dataset_name}' not found: {e}")
 
     if not dataset.items:
-        logger.warning(
-            f"[fetch_dataset_items] Dataset is empty | dataset={dataset_name}"
-        )
-        raise HTTPException(
-            status_code=422, detail=f"Dataset '{dataset_name}' is empty."
-        )
+        raise ValueError(f"Dataset '{dataset_name}' is empty")
 
     items = []
     for item in dataset.items:
@@ -231,9 +200,8 @@ def start_evaluation_batch(
                 dataset_items=dataset_items, openai_params=mapped_params
             )
             if not jsonl_data:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Evaluation dataset did not produce any JSONL entries (missing questions?).",
+                raise ValueError(
+                    "Evaluation dataset did not produce any JSONL entries (missing questions?)."
                 )
 
             openai_client = get_openai_client(
@@ -272,9 +240,8 @@ def start_evaluation_batch(
                 dataset_items=dataset_items, google_params=mapped_params
             )
             if not jsonl_data:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Evaluation dataset did not produce any JSONL entries (missing questions?).",
+                raise ValueError(
+                    "Evaluation dataset did not produce any JSONL entries (missing questions?)."
                 )
 
             gemini_client = GeminiClient.from_credentials(
@@ -304,10 +271,7 @@ def start_evaluation_batch(
             )
 
         else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported provider for evaluation batches: {provider}",
-            )
+            raise ValueError(f"Unsupported provider for evaluation batches: {provider}")
 
         eval_run.batch_job_id = batch_job.id
         eval_run.status = "processing"
