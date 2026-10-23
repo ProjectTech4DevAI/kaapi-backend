@@ -107,16 +107,16 @@ def read_latest_chatbot_session(
             description="Caller-side identifier of the end user whose latest session to fetch",
         ),
     ],
+    session: SessionDep,
+    auth_context: AuthContextDep,
     chatbot_ref: Annotated[
-        str,
+        str | None,
         Query(
             min_length=1,
             max_length=CHATBOT_REF_MAX_LENGTH,
-            description="Caller-side identifier of the chatbot whose latest session to fetch",
+            description="Chatbot whose latest session to fetch; omit to get the contact's newest session across all chatbots",
         ),
-    ],
-    session: SessionDep,
-    auth_context: AuthContextDep,
+    ] = None,
 ) -> APIResponse[ChatbotSessionSummary]:
     chatbot_session = get_latest_chatbot_session(
         session,
@@ -128,7 +128,8 @@ def read_latest_chatbot_session(
     if chatbot_session is None:
         raise HTTPException(
             status_code=404,
-            detail="No chatbot session found for this contact_ref and chatbot_ref",
+            detail="No chatbot session found for this contact_ref"
+            + (" and chatbot_ref" if chatbot_ref is not None else ""),
         )
     return APIResponse.success_response(
         ChatbotSessionSummary(
@@ -136,6 +137,7 @@ def read_latest_chatbot_session(
             name=chatbot_session.name,
             contact_ref=chatbot_session.contact_ref,
             chatbot_ref=chatbot_session.chatbot_ref,
+            system_prompt=chatbot_session.system_prompt,
             status=chatbot_session.status,
             completion_status=chatbot_session.completion_status,
             collected_fields=chatbot_session.collected_fields,

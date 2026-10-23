@@ -232,17 +232,14 @@ def get_latest_chatbot_session(
     organization_id: int,
     project_id: int,
     contact_ref: str,
-    chatbot_ref: str,
+    chatbot_ref: str | None = None,
 ) -> ChatbotSession | None:
-    statement = (
-        select(ChatbotSession)
-        .where(
-            ChatbotSession.organization_id == organization_id,
-            ChatbotSession.project_id == project_id,
-            ChatbotSession.contact_ref == contact_ref,
-            ChatbotSession.chatbot_ref == chatbot_ref,
-        )
-        .order_by(col(ChatbotSession.inserted_at).desc())
-        .limit(1)
+    statement = select(ChatbotSession).where(
+        ChatbotSession.organization_id == organization_id,
+        ChatbotSession.project_id == project_id,
+        ChatbotSession.contact_ref == contact_ref,
     )
+    if chatbot_ref is not None:
+        statement = statement.where(ChatbotSession.chatbot_ref == chatbot_ref)
+    statement = statement.order_by(col(ChatbotSession.inserted_at).desc()).limit(1)
     return session.exec(statement).first()

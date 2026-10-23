@@ -241,6 +241,26 @@ class TestGetLatestChatbotSession:
             is None
         )
 
+    def test_without_chatbot_ref_returns_newest_across_chatbots(
+        self, db: Session, config: Config, project: Project
+    ) -> None:
+        older = create_test_chatbot_session(db, config=config)
+        newest = create_test_chatbot_session(
+            db, config=config, contact_ref=older.contact_ref
+        )
+        create_test_chatbot_session(db, config=config)
+
+        latest = get_latest_chatbot_session(
+            db,
+            organization_id=project.organization_id,
+            project_id=project.id,
+            contact_ref=older.contact_ref,
+        )
+
+        assert latest is not None
+        assert latest.id == newest.id
+        assert latest.chatbot_ref != older.chatbot_ref
+
     def test_ignores_newer_session_of_another_chatbot(
         self, db: Session, config: Config, project: Project
     ) -> None:
@@ -431,7 +451,7 @@ class TestCreateChatbotSessionSupersedes:
             db, config=config, contact_ref=contact_ref, chatbot_ref=chatbot_ref
         )
 
-        for chatbot_session, updated_at in zip(untouched, updated_ats):
+        for chatbot_session, updated_at in zip(untouched, updated_ats, strict=True):
             stored = _reload(db, chatbot_session)
             assert stored.status == ChatbotSessionStatusEnum.ACTIVE
             assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS

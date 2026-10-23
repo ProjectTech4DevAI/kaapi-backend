@@ -248,6 +248,7 @@ class ChatbotSessionSummary(SQLModel):
     name: str
     contact_ref: str
     chatbot_ref: str
+    system_prompt: str
     status: ChatbotSessionStatusEnum
     completion_status: ChatbotCompletionStatusEnum
     collected_fields: dict[str, Any]

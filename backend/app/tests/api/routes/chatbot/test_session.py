@@ -417,6 +417,7 @@ class TestGetLatestChatbotSession:
             contact_ref=contact_ref,
             chatbot_ref=chatbot_ref,
             config_version=1,
+            system_prompt="Collect the student's name and grade.",
         )
         create_test_chatbot_session(
             db, config=anthropic_config, chatbot_ref=chatbot_ref
@@ -440,6 +441,7 @@ class TestGetLatestChatbotSession:
         assert body["name"] == "Onboarding Bot"
         assert body["contact_ref"] == contact_ref
         assert body["chatbot_ref"] == chatbot_ref
+        assert body["system_prompt"] == "Collect the student's name and grade."
         assert body["status"] == "active"
         assert body["completion_status"] == "in_progress"
         assert body["collected_fields"] == {}
@@ -496,19 +498,47 @@ class TestGetLatestChatbotSession:
 
         assert resp.status_code == 422
 
-    def test_missing_chatbot_ref_returns_422(
+    def test_omitted_chatbot_ref_returns_contacts_newest_session_across_chatbots(
         self,
         client: TestClient,
+        db: Session,
         headers: dict[str, str],
-        chatbot_session: ChatbotSession,
+        anthropic_config: Config,
+    ) -> None:
+        contact_ref = f"contact-{random_lower_string()}"
+        create_test_chatbot_session(
+            db,
+            config=anthropic_config,
+            contact_ref=contact_ref,
+            chatbot_ref=f"chatbot-{random_lower_string()}",
+        )
+        newest = create_test_chatbot_session(
+            db,
+            config=anthropic_config,
+            contact_ref=contact_ref,
+            chatbot_ref=f"chatbot-{random_lower_string()}",
+        )
+
+        resp = client.get(
+            SESSIONS_URL, headers=headers, params={"contact_ref": contact_ref}
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()["data"]
+        assert body["session_id"] == str(newest.id)
+        assert body["chatbot_ref"] == newest.chatbot_ref
+
+    def test_omitted_chatbot_ref_unknown_contact_returns_404(
+        self, client: TestClient, headers: dict[str, str]
     ) -> None:
         resp = client.get(
             SESSIONS_URL,
             headers=headers,
-            params={"contact_ref": chatbot_session.contact_ref},
+            params={"contact_ref": f"contact-{random_lower_string()}"},
         )
 
-        assert resp.status_code == 422
+        assert resp.status_code == 404
+        assert resp.json()["error"] == "No chatbot session found for this contact_ref"
 
     def test_unknown_chatbot_ref_for_known_contact_returns_404(
         self,
