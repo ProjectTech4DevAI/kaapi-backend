@@ -19,7 +19,7 @@ import anthropic
 import pytest
 
 from app.core.config import settings
-from app.crud.evaluations.score import TraceData
+from app.models.evaluation import TraceData
 from app.crud.evaluations.summary import generate_run_ai_summary
 from app.services.llm.providers.claude import STOP_REASON_COMPLETE
 

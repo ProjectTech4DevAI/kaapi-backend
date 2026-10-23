@@ -57,12 +57,11 @@ from app.crud.evaluations.score import (
     COSINE_SCORE_COMMENT,
     COSINE_SCORE_NAME,
     EvaluationScore,
-    TraceData,
 )
 from app.crud.job import get_batch_job, update_batch_job
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.batch_job import BatchJob, BatchJobUpdate
-from app.models.evaluation import RunModeEnum
+from app.models.evaluation import RunModeEnum, TraceData
 from app.utils import get_langfuse_client, get_openai_client
 
 logger = logging.getLogger(__name__)

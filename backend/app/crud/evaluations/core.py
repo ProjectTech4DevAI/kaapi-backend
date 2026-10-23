@@ -13,10 +13,13 @@ from app.core.storage_utils import upload_jsonl_to_object_store
 from app.core.util import now
 from app.crud.config.version import ConfigVersionCrud
 from app.crud.evaluations.langfuse import fetch_trace_scores_from_langfuse
-from app.crud.evaluations.score import DEFAULT_CATEGORY, EvaluationScore, TraceData
+from app.crud.evaluations.score import (
+    DEFAULT_CATEGORY,
+    EvaluationScore,
+)
 from app.models import EvaluationRun, EvaluationRunUpdate
 from app.models.config.config import ConfigTag
-from app.models.evaluation import RunModeEnum
+from app.models.evaluation import RunModeEnum, TraceData
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.models.stt_evaluation import EvaluationType
 from app.services.llm.jobs import resolve_config_blob
