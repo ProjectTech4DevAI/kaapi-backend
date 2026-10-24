@@ -16,6 +16,8 @@ _SENSITIVE_HEADERS: frozenset[str] = frozenset(
 _GENAI_CONTENT_KEYS: frozenset[str] = frozenset(
     {
         "gen_ai.request.messages",
+        "gen_ai.input.messages",
+        "gen_ai.output.messages",
         "gen_ai.response.text",
         "gen_ai.response.tool_calls",
         "gen_ai.choice",
