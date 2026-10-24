@@ -1,4 +1,4 @@
-from uuid import uuid4
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +9,7 @@ from app.tests.api.routes.chatbot.conftest import set_chatbot_flag
 from app.tests.utils.auth import TestAuthContext
 
 CHATBOT_URL = f"{settings.API_V1_STR}/chatbot"
+UNKNOWN_SESSION_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 @pytest.mark.parametrize(
@@ -16,8 +17,9 @@ CHATBOT_URL = f"{settings.API_V1_STR}/chatbot"
     [
         ("post", "/sessions", {"json": {}}),
         ("get", "/sessions", {"params": {"contact_ref": "c", "chatbot_ref": "b"}}),
-        ("post", f"/sessions/{uuid4()}/message", {"json": {}}),
+        ("post", f"/sessions/{UNKNOWN_SESSION_ID}/message", {"json": {}}),
     ],
+    ids=["create_session", "get_latest_session", "send_message"],
 )
 def test_chatbot_routes_return_403_when_flag_disabled(
     client: TestClient,
