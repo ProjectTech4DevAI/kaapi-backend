@@ -13,12 +13,19 @@ from langfuse.api.core.api_error import ApiError
 from opentelemetry.sdk.trace import TracerProvider
 
 from app.models.llm import (
+    AudioContent,
     AudioOutput,
+    ImageContent,
     LLMCallResponse,
     NativeCompletionConfig,
+    PDFContent,
     QueryParams,
+    TextInput,
     TextOutput,
 )
+from app.models.llm.request import QueryInput
+
+TraceInput = dict[str, object] | list[dict[str, object]]
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +122,50 @@ def set_trace_attributes(
             )
     if attrs:
         span._otel_span.set_attributes(attrs)
+
+
+def _media_content_metadata(
+    content: AudioContent | ImageContent | PDFContent,
+) -> dict[str, object]:
+    """Media fields without the base64 or URL payload, which is large and may be private."""
+    return {
+        "format": content.format,
+        "mime_type": content.mime_type,
+        "length": len(content.value),
+    }
+
+
+def _query_input_item(query_input: str | QueryInput) -> dict[str, object]:
+    if isinstance(query_input, str):
+        return {"type": "text", "content": query_input, "format": "text"}
+    if isinstance(query_input, TextInput):
+        return {
+            "type": "text",
+            "content": query_input.content.value,
+            "format": query_input.content.format,
+            "language_code": query_input.content.language_code,
+        }
+    contents = (
+        query_input.content
+        if isinstance(query_input.content, list)
+        else [query_input.content]
+    )
+    media = [_media_content_metadata(content) for content in contents]
+    if len(media) == 1:
+        return {"type": query_input.type, **media[0]}
+    return {"type": query_input.type, "items": media}
+
+
+def extract_query_input(
+    query_input: str | QueryInput | list[QueryInput],
+) -> TraceInput:
+    """Structured trace input (type, format, language code) instead of the Pydantic repr.
+
+    Text keeps its content; audio, image and PDF send metadata only, like extract_response_output.
+    """
+    if isinstance(query_input, list):
+        return [_query_input_item(item) for item in query_input]
+    return _query_input_item(query_input)
 
 
 def extract_response_output(
@@ -356,18 +407,19 @@ def observe_llm_execution(
                     failed = True
                     return None
 
+            trace_input = extract_query_input(query.input)
             trace = langfuse_call(
                 langfuse.start_observation,
                 as_type="span",
                 name="unified-llm-call",
-                input=query.input,
+                input=trace_input,
             )
             if trace:
                 langfuse_call(
                     set_trace_attributes,
                     trace,
                     name="unified-llm-call",
-                    input=query.input,
+                    input=trace_input,
                     tags=[completion_config.provider],
                 )
 
@@ -377,7 +429,7 @@ def observe_llm_execution(
                     trace.start_observation,
                     as_type="generation",
                     name=f"{completion_config.provider}-completion",
-                    input=query.input,
+                    input=trace_input,
                     model=(
                         completion_config.params.get("model")
                         if isinstance(completion_config.params, dict)

@@ -6,8 +6,16 @@ from uuid import uuid4
 
 from openai import OpenAIError
 
-from app.core.langfuse.langfuse import LangfuseTracer
+from app.core.langfuse.langfuse import LangfuseTracer, extract_query_input
 from app.models import Assistant, ResponsesAPIRequest
+from app.models.llm import (
+    AudioContent,
+    AudioInput,
+    ImageContent,
+    ImageInput,
+    TextContent,
+    TextInput,
+)
 from app.services.response.response import generate_response, process_response
 
 
@@ -653,3 +661,57 @@ class TestProcessResponseIntegration:
         )
 
         assert result.success is False
+
+
+class TestExtractQueryInput:
+    """Trace input is structured data, never the Pydantic repr or a media payload."""
+
+    def test_text_input_keeps_content_and_metadata(self) -> None:
+        result = extract_query_input(
+            TextInput(content=TextContent(value="why are you here", language_code="hi"))
+        )
+
+        assert result == {
+            "type": "text",
+            "content": "why are you here",
+            "format": "text",
+            "language_code": "hi",
+        }
+
+    def test_plain_string_is_structured(self) -> None:
+        assert extract_query_input("hello") == {
+            "type": "text",
+            "content": "hello",
+            "format": "text",
+        }
+
+    def test_audio_sends_metadata_not_payload(self) -> None:
+        payload = "QUJD" * 1000
+        result = extract_query_input(
+            AudioInput(content=AudioContent(value=payload, mime_type="audio/wav"))
+        )
+
+        assert result == {
+            "type": "audio",
+            "format": "base64",
+            "mime_type": "audio/wav",
+            "length": len(payload),
+        }
+        assert payload not in str(result)
+
+    def test_list_input_maps_each_part(self) -> None:
+        result = extract_query_input(
+            [
+                TextInput(content=TextContent(value="caption this")),
+                ImageInput(
+                    content=[
+                        ImageContent(value="abc", mime_type="image/png"),
+                        ImageContent(format="url", value="https://e.x/a.png"),
+                    ]
+                ),
+            ]
+        )
+
+        assert result[0]["content"] == "caption this"
+        assert result[1]["type"] == "image"
+        assert [item["format"] for item in result[1]["items"]] == ["base64", "url"]
