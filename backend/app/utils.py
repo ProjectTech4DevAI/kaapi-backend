@@ -608,7 +608,7 @@ def send_callback(
 
     except requests.RequestException as e:
         status = e.response.status_code if e.response is not None else None
-        logger.error(
+        logger.warning(
             f"[send_callback] Callback failed | url={callback_url} | status={status} "
             f"| duration_ms={(time.perf_counter() - started_at) * 1000:.2f} "
             f"| bytes={len(raw_body)} | payload={log_payload} | error={e}",

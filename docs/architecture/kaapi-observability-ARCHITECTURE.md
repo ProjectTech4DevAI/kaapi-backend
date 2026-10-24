@@ -2,7 +2,7 @@
 
 ## Overview
 
-Kaapi collects **traces, metrics and logs** from both processes, the FastAPI web app and the Celery worker, and sends all of them to **one Sentry project**. Errors, cron check-ins and profiles go to the same place, so one request can be followed from the HTTP call to the Celery task, the provider call and the callback.
+Kaapi collects **traces, metrics and logs** from both processes, the FastAPI web app and the Celery worker, and sends all of them to **one Sentry project**. Errors and cron check-ins go to the same place, so one request can be followed from the HTTP call to the Celery task, the provider call and the callback.
 
 - **OpenTelemetry creates spans, Sentry stores them** (`instrumenter="otel"`). Sentry's own span integrations are off, so nothing is recorded twice.
 - **One package, `core/telemetry/`**, holds all of it. API and worker share one `init_sentry()`.
@@ -30,7 +30,7 @@ flowchart LR
         FLT["sentry/filters.py\nscrub · drop"]
     end
 
-    Sentry[("Sentry project\nIssues · Traces · Logs · Metrics\nProfiles · Crons · Uptime")]
+    Sentry[("Sentry project\nIssues · Traces · Logs · Metrics\nCrons · Uptime")]
     LF[("Langfuse\nmessage bodies only")]
     CW[("CloudWatch\nstdout text")]
 
@@ -69,14 +69,14 @@ core/telemetry/
 
 - **One switch:** `OTEL_ENABLED` is checked only where instrumentation starts (`main.py`, `celery_app.py`, `core/db.py`). The telemetry functions themselves have no flags.
 - **No double recording:** Sentry's FastAPI, Starlette, SQLAlchemy, httpx (and, on the API, Celery) integrations are disabled because OTel already covers them. The worker keeps Sentry's Celery integration for task-failure Issues.
-- **Sampling and profiling** come from settings, each validated to 0–1: `SENTRY_TRACES_SAMPLE_RATE`, `SENTRY_ERROR_SAMPLE_RATE`, `SENTRY_PROFILE_SESSION_SAMPLE_RATE` (continuous profiling, tied to traces).
+- **Sampling** comes from settings, each validated to 0–1: `SENTRY_TRACES_SAMPLE_RATE`, `SENTRY_ERROR_SAMPLE_RATE`. Profiling is off: Sentry rate-limits profile chunks once the quota runs out, and the SDK then backs off and drops transactions too.
 - **Environments:** production and staging report to separate Sentry projects (`kaapi-production`, `kaapi-staging`).
 
 ---
 
 ## 1. Tracing
 
-**What is traced:** HTTP requests, DB queries, Celery tasks, Redis, S3/KMS (botocore), outbound HTTP, and every LLM call. These feed Sentry's ready-made views: **AI Insights** (LLM calls), **Queries** (DB), **Queues** (Celery), **Caches** (Redis) and **Outbound API Requests**.
+**What is traced:** HTTP requests, DB queries, Celery tasks, S3/KMS (botocore), outbound HTTP, and every LLM call. These feed Sentry's ready-made views: **AI Insights** (LLM calls), **Queries** (DB), **Queues** (Celery) and **Outbound API Requests**. Redis is not instrumented: its spans were only Celery result-backend bookkeeping and rate-limit counters. The broker (RabbitMQ) shows only as Celery's `apply_async` span, which links the API request to the worker trace.
 
 **Waterfall of one `/llm/call`**, as it appears in Sentry:
 
@@ -112,7 +112,7 @@ flowchart LR
     F --> Sentry[("Sentry Traces")]
 ```
 
-- **One trace from API to worker:** the Sentry Celery integration adds trace headers on enqueue, and the task re-attaches the parent. Self re-enqueuing poll loops start a fresh trace so one trace does not span hours.
+- **One trace from API to worker:** OTel's Celery instrumentation carries the trace on enqueue and parents the worker's `run/...` span to `apply_async`; task spans nest under `run/...`. Trace context is never injected or attached by hand: doing so reparented task spans to the API request and split them into separate Sentry transactions. Self re-enqueuing poll loops start a fresh trace so one trace does not span hours.
 - **Root attributes are kept:** Sentry's processor copies attributes only for child spans; ours copies root-span attributes too.
 - **Provider HTTP spans are suppressed** inside LLM calls, since the `chat <model>` span already covers the call.
 - **Spans are flushed** after every Celery task and in LLM job `finally` blocks, so a recycled worker does not lose them.

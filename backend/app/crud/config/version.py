@@ -98,23 +98,16 @@ class ConfigVersionCrud:
             self.session.refresh(version)
 
             logger.info(
-                f"[ConfigVersionCrud.create_from_partial] Version created successfully | "
+                f"[ConfigVersionCrud.create_or_raise] Version created successfully | "
                 f"{{'config_id': '{self.config_id}', 'version_id': '{version.id}'}}"
             )
 
             return version
 
-        except Exception as e:
+        except Exception:
+            # Each error type has a central handler (DB, HTTPException, generic).
             self.session.rollback()
-            logger.error(
-                f"[ConfigVersionCrud.create_from_partial] Failed to create version | "
-                f"{{'config_id': '{self.config_id}', 'error': '{str(e)}'}}",
-                exc_info=True,
-            )
-            raise HTTPException(
-                status_code=500,
-                detail="Unexpected error occurred: failed to create version",
-            )
+            raise
 
     def _get_latest_version(self) -> ConfigVersion | None:
         """Get the latest version for the config."""

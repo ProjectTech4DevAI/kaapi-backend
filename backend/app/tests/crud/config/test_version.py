@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.crud.config import ConfigVersionCrud
@@ -14,6 +15,7 @@ from app.tests.utils.test_data import (
     create_test_project,
     create_test_version,
 )
+from app.tests.utils.utils import make_integrity_error
 
 
 @pytest.fixture
@@ -650,3 +652,45 @@ class TestStripUnsupportedParams:
         # prior_blob must NOT have been mutated through the shared reference
         assert prior_blob["completion"]["params"]["temperature"] == 0.7
         assert shared_params["temperature"] == 0.7
+
+
+def test_create_version_concurrent_duplicate_propagates(
+    db: Session, example_config_blob: ConfigBlob, monkeypatch
+) -> None:
+    """A commit-time unique violation reaches the central DB handler (409)."""
+    config = create_test_config(db)
+    version_crud = ConfigVersionCrud(
+        session=db, project_id=config.project_id, config_id=config.id
+    )
+
+    def _fail_commit() -> None:
+        raise make_integrity_error("23505")
+
+    monkeypatch.setattr(db, "commit", _fail_commit)
+
+    with pytest.raises(IntegrityError):
+        version_crud.create_or_raise(
+            ConfigVersionUpdate(config_blob=example_config_blob.model_dump())
+        )
+
+
+def test_create_version_http_exception_propagates(
+    db: Session, example_config_blob: ConfigBlob, monkeypatch
+) -> None:
+    """A typed HTTPException inside the write keeps its status, not a 500."""
+    config = create_test_config(db)
+    version_crud = ConfigVersionCrud(
+        session=db, project_id=config.project_id, config_id=config.id
+    )
+    monkeypatch.setattr(
+        version_crud,
+        "_get_next_version",
+        MagicMock(side_effect=HTTPException(status_code=503, detail="unavailable")),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        version_crud.create_or_raise(
+            ConfigVersionUpdate(config_blob=example_config_blob.model_dump())
+        )
+
+    assert exc.value.status_code == 503
