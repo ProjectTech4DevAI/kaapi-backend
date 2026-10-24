@@ -21,6 +21,7 @@ from opentelemetry.trace import SpanContext, SpanKind, StatusCode, format_span_i
 from sentry_sdk.integrations.opentelemetry import SentryPropagator, SentrySpanProcessor
 from sentry_sdk.tracing import Span as SentrySpan
 
+from app.core.telemetry.constants import HTTP_ROUTE
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -31,18 +32,13 @@ OTEL_SEMCONV_OPT_IN_DEFAULT = "http/dup"
 os.environ.setdefault(OTEL_SEMCONV_OPT_IN_ENV, OTEL_SEMCONV_OPT_IN_DEFAULT)
 
 FASTAPI_EXCLUDED_SPANS: list[Literal["receive", "send"]] = ["receive", "send"]
-HTTP_ROUTE_ATTRIBUTE = "http.route"
 
 
 def _should_drop_unrouted_server_span(
     *, is_root: bool, kind: SpanKind, attributes: Mapping[str, object] | None
 ) -> bool:
     """True for a root server span that matched no route: scanner/bot traffic."""
-    return (
-        is_root
-        and kind == SpanKind.SERVER
-        and HTTP_ROUTE_ATTRIBUTE not in (attributes or {})
-    )
+    return is_root and kind == SpanKind.SERVER and HTTP_ROUTE not in (attributes or {})
 
 
 def _should_drop_bare_http_trace(

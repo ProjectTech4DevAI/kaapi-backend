@@ -4,11 +4,6 @@ from app.core.telemetry.constants import (
     HTTP_METHOD,
     HTTP_ROUTE,
     HTTP_STATUS_CODE,
-    METRIC_HTTP_REQUEST_BODY_SIZE,
-    METRIC_HTTP_REQUEST_COUNT,
-    METRIC_HTTP_REQUEST_DURATION,
-    METRIC_HTTP_REQUEST_ERROR,
-    METRIC_HTTP_REQUEST_UNMATCHED,
 )
 from app.core.telemetry.metrics import emit_sentry_metric
 
@@ -30,30 +25,30 @@ def record_http_request(
         HTTP_ROUTE: http_route,
         HTTP_STATUS_CODE: str(status),
     }
-    emit_sentry_metric("count", METRIC_HTTP_REQUEST_COUNT, 1, attributes=attrs)
+    emit_sentry_metric("count", "http.server.request.count", 1, attributes=attrs)
     emit_sentry_metric(
         "distribution",
-        METRIC_HTTP_REQUEST_DURATION,
+        "http.server.request.duration",
         duration_ms,
         unit="millisecond",
         attributes=attrs,
     )
     emit_sentry_metric(
         "distribution",
-        METRIC_HTTP_REQUEST_BODY_SIZE,
+        "http.server.request.body.size",
         request_body_size,
         unit="byte",
         attributes=attrs,
     )
     if status >= HTTP_ERROR_STATUS_THRESHOLD:
-        emit_sentry_metric("count", METRIC_HTTP_REQUEST_ERROR, 1, attributes=attrs)
+        emit_sentry_metric("count", "http.server.request.error", 1, attributes=attrs)
 
 
 def record_unmatched_request(*, method: str) -> None:
     """Count requests that matched no route (scanners/bots) without a route label."""
     emit_sentry_metric(
         "count",
-        METRIC_HTTP_REQUEST_UNMATCHED,
+        "http.server.request.unmatched",
         1,
         attributes={HTTP_METHOD: method},
     )

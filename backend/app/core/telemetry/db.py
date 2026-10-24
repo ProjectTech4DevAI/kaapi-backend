@@ -12,22 +12,11 @@ from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor, Execution
 from sqlalchemy.pool import ConnectionPoolEntry, Pool, PoolProxiedConnection, QueuePool
 
 from app.core.telemetry.constants import (
-    DB_ROWS_AFFECTED,
     DB_ERROR_NAME,
     DB_OPERATION,
+    DB_ROWS_AFFECTED,
     DB_SQLSTATE,
     DB_SYSTEM,
-    METRIC_DB_CONNECTION_CLOSED,
-    METRIC_DB_CONNECTION_INVALIDATED,
-    METRIC_DB_CONNECTION_OPENED,
-    METRIC_DB_POOL_ACTIVE,
-    METRIC_DB_POOL_IDLE,
-    METRIC_DB_POOL_OVERFLOW,
-    METRIC_DB_POOL_TOTAL,
-    METRIC_DB_QUERY_FAILED,
-    METRIC_DB_QUERY_SLOW,
-    METRIC_DB_TRANSACTION_COMMIT,
-    METRIC_DB_TRANSACTION_ROLLBACK,
 )
 from app.core.telemetry.metrics import emit_sentry_metric
 
@@ -50,14 +39,14 @@ NOTABLE_SQLSTATES: dict[str, str] = {
 }
 
 _DB_CONNECTION_EVENT_METRICS: dict[str, str] = {
-    "opened": METRIC_DB_CONNECTION_OPENED,
-    "closed": METRIC_DB_CONNECTION_CLOSED,
-    "invalidated": METRIC_DB_CONNECTION_INVALIDATED,
+    "opened": "db.connection.opened",
+    "closed": "db.connection.closed",
+    "invalidated": "db.connection.invalidated",
 }
 
 _DB_TRANSACTION_METRICS: dict[str, str] = {
-    "commit": METRIC_DB_TRANSACTION_COMMIT,
-    "rollback": METRIC_DB_TRANSACTION_ROLLBACK,
+    "commit": "db.transaction.commit",
+    "rollback": "db.transaction.rollback",
 }
 
 
@@ -74,7 +63,7 @@ def record_db_query_failed(
     if sqlstate:
         attrs[DB_SQLSTATE] = sqlstate
 
-    emit_sentry_metric("count", METRIC_DB_QUERY_FAILED, 1, attributes=attrs)
+    emit_sentry_metric("count", "db.query.failed", 1, attributes=attrs)
 
 
 def record_db_slow_query(operation: str | None = None) -> None:
@@ -84,7 +73,7 @@ def record_db_slow_query(operation: str | None = None) -> None:
     if operation:
         attrs[DB_OPERATION] = operation
 
-    emit_sentry_metric("count", METRIC_DB_QUERY_SLOW, 1, attributes=attrs)
+    emit_sentry_metric("count", "db.query.slow", 1, attributes=attrs)
 
 
 def record_db_connection_event(event: str) -> None:
@@ -132,10 +121,10 @@ def record_db_pool_stats(
 ) -> None:
     """Emit SQLAlchemy pool stats as Sentry gauges."""
 
-    emit_sentry_metric("gauge", METRIC_DB_POOL_ACTIVE, active)
-    emit_sentry_metric("gauge", METRIC_DB_POOL_IDLE, idle)
-    emit_sentry_metric("gauge", METRIC_DB_POOL_TOTAL, total)
-    emit_sentry_metric("gauge", METRIC_DB_POOL_OVERFLOW, overflow)
+    emit_sentry_metric("gauge", "db.pool.active", active)
+    emit_sentry_metric("gauge", "db.pool.idle", idle)
+    emit_sentry_metric("gauge", "db.pool.total", total)
+    emit_sentry_metric("gauge", "db.pool.overflow", overflow)
 
 
 def instrument_db_engine(engine: Engine) -> None:

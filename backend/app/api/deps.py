@@ -14,7 +14,6 @@ from sqlmodel import and_, select
 from app.core.telemetry.constants import (
     TENANT_ORG_ID,
     TENANT_PROJECT_ID,
-    USER_ID,
 )
 from app.core import security
 from app.core.config import settings
@@ -53,7 +52,6 @@ def _set_tenant_span_attributes(auth_context: AuthContext) -> None:
     """Stamp org/project on the span, log context and Sentry scope after auth."""
     span = trace.get_current_span()
     if span.is_recording():
-        span.set_attribute(USER_ID, str(auth_context.user.id))
         if auth_context.organization:
             span.set_attribute(TENANT_ORG_ID, str(auth_context.organization.id))
         if auth_context.project:

@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from opentelemetry import trace
 
 from app.core.telemetry.constants import (
+    CALLBACK_ENABLED,
     JOB_ID,
     TENANT_ORG_ID,
     TENANT_PROJECT_ID,
@@ -128,9 +129,7 @@ def apply_guardrails_endpoint(
         if span.is_recording():
             span.set_attribute(TENANT_PROJECT_ID, str(project_id))
             span.set_attribute(TENANT_ORG_ID, str(organization_id))
-            span.set_attribute(
-                "guardrails.callback_enabled", request.callback_url is not None
-            )
+            span.set_attribute(CALLBACK_ENABLED, request.callback_url is not None)
 
         if request.callback_url:
             validate_callback_url(str(request.callback_url))
