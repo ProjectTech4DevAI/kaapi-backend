@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from typing import Any
 from uuid import UUID
 
@@ -25,8 +24,6 @@ from app.services.chatbot.types import ChatbotMessageDict
 from app.services.chatbot.utils import ChatbotModelSettings
 from app.utils import get_webhook_secret, send_callback
 
-logger = logging.getLogger(__name__)
-
 SUPERSEDED_SESSION_ERROR = (
     "[KAAPI] Chatbot session was superseded by a newer session; start a new session."
 )
@@ -35,11 +32,7 @@ SUPERSEDED_SESSION_ERROR = (
 def _split_pending_turn(
     stored_messages: list[ChatbotSessionMessage],
 ) -> tuple[list[ChatbotMessageDict], str | None]:
-    """Split the stored transcript into (prior history, pending user message).
-
-    The route persists the user's message before enqueueing, so it is the last
-    stored row; run_chatbot_turn wants it separately from the history before it.
-    """
+    """Split the stored transcript into (prior history, pending user message)."""
     history: list[ChatbotMessageDict] = []
     for stored in stored_messages:
         # The system prompt lives on the session row and is passed separately.
@@ -102,10 +95,6 @@ def process_chatbot_session_message(
             return
         # The turn may have been queued before a newer session superseded this one.
         if chatbot_session.status == ChatbotSessionStatusEnum.INACTIVE:
-            logger.warning(
-                f"[process_chatbot_session_message] {SUPERSEDED_SESSION_ERROR} | "
-                f"session_id: {session_id}, project_id: {project_id}"
-            )
             _send_failure_webhook(
                 session_id=session_id,
                 webhook_url=webhook_url,

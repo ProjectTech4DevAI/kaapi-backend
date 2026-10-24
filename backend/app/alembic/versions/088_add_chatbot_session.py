@@ -3,13 +3,6 @@
 Revision ID: 088
 Revises: 087
 Create Date: 2026-10-20 00:00:00.000000
-
-At most one session per (contact_ref, chatbot_ref) is active: creating a new one
-deactivates the rest in crud/chatbot.py, and the partial unique index makes a
-concurrent double-create fail instead of leaving two active rows. The plain
-composite index stays because the partial one can't serve the GET-latest lookup,
-which includes inactive rows; chatbot_ref comes before contact_ref so its prefix
-also serves the project-wide uniqueness check on generated chatbot_refs.
 """
 
 import sqlalchemy as sa

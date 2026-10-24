@@ -20,10 +20,7 @@ def _random_chatbot_ref() -> str:
 
 
 def generate_chatbot_ref(session: Session, *, project_id: int) -> str:
-    """Return a chatbot_ref not yet used by any session in the project.
-
-    The suffix space is only ~1M values, and reusing a ref would merge two chatbots' sessions.
-    """
+    """Return a chatbot_ref not yet used by any session in the project."""
     for _attempt in range(CHATBOT_REF_MAX_ATTEMPTS):
         candidate = _random_chatbot_ref()
         if not chatbot_ref_exists(

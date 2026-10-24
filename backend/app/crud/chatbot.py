@@ -1,4 +1,3 @@
-import logging
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -16,8 +15,6 @@ from app.models import (
     ChatbotSessionMessage,
     ChatbotSessionStatusEnum,
 )
-
-logger = logging.getLogger(__name__)
 
 CONCURRENT_SESSION_CONFLICT_MESSAGE = (
     "A concurrent session was just created for this contact and chatbot; retry"
@@ -93,12 +90,9 @@ def create_chatbot_session(
     config_version: int | None,
     system_prompt: str,
 ) -> ChatbotSession:
-    """Insert a new active session, superseding the contact's active ones for the same chatbot.
-
-    Deactivation and insert share one commit, so a failed insert leaves prior sessions active.
-    """
+    """Insert a new active session, superseding the contact's active ones for the same chatbot."""
     timestamp = now()
-    superseded_count = _deactivate_active_chatbot_sessions(
+    _deactivate_active_chatbot_sessions(
         session,
         organization_id=organization_id,
         project_id=project_id,
@@ -125,18 +119,8 @@ def create_chatbot_session(
         session.rollback()
         if not _is_active_session_conflict(e):
             raise
-        logger.warning(
-            f"[create_chatbot_session] {CONCURRENT_SESSION_CONFLICT_MESSAGE} | "
-            f"project_id: {project_id}, chatbot_ref: {chatbot_ref}, code: 409",
-            exc_info=True,
-        )
         raise ChatbotSessionConflictError(CONCURRENT_SESSION_CONFLICT_MESSAGE) from e
     session.refresh(chatbot_session)
-    logger.info(
-        f"[create_chatbot_session] Session created | session_id: {chatbot_session.id}, "
-        f"project_id: {project_id}, chatbot_ref: {chatbot_ref}, "
-        f"superseded_count: {superseded_count}"
-    )
     return chatbot_session
 
 
@@ -176,11 +160,6 @@ def update_chatbot_session_progress(
     session.add(chatbot_session)
     session.commit()
     session.refresh(chatbot_session)
-    logger.info(
-        f"[update_chatbot_session_progress] Session progress saved | "
-        f"session_id: {session_id}, completion_status: {completion_status.value}, "
-        f"field_count: {len(collected_fields)}"
-    )
     return chatbot_session
 
 

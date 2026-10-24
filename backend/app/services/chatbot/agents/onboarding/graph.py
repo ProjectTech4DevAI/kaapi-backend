@@ -174,12 +174,7 @@ async def run_chatbot_turn(
     model_settings: ChatbotModelSettings,
     collected_fields: dict[str, Any] | None = None,
 ) -> ChatbotTurnResult:
-    """Run one stateless turn: update the collected fields, then reply.
-
-    `user_message` may be None only on the very first call (empty `history`),
-    which yields the bot's opening greeting. `collected_fields` is the map from
-    earlier turns; it is merged with (and corrected by) this turn's extraction.
-    """
+    """Run one stateless turn: update the collected fields, then reply."""
     if user_message is None and history:
         raise ChatbotInputError(
             "[KAAPI] `message` is required once `history` is non-empty; omit it only "
