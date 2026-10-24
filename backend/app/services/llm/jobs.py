@@ -25,6 +25,11 @@ from app.core.telemetry.constants import (
     GEN_AI_PROVIDER_NAME,
     GEN_AI_REQUEST_MODEL,
     JOB_ID,
+    LLM_CALL_ID,
+    LLM_CHAIN_ID,
+    LLM_COMPLETION_TYPE,
+    LLM_CONFIG_ID,
+    LLM_CONFIG_VERSION,
     TENANT_ORG_ID,
     TENANT_PROJECT_ID,
 )
@@ -116,9 +121,9 @@ def _set_traceability_attributes(
     if job_id is not None:
         span.set_attribute(JOB_ID, str(job_id))
     if llm_call_id is not None:
-        span.set_attribute("llm.call_id", str(llm_call_id))
+        span.set_attribute(LLM_CALL_ID, str(llm_call_id))
     if chain_id is not None:
-        span.set_attribute("llm.chain_id", str(chain_id))
+        span.set_attribute(LLM_CHAIN_ID, str(chain_id))
     if trace_id is not None:
         span.set_attribute(CORRELATION_ID, trace_id)
     if project_id is not None:
@@ -136,6 +141,7 @@ def _execute_provider_call(
     query: QueryParams,
     credentials: dict | None,
     session_id: str | None,
+    trace_metadata: dict[str, str] | None = None,
     **kwargs: Any,
 ) -> tuple[Any, Any]:
     kwargs.pop("organization_id", None)
@@ -145,6 +151,7 @@ def _execute_provider_call(
     decorated = observe_llm_execution(
         session_id=session_id,
         credentials=credentials,
+        trace_metadata=trace_metadata,
     )(func)
 
     with suppress_http_instrumentation():
@@ -604,21 +611,29 @@ class _CallContext:
     trace_id: str | None
     record_call: bool
     llm_call_id: UUID | None = None
+    config_id: UUID | None = None
+    config_version: int | None = None
     started_at: float = 0.0
+
+    def identity_attributes(self) -> dict[str, str]:
+        """IDs of this call, with the same keys on Sentry spans and Langfuse trace metadata."""
+        ids = {
+            JOB_ID: self.job_id,
+            LLM_CALL_ID: self.llm_call_id,
+            LLM_CHAIN_ID: self.chain_id,
+            LLM_CONFIG_ID: self.config_id,
+            LLM_CONFIG_VERSION: self.config_version,
+            CORRELATION_ID: self.trace_id,
+            TENANT_ORG_ID: self.organization_id,
+            TENANT_PROJECT_ID: self.project_id,
+        }
+        return {key: str(value) for key, value in ids.items() if value is not None}
 
     @contextmanager
     def span(self, name: str) -> Iterator[trace.Span]:
         span_tracer = tracer if self.record_call else trace.NoOpTracer()
         with span_tracer.start_as_current_span(name) as span:
-            _set_traceability_attributes(
-                span,
-                job_id=self.job_id,
-                llm_call_id=self.llm_call_id,
-                chain_id=self.chain_id,
-                trace_id=self.trace_id,
-                project_id=self.project_id,
-                organization_id=self.organization_id,
-            )
+            span.set_attributes(self.identity_attributes())
             yield span
 
     def metrics_started(self, *, provider: str, model: str) -> None:
@@ -663,8 +678,9 @@ def _load_config_blob(
     with ctx.span("llm.resolve_config") as cfg_span:
         cfg_span.set_attribute("llm.config.is_stored", config.is_stored_config)
         if config.is_stored_config:
-            cfg_span.set_attribute("llm.config.id", str(config.id))
-            cfg_span.set_attribute("llm.config.version", str(config.version))
+            ctx.config_id, ctx.config_version = config.id, config.version
+            cfg_span.set_attribute(LLM_CONFIG_ID, str(config.id))
+            cfg_span.set_attribute(LLM_CONFIG_VERSION, str(config.version))
             config_crud = ConfigVersionCrud(
                 session=session, project_id=ctx.project_id, config_id=config.id
             )
@@ -1354,7 +1370,7 @@ def execute_llm_call(
         with ctx.span(ai_span_name) as ai_span:
             ai_span.set_attribute("sentry.op", "gen_ai.chat")
             if completion_type:
-                ai_span.set_attribute("llm.completion_type", completion_type)
+                ai_span.set_attribute(LLM_COMPLETION_TYPE, completion_type)
             set_gen_ai_request_attributes(
                 ai_span,
                 provider=provider_name,
@@ -1376,7 +1392,7 @@ def execute_llm_call(
                     )
                     if completion_type:
                         provider_span.set_attribute(
-                            "llm.completion_type", completion_type
+                            LLM_COMPLETION_TYPE, completion_type
                         )
                     if model_name:
                         provider_span.set_attribute(GEN_AI_REQUEST_MODEL, model_name)
@@ -1387,6 +1403,11 @@ def execute_llm_call(
                         query=query,
                         credentials=langfuse_credentials,
                         session_id=conversation_id,
+                        trace_metadata={
+                            **ctx.identity_attributes(),
+                            GEN_AI_PROVIDER_NAME: provider_name,
+                            GEN_AI_REQUEST_MODEL: model_name,
+                        },
                         organization_id=organization_id,
                         project_id=project_id,
                         telemetry_span=provider_span,

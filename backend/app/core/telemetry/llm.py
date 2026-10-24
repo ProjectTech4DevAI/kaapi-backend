@@ -32,7 +32,18 @@ from app.core.telemetry.constants import (
 from app.core.telemetry.metrics import emit_sentry_metric
 
 if TYPE_CHECKING:
-    from app.models.llm.response import LLMCallResponse
+    from app.models.llm.response import LLMCallResponse, Usage
+
+
+def billable_output_tokens(usage: "Usage") -> int:
+    """Output plus reasoning when the provider reports them separately (Gemini), so cost is right."""
+    reasoning_tokens = usage.reasoning_tokens or 0
+    if (
+        reasoning_tokens
+        and usage.input_tokens + usage.output_tokens < usage.total_tokens
+    ):
+        return usage.output_tokens + reasoning_tokens
+    return usage.output_tokens
 
 
 def _llm_call_attrs(
@@ -144,15 +155,13 @@ def set_gen_ai_response_attributes(
     """Set OTel GenAI response attributes (usage, model) on `span`."""
     usage = response.usage
     if usage:
-        reasoning_tokens = usage.reasoning_tokens or 0
-        output_tokens = usage.output_tokens
-        if reasoning_tokens and usage.input_tokens + output_tokens < usage.total_tokens:
-            output_tokens += reasoning_tokens
         span.set_attribute(GEN_AI_USAGE_INPUT_TOKENS, usage.input_tokens)
-        span.set_attribute(GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens)
+        span.set_attribute(GEN_AI_USAGE_OUTPUT_TOKENS, billable_output_tokens(usage))
         span.set_attribute(GEN_AI_USAGE_TOTAL_TOKENS, usage.total_tokens)
-        if reasoning_tokens:
-            span.set_attribute(GEN_AI_USAGE_REASONING_OUTPUT_TOKENS, reasoning_tokens)
+        if usage.reasoning_tokens:
+            span.set_attribute(
+                GEN_AI_USAGE_REASONING_OUTPUT_TOKENS, usage.reasoning_tokens
+            )
 
     if response.response and response.response.model:
         span.set_attribute(GEN_AI_RESPONSE_MODEL, response.response.model)

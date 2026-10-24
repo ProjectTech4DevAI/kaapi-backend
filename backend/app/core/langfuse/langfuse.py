@@ -14,6 +14,8 @@ from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 
 from app.core.config import settings
+from app.core.telemetry.constants import GEN_AI_RESPONSE_ID, LLM_COMPLETION_TYPE
+from app.core.telemetry.llm import billable_output_tokens
 from app.models.llm import (
     AudioContent,
     AudioOutput,
@@ -24,7 +26,6 @@ from app.models.llm import (
     QueryParams,
     TextInput,
     TextOutput,
-    Usage,
 )
 from app.models.llm.request import QueryInput
 
@@ -179,6 +180,46 @@ def extract_query_input(
     return _query_input_item(query_input)
 
 
+def _input_metadata(trace_input: TraceInput) -> dict[str, str]:
+    """Input type, format and language code as filterable metadata."""
+    items = trace_input if isinstance(trace_input, list) else [trace_input]
+    types: dict[str, None] = {}
+    formats: dict[str, None] = {}
+    languages: dict[str, None] = {}
+    for item in items:
+        types[str(item["type"])] = None
+        parts = item.get("items")
+        for part in parts if isinstance(parts, list) else [item]:
+            if part.get("format"):
+                formats[str(part["format"])] = None
+        if item.get("language_code"):
+            languages[str(item["language_code"])] = None
+    metadata = {
+        "llm.input.type": ",".join(types),
+        "llm.input.format": ",".join(formats),
+    }
+    if languages:
+        metadata["llm.input.language_code"] = ",".join(languages)
+    return metadata
+
+
+def _output_metadata(llm_output: TextOutput | AudioOutput | None) -> dict[str, str]:
+    if isinstance(llm_output, TextOutput):
+        metadata = {
+            "llm.output.type": "text",
+            "llm.output.format": llm_output.content.format,
+        }
+        if llm_output.content.language_code:
+            metadata["llm.output.language_code"] = llm_output.content.language_code
+        return metadata
+    if isinstance(llm_output, AudioOutput):
+        return {
+            "llm.output.type": "audio",
+            "llm.output.format": llm_output.content.format,
+        }
+    return {}
+
+
 def _model_parameters(params: dict[str, object]) -> dict[str, ModelParameterValue]:
     """Scalar config params, one nested level flattened (``reasoning.effort``)."""
     scalars = (str, int, float, bool)
@@ -204,14 +245,6 @@ def _generation_input(params: dict[str, object], trace_input: TraceInput) -> obj
         {"role": "system", "content": instructions},
         {"role": "user", "content": trace_input},
     ]
-
-
-def _usage_details(usage: Usage) -> dict[str, int]:
-    """Gemini's output_tokens exclude reasoning_tokens; fold them in so cost is right."""
-    return {
-        "input": usage.input_tokens,
-        "output": usage.output_tokens + (usage.reasoning_tokens or 0),
-    }
 
 
 def extract_response_output(
@@ -399,12 +432,14 @@ class LangfuseTracer:
 def observe_llm_execution(
     session_id: str | None = None,
     credentials: dict | None = None,
+    trace_metadata: dict[str, str] | None = None,
 ) -> Callable:
     """Decorator to add Langfuse observability to LLM provider execute methods.
 
     Args:
         credentials: Langfuse credentials with public_key, secret_key, and host
         session_id: Session ID for grouping traces (conversation_id)
+        trace_metadata: Call IDs, same keys as the Sentry spans (_CallContext.identity_attributes)
 
     Usage:
         decorated_execute = observe_llm_execution(
@@ -462,6 +497,7 @@ def observe_llm_execution(
                 as_type="span",
                 name="unified-llm-call",
                 input=trace_input,
+                metadata=trace_metadata,
             )
             if trace:
                 langfuse_call(
@@ -472,6 +508,7 @@ def observe_llm_execution(
                     session_id=session_id,
                     # OTel drops the whole list if any item is an Enum, not a plain str.
                     tags=[completion_config.provider, str(completion_config.type)],
+                    metadata=trace_metadata,
                 )
 
             generation = None
@@ -483,7 +520,10 @@ def observe_llm_execution(
                     input=_generation_input(params, trace_input),
                     model=params.get("model"),
                     model_parameters=_model_parameters(params),
-                    metadata={"completion_type": completion_config.type},
+                    metadata={
+                        LLM_COMPLETION_TYPE: str(completion_config.type),
+                        **_input_metadata(trace_input),
+                    },
                 )
 
             def finish_failure(error_msg: str) -> None:
@@ -528,10 +568,14 @@ def observe_llm_execution(
                 langfuse_call(
                     generation.update,
                     output=output,
-                    usage_details=_usage_details(response.usage),
+                    usage_details={
+                        "input": response.usage.input_tokens,
+                        "output": billable_output_tokens(response.usage),
+                    },
                     model=response.response.model,
                     metadata={
-                        "provider_response_id": response.response.provider_response_id
+                        GEN_AI_RESPONSE_ID: response.response.provider_response_id,
+                        **_output_metadata(response.response.output),
                     },
                 )
                 langfuse_call(generation.end)

@@ -13,6 +13,7 @@ from opentelemetry.semconv._incubating.attributes.gen_ai_attributes import (  # 
     GEN_AI_REQUEST_PRESENCE_PENALTY,
     GEN_AI_REQUEST_TEMPERATURE,
     GEN_AI_REQUEST_TOP_P,
+    GEN_AI_RESPONSE_ID,
     GEN_AI_RESPONSE_MODEL,
     GEN_AI_SYSTEM,
     GEN_AI_USAGE_INPUT_TOKENS,
@@ -37,6 +38,13 @@ JOB_ID = "job.id"
 # --- GenAI: OTel semconv keys above, plus Sentry AI Insights keys semconv doesn't define ---
 GEN_AI_REQUEST_AVAILABLE_TOOLS = "gen_ai.request.available_tools"
 GEN_AI_USAGE_TOTAL_TOKENS = "gen_ai.usage.total_tokens"
+
+# --- LLM call: same keys on Sentry spans and Langfuse trace metadata ---
+LLM_CALL_ID = "llm.call_id"
+LLM_CHAIN_ID = "llm.chain_id"
+LLM_CONFIG_ID = "llm.config.id"
+LLM_CONFIG_VERSION = "llm.config.version"
+LLM_COMPLETION_TYPE = "llm.completion_type"
 
 # --- HTTP ---
 HTTP_METHOD = "http.method"
