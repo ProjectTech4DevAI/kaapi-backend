@@ -4,9 +4,10 @@ from collections import defaultdict
 
 import sentry_sdk
 from asgi_correlation_id import correlation_id
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request  # noqa: F401  (re-exported)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.exc import DataError, OperationalError, SQLAlchemyError
 from starlette.status import (
     HTTP_409_CONFLICT,
@@ -125,6 +126,23 @@ def _db_error_response(exc: SQLAlchemyError) -> tuple[int, str]:
     return HTTP_500_INTERNAL_SERVER_ERROR, DB_ERROR_DETAIL
 
 
+def _tag_error_scope(request: Request, status_code: int) -> None:
+    """Tag the Sentry scope with route, method and status before the error is logged.
+
+    The middleware tags the route only after the response, too late for an event raised here.
+    """
+    if not sentry_sdk.get_client().is_active():
+        return
+    scope = sentry_sdk.get_current_scope()
+    route = getattr(request.scope.get("route"), "path", None)
+    if route:
+        scope.set_tag("http.route", route)
+        scope.set_transaction_name(f"{request.method} {route}")
+    scope.set_tag("http.method", request.method)
+    scope.set_tag("http.status_code", str(status_code))
+    scope.set_tag("error.class", "server" if status_code >= 500 else "client")
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(
@@ -136,21 +154,15 @@ def register_exception_handlers(app: FastAPI) -> None:
             content=APIResponse.failure_response(errors).model_dump(),
         )
 
-    @app.exception_handler(HTTPException)
+    @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(
-        request: Request, exc: HTTPException
+        request: Request, exc: StarletteHTTPException
     ) -> JSONResponse:
         detail = exc.detail
         if isinstance(detail, list):
             detail = _sanitize_validation_errors(detail)
 
-        # Tag at the boundary: the status is only known here, and call-site logs
-        # fire before it. 5xx is a server fault (error event); 4xx is the caller's.
-        if sentry_sdk.get_client().is_active():
-            sentry_sdk.set_tag("http.status_code", str(exc.status_code))
-            sentry_sdk.set_tag(
-                "error.class", "server" if exc.status_code >= 500 else "client"
-            )
+        _tag_error_scope(request, exc.status_code)
         if exc.status_code >= 500:
             logger.error(
                 f"[http_exception] {request.method} {request.url.path} "
@@ -160,19 +172,16 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.status_code,
             content=APIResponse.failure_response(detail).model_dump(),
+            headers=exc.headers,
         )
 
     @app.exception_handler(SQLAlchemyError)
     async def db_error_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
         status_code, hint = _db_error_response(exc)
         sqlstate, constraint = _db_error_constraint(exc)
-        if sentry_sdk.get_client().is_active():
-            sentry_sdk.set_tag("http.status_code", str(status_code))
-            sentry_sdk.set_tag(
-                "error.class", "server" if status_code >= 500 else "client"
-            )
-            if constraint:
-                sentry_sdk.set_tag("db.constraint", constraint)
+        _tag_error_scope(request, status_code)
+        if constraint and sentry_sdk.get_client().is_active():
+            sentry_sdk.set_tag("db.constraint", constraint)
         log = logger.error if status_code >= 500 else logger.warning
         log(
             f"[db_error_handler] Unhandled DB error | path: {request.url.path}, "
@@ -189,6 +198,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     async def generic_error_handler(request: Request, exc: Exception) -> JSONResponse:
         # Fixed detail: str(exc) here leaked provider bodies and DB text to callers.
         # logger.error alone reports it; adding capture_exception makes a second event.
+        _tag_error_scope(request, HTTP_500_INTERNAL_SERVER_ERROR)
         logger.error(
             f"[generic_error_handler] Unhandled exception | "
             f"path: {request.url.path}, trace_id: {correlation_id.get() or 'N/A'}",

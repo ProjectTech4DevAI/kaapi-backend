@@ -1433,7 +1433,8 @@ def execute_llm_call(
     except (Timeout, SoftTimeLimitExceeded):
         raise
     except HTTPException as e:
-        logger.error(
+        log = logger.error if e.status_code >= 500 else logger.warning
+        log(
             f"[execute_llm_call] HTTP error: {e.detail} | job_id={job_id}",
             exc_info=True,
         )

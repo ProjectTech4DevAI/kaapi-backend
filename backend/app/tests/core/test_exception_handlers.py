@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Iterator
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import sentry_sdk
@@ -295,21 +295,6 @@ class TestHttpExceptionHandler:
         assert response.status_code == 502
         log_error.assert_called_once()
 
-    def test_tags_status_class_when_sentry_active(self) -> None:
-        client = MagicMock()
-        client.is_active.return_value = True
-        with (
-            patch(
-                "app.core.exception_handlers.sentry_sdk.get_client",
-                return_value=client,
-            ),
-            patch("app.core.exception_handlers.sentry_sdk.set_tag") as set_tag,
-        ):
-            _app_raising(HTTPException(status_code=404, detail="nope")).get("/boom")
-
-        set_tag.assert_any_call("http.status_code", "404")
-        set_tag.assert_any_call("error.class", "client")
-
 
 @pytest.fixture
 def sentry_events() -> Iterator[list[Event]]:
@@ -344,6 +329,8 @@ class TestSentryEvents:
         tags = sentry_events[0]["tags"]
         assert tags["http.status_code"] == "502"
         assert tags["error.class"] == "server"
+        assert tags["http.route"] == "/boom"
+        assert sentry_events[0]["transaction"] == "GET /boom"
 
     def test_generic_handler_reports_exactly_one_event(
         self, sentry_events: list[Event]
