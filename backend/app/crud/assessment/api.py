@@ -1,12 +1,10 @@
-"""Assessment API-client CRUD — method-based Assessment / AssessmentRun writes.
+"""Assessment API-client CRUD — writes for the BATCH pipeline on the `assessment` row.
 
-Kept separate from the UI-only crud (core/cron/processing/batch):
-writes only the new method-based columns and leaves the RUN-only `execution`
-and `submission_id` fields NULL.
+Kept separate from the legacy RUN crud (core/cron/processing/batch), which is retired.
 """
 
 import logging
-from typing import Any, TypeVar, cast
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import cast as sa_cast
@@ -18,36 +16,38 @@ from sqlmodel import Session, col, select
 from app.core.util import now
 from app.models.assessment import (
     Assessment,
+    AssessmentExecution,
     AssessmentMethod,
-    AssessmentRun,
     AssessmentStatus,
     AssessmentSubmission,
-    BatchRunState,
 )
 
 logger = logging.getLogger(__name__)
-
-# update_status works on either status-bearing row; the TypeVar preserves which.
-StatusModel = TypeVar("StatusModel", Assessment, AssessmentRun)
 
 
 def create_assessment(
     *,
     session: Session,
     method: AssessmentMethod,
-    input: dict[str, Any] | None,
+    config_id: UUID,
+    config_version: int,
+    total_items: int,
     organization_id: int,
     project_id: int,
     assessment_id: UUID | None = None,
     submission_id: UUID | None = None,
     submission_input: str | None = None,
     experiment_name: str | None = None,
+    execution: AssessmentExecution | None = None,
 ) -> Assessment:
-    """Insert the parent row; pass ``assessment_id`` when the object key already used it."""
+    """Insert the row; pass ``assessment_id`` when the object key already used it."""
     assessment = Assessment(
         id=assessment_id or uuid4(),
         method=method,
-        input=input,
+        config_id=config_id,
+        config_version=config_version,
+        total_items=total_items,
+        execution=execution.model_dump(mode="json") if execution else None,
         submission_id=submission_id,
         submission_input=submission_input,
         experiment_name=experiment_name,
@@ -60,7 +60,8 @@ def create_assessment(
     session.refresh(assessment)
     logger.info(
         f"[create_assessment] Created | assessment_id: {assessment.id} | "
-        f"method: {method} | org: {organization_id} | project: {project_id}"
+        f"method: {method} | config: {config_id} v{config_version} | "
+        f"org: {organization_id} | project: {project_id}"
     )
     return assessment
 
@@ -79,67 +80,29 @@ def set_assessment_job(
     return assessment
 
 
-def create_execution(
-    *,
-    session: Session,
-    assessment_id: UUID,
-    config_id: UUID,
-    config_version: int,
-    total_items: int,
-) -> AssessmentRun:
-    execution = AssessmentRun(
-        assessment_id=assessment_id,
-        config_id=config_id,
-        config_version=config_version,
-        status=AssessmentStatus.PENDING,
-        total_items=total_items,
-    )
-    session.add(execution)
-    session.commit()
-    session.refresh(execution)
-    logger.info(
-        f"[create_execution] Created | execution_id: {execution.id} | "
-        f"assessment_id: {assessment_id} | config_id: {config_id} v{config_version}"
-    )
-    return execution
-
-
-def set_execution_batch_job(
-    *, session: Session, execution: AssessmentRun, batch_job_id: int
-) -> AssessmentRun:
-    execution.batch_job_id = batch_job_id
-    execution.updated_at = now()
-    session.add(execution)
-    session.commit()
-    session.refresh(execution)
-    logger.info(
-        f"[set_execution_batch_job] Linked batch job | execution_id: {execution.id} | "
-        f"batch_job_id: {batch_job_id}"
-    )
-    return execution
-
-
 def save_execution_state(
-    *, session: Session, execution: AssessmentRun, state: BatchRunState
-) -> AssessmentRun:
-    """Persist the whole staged-batch runtime bag onto ``execution.execution``.
-
-    JSONB in-place mutation is invisible to SQLAlchemy, so we reassign the column
-    and flag it modified rather than mutating the existing dict.
-    """
-    # mypy treats a TypedDict as incompatible with the column's plain dict[str, Any];
-    # the cast is erased at runtime (a TypedDict already is a dict).
-    execution.execution = cast(dict[str, Any], state)
-    flag_modified(execution, "execution")
-    execution.updated_at = now()
-    session.add(execution)
+    *, session: Session, assessment: Assessment, state: AssessmentExecution
+) -> Assessment:
+    """Persist the whole runtime bag. Reassigned + flagged: JSONB in-place edits are invisible to SQLAlchemy."""
+    assessment.execution = state.model_dump(mode="json")
+    flag_modified(assessment, "execution")
+    assessment.updated_at = now()
+    session.add(assessment)
     session.commit()
-    session.refresh(execution)
+    session.refresh(assessment)
     logger.info(
-        f"[save_execution_state] Saved | execution_id: {execution.id} | "
-        f"stage: {state.get('stage')} | stage_status: {state.get('stage_status')}"
+        f"[save_execution_state] Saved | assessment_id: {assessment.id} | "
+        f"stage: {state.stage} | stage_status: {state.stage_status}"
     )
-    return execution
+    return assessment
+
+
+def load_execution_state(assessment: Assessment) -> AssessmentExecution | None:
+    return (
+        AssessmentExecution.model_validate(assessment.execution)
+        if assessment.execution
+        else None
+    )
 
 
 def set_result_files(
@@ -147,9 +110,8 @@ def set_result_files(
 ) -> Assessment:
     """Shallow-merge ``files`` into ``assessment.result_files``, one record per file kind.
 
-    The merge is server-side (``||``, right-hand side wins per key) because two drivers
-    can touch this row within the same second; a read-modify-write would drop the loser's
-    kinds instead of keeping both.
+    Server-side ``||`` (right-hand wins per key): two drivers can touch this row within
+    the same second, and a read-modify-write would drop the loser's kinds.
     """
     statement = (
         update(Assessment)
@@ -174,21 +136,20 @@ def set_result_files(
 
 
 def update_status(
-    *, session: Session, obj: StatusModel, status: AssessmentStatus
-) -> StatusModel:
-    """Set status on an Assessment or AssessmentRun; both carry `status`/`updated_at`."""
-    obj.status = status
-    obj.updated_at = now()
-    session.add(obj)
+    *, session: Session, assessment: Assessment, status: AssessmentStatus
+) -> Assessment:
+    assessment.status = status
+    assessment.updated_at = now()
+    session.add(assessment)
     session.commit()
-    session.refresh(obj)
+    session.refresh(assessment)
     logger.info(
-        f"[update_status] Updated | {type(obj).__name__}: {obj.id} | status: {status}"
+        f"[update_status] Updated | assessment_id: {assessment.id} | status: {status}"
     )
-    return obj
+    return assessment
 
 
-def list_assessments_with_execution(
+def list_assessments(
     *,
     session: Session,
     organization_id: int,
@@ -197,20 +158,10 @@ def list_assessments_with_execution(
     config_version: int | None = None,
     limit: int = 50,
     offset: int = 0,
-) -> list[tuple[Assessment, AssessmentRun | None, str | None]]:
-    """BATCH assessments newest-first, each with its execution and submission name.
-
-    BATCH only: it has exactly one execution, so the join yields one row per assessment;
-    a RUN parent has one run per config and would repeat. Outer joins so an inline BATCH
-    (no submission) and a failed execution insert still list.
-    """
+) -> list[tuple[Assessment, str | None]]:
+    """BATCH assessments newest-first with their submission name (outer join: inline BATCH has none)."""
     statement = (
-        select(Assessment, AssessmentRun, AssessmentSubmission.name)
-        .join(
-            AssessmentRun,
-            col(AssessmentRun.assessment_id) == col(Assessment.id),
-            isouter=True,
-        )
+        select(Assessment, AssessmentSubmission.name)
         .join(
             AssessmentSubmission,
             col(AssessmentSubmission.id) == col(Assessment.submission_id),
@@ -221,9 +172,9 @@ def list_assessments_with_execution(
         .where(Assessment.project_id == project_id)
     )
     if config_id is not None:
-        statement = statement.where(AssessmentRun.config_id == config_id)
+        statement = statement.where(Assessment.config_id == config_id)
         if config_version is not None:
-            statement = statement.where(AssessmentRun.config_version == config_version)
+            statement = statement.where(Assessment.config_version == config_version)
 
     statement = (
         statement.order_by(
@@ -231,14 +182,5 @@ def list_assessments_with_execution(
         )
         .limit(limit)
         .offset(offset)
-    )
-    return list(session.exec(statement).all())
-
-
-def list_executions(*, session: Session, assessment_id: UUID) -> list[AssessmentRun]:
-    statement = (
-        select(AssessmentRun)
-        .where(AssessmentRun.assessment_id == assessment_id)
-        .order_by(AssessmentRun.id.asc())
     )
     return list(session.exec(statement).all())

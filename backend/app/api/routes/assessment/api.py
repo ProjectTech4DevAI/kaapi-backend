@@ -85,7 +85,7 @@ def list_assessments(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> APIResponse[list[AssessmentSummary]]:
     """BATCH assessments newest-first, optionally narrowed to one config or version."""
-    rows = api_crud.list_assessments_with_execution(
+    rows = api_crud.list_assessments(
         session=session,
         organization_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
@@ -96,8 +96,8 @@ def list_assessments(
     )
     return APIResponse.success_response(
         data=[
-            results.build_summary(assessment, execution, submission_name)
-            for assessment, execution, submission_name in rows
+            results.build_summary(assessment, submission_name)
+            for assessment, submission_name in rows
         ]
     )
 
