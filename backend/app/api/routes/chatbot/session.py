@@ -8,7 +8,6 @@ from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
 from app.celery.utils import start_chatbot_session_message
 from app.crud.chatbot import (
-    ChatbotSessionConflictError,
     create_chatbot_session,
     create_chatbot_session_message,
     get_chatbot_session,
@@ -31,6 +30,7 @@ from app.services.chatbot.config import resolve_chatbot_model_settings
 from app.services.chatbot.exceptions import (
     ChatbotInputError,
     ChatbotRefGenerationError,
+    ChatbotSessionConflictError,
 )
 from app.utils import APIResponse, load_description, validate_callback_url
 

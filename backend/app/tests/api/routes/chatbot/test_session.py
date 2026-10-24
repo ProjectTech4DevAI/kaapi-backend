@@ -10,8 +10,6 @@ from sqlmodel import Session, select
 from app.api.routes.chatbot import session as session_routes
 from app.core.config import settings
 from app.crud.chatbot import (
-    CONCURRENT_SESSION_CONFLICT_MESSAGE,
-    ChatbotSessionConflictError,
     get_chatbot_session,
     list_chatbot_session_messages,
     update_chatbot_session_progress,
@@ -28,6 +26,10 @@ from app.services.chatbot import chatbot_ref as chatbot_ref_module
 from app.services.chatbot.chatbot_ref import (
     CHATBOT_REF_PREFIX,
     CHATBOT_REF_SUFFIX_LENGTH,
+)
+from app.services.chatbot.exceptions import (
+    CONCURRENT_SESSION_CONFLICT_MESSAGE,
+    ChatbotSessionConflictError,
 )
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.chatbot import (

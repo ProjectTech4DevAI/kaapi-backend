@@ -1,5 +1,4 @@
 import asyncio
-from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -22,7 +21,7 @@ from app.services.chatbot.config import resolve_chatbot_model_settings
 from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
 from app.services.chatbot.types import ChatbotMessageDict
 from app.services.chatbot.utils import ChatbotModelSettings
-from app.utils import get_webhook_secret, send_callback
+from app.utils import APIResponse, get_webhook_secret, send_callback
 
 SUPERSEDED_SESSION_ERROR = (
     "[KAAPI] Chatbot session was superseded by a newer session; start a new session."
@@ -63,12 +62,10 @@ def _send_failure_webhook(
     webhook_secret: str | None,
     error: str,
 ) -> None:
-    payload: dict[str, Any] = {
-        "success": False,
-        "error": error,
-        "data": {"session_id": str(session_id)},
-    }
-    send_callback(webhook_url, payload, webhook_secret)
+    envelope = APIResponse.failure_response(
+        error=error, data={"session_id": str(session_id)}
+    )
+    send_callback(webhook_url, envelope.model_dump(exclude_none=True), webhook_secret)
     return
 
 
@@ -178,16 +175,15 @@ def process_chatbot_session_message(
             completion_status=completion_status,
         )
 
-    payload: dict[str, Any] = {
-        "success": True,
-        "data": {
+    envelope = APIResponse.success_response(
+        data={
             "session_id": str(session_id),
             "chatbot_ref": chatbot_ref,
             "reply": reply,
             "status": session_status,
             "completion_status": completion_status.value,
             "collected_fields": turn_result.collected_fields,
-        },
-    }
-    send_callback(webhook_url, payload, webhook_secret)
+        }
+    )
+    send_callback(webhook_url, envelope.model_dump(exclude_none=True), webhook_secret)
     return

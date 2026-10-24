@@ -1,5 +1,4 @@
 from collections.abc import Iterator
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -8,9 +7,6 @@ from sqlmodel import Session, select
 
 from app.core.db import engine
 from app.crud.chatbot import (
-    CONCURRENT_SESSION_CONFLICT_MESSAGE,
-    ChatbotSessionConflictError,
-    _is_active_session_conflict,
     chatbot_ref_exists,
     create_chatbot_session,
     create_chatbot_session_message,
@@ -20,13 +16,16 @@ from app.crud.chatbot import (
     update_chatbot_session_progress,
 )
 from app.models import (
-    ACTIVE_CHATBOT_SESSION_UNIQUE_INDEX,
     ChatbotCompletionStatusEnum,
     ChatbotMessageRoleEnum,
     ChatbotSession,
     ChatbotSessionStatusEnum,
     Config,
     Project,
+)
+from app.services.chatbot.exceptions import (
+    CONCURRENT_SESSION_CONFLICT_MESSAGE,
+    ChatbotSessionConflictError,
 )
 from app.tests.utils.chatbot import (
     add_test_chatbot_messages,
@@ -566,46 +565,6 @@ class TestCreateChatbotSessionFailures:
         ).all()
         assert [s.id for s in stored] == [racing.id]
         assert stored[0].status == ChatbotSessionStatusEnum.ACTIVE
-
-
-class TestIsActiveSessionConflict:
-    # psycopg always exposes diag.constraint_name; the message fallback guards
-    # drivers/wrappers that don't, so it's exercised with stand-in errors.
-    @pytest.mark.parametrize(
-        ("orig", "expected"),
-        [
-            (
-                SimpleNamespace(
-                    diag=SimpleNamespace(
-                        constraint_name=ACTIVE_CHATBOT_SESSION_UNIQUE_INDEX
-                    )
-                ),
-                True,
-            ),
-            (
-                SimpleNamespace(
-                    diag=SimpleNamespace(
-                        constraint_name="chatbot_session_config_id_fkey"
-                    )
-                ),
-                False,
-            ),
-            (
-                Exception(
-                    f'duplicate key value violates unique constraint "{ACTIVE_CHATBOT_SESSION_UNIQUE_INDEX}"'
-                ),
-                True,
-            ),
-            (Exception("violates foreign key constraint"), False),
-        ],
-        ids=["diag-match", "diag-other", "message-match", "message-other"],
-    )
-    def test_detects_only_the_active_session_index(
-        self, orig: object, expected: bool
-    ) -> None:
-        error = IntegrityError("INSERT ...", {}, orig)  # type: ignore[arg-type]
-
-        assert _is_active_session_conflict(error) is expected
 
 
 class TestChatbotRefExists:

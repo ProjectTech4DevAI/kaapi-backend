@@ -6,7 +6,7 @@ from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
-from app.core.util import now
+from app.core.util import is_constraint_violation, now
 from app.models import (
     ACTIVE_CHATBOT_SESSION_UNIQUE_INDEX,
     ChatbotCompletionStatusEnum,
@@ -15,23 +15,10 @@ from app.models import (
     ChatbotSessionMessage,
     ChatbotSessionStatusEnum,
 )
-
-CONCURRENT_SESSION_CONFLICT_MESSAGE = (
-    "A concurrent session was just created for this contact and chatbot; retry"
+from app.services.chatbot.exceptions import (
+    CONCURRENT_SESSION_CONFLICT_MESSAGE,
+    ChatbotSessionConflictError,
 )
-
-
-class ChatbotSessionConflictError(Exception):
-    """Another active session for the same contact + chatbot was committed concurrently."""
-
-
-def _is_active_session_conflict(error: IntegrityError) -> bool:
-    constraint_name = getattr(
-        getattr(error.orig, "diag", None), "constraint_name", None
-    )
-    if constraint_name:
-        return constraint_name == ACTIVE_CHATBOT_SESSION_UNIQUE_INDEX
-    return ACTIVE_CHATBOT_SESSION_UNIQUE_INDEX in str(error.orig or error)
 
 
 def _deactivate_active_chatbot_sessions(
@@ -117,7 +104,7 @@ def create_chatbot_session(
         session.commit()
     except IntegrityError as e:
         session.rollback()
-        if not _is_active_session_conflict(e):
+        if not is_constraint_violation(e, ACTIVE_CHATBOT_SESSION_UNIQUE_INDEX):
             raise
         raise ChatbotSessionConflictError(CONCURRENT_SESSION_CONFLICT_MESSAGE) from e
     session.refresh(chatbot_session)
