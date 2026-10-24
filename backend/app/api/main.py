@@ -5,6 +5,7 @@ from app.api.routes import (
     api_keys,
     assistants,
     auth,
+    chatbot,
     collection_job,
     collections,
     config,
@@ -47,6 +48,7 @@ api_router.include_router(assessment_routes.router)
 api_router.include_router(assessment_api_routes.router)
 api_router.include_router(assistants.router)
 api_router.include_router(auth.router)
+api_router.include_router(chatbot.router)
 api_router.include_router(collection_job.router)
 api_router.include_router(collections.router)
 api_router.include_router(config.router)
