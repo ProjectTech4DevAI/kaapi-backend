@@ -102,7 +102,7 @@ def create_collection(
         lifecycle="api.collection.create",
         action="create",
         project_id=current_user.project_.id,
-        organization_id=current_user.organization_.id,
+        org_id=current_user.organization_.id,
     ):
         if request.callback_url:
             validate_callback_url(str(request.callback_url))
@@ -156,7 +156,7 @@ def delete_collection(
         action="delete",
         collection_id=str(collection_id),
         project_id=current_user.project_.id,
-        organization_id=current_user.organization_.id,
+        org_id=current_user.organization_.id,
     ):
         if request and request.callback_url:
             validate_callback_url(str(request.callback_url))
@@ -212,7 +212,7 @@ def update_collection(
         action="update",
         collection_id=str(collection_id),
         project_id=current_user.project_.id,
-        organization_id=current_user.organization_.id,
+        org_id=current_user.organization_.id,
     ):
         collection_crud = CollectionCrud(session, current_user.project_.id)
         try:

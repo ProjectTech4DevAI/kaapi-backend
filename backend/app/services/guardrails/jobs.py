@@ -7,6 +7,13 @@ from asgi_correlation_id import correlation_id
 from opentelemetry import trace
 from sqlmodel import Session
 
+from app.core.telemetry.constants import (
+    CALLBACK_STATUS,
+    CALLBACK_URL,
+    JOB_ID,
+    TENANT_ORG_ID,
+    TENANT_PROJECT_ID,
+)
 from app.celery.utils import start_guardrails_job
 from app.core.db import engine
 from app.core.telemetry import log_context
@@ -47,10 +54,10 @@ def start_job(
         tag="guardrails",
         lifecycle="guardrails.start_job",
         project_id=project_id,
-        organization_id=organization_id,
+        org_id=organization_id,
     ), tracer.start_as_current_span("guardrails.start_job") as span:
-        span.set_attribute("kaapi.project_id", project_id)
-        span.set_attribute("kaapi.organization_id", organization_id)
+        span.set_attribute(TENANT_PROJECT_ID, str(project_id))
+        span.set_attribute(TENANT_ORG_ID, str(organization_id))
 
         job_crud = JobCrud(session=db)
         # Raw text persisted intentionally: this endpoint inspects unsafe content.
@@ -60,7 +67,7 @@ def start_job(
             project_id=project_id,
             meta={"request": request.model_dump(mode="json")},
         )
-        span.set_attribute("guardrails.job_id", str(job.id))
+        span.set_attribute(JOB_ID, str(job.id))
         logger.debug(
             f"[start_job] Job row created | job_id={job.id}, trace_id={trace_id}"
         )
@@ -167,8 +174,8 @@ def _send_failure_callback(
     payload = APIResponse.failure_response(error=error, metadata=metadata).model_dump()
     webhook_secret = get_webhook_secret(project_id, organization_id)
     with tracer.start_as_current_span("guardrails.send_callback") as cb_span:
-        cb_span.set_attribute("callback.url", callback_url)
-        cb_span.set_attribute("callback.status", "failure")
+        cb_span.set_attribute(CALLBACK_URL, callback_url)
+        cb_span.set_attribute(CALLBACK_STATUS, "failure")
         send_callback(
             callback_url=callback_url,
             data=payload,
@@ -187,8 +194,8 @@ def _dispatch_success_callback(
         return
     webhook_secret = get_webhook_secret(project_id, organization_id)
     with tracer.start_as_current_span("guardrails.send_callback") as cb_span:
-        cb_span.set_attribute("callback.url", callback_url)
-        cb_span.set_attribute("callback.status", "success")
+        cb_span.set_attribute(CALLBACK_URL, callback_url)
+        cb_span.set_attribute(CALLBACK_STATUS, "success")
         send_callback(
             callback_url=callback_url,
             data=payload,
@@ -305,11 +312,11 @@ def execute_job(
         lifecycle="guardrails.execute_job",
         job_id=job_id,
         project_id=project_id,
-        organization_id=organization_id,
+        org_id=organization_id,
     ), tracer.start_as_current_span("guardrails.execute_job") as span:
-        span.set_attribute("guardrails.job_id", job_id)
-        span.set_attribute("kaapi.project_id", project_id)
-        span.set_attribute("kaapi.organization_id", organization_id)
+        span.set_attribute(JOB_ID, str(job_id))
+        span.set_attribute(TENANT_PROJECT_ID, str(project_id))
+        span.set_attribute(TENANT_ORG_ID, str(organization_id))
 
         # 1. Mark job as in-progress.
         _update_job(job_uuid, status=JobStatus.PROCESSING, task_id=task_id)

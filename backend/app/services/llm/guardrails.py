@@ -11,6 +11,10 @@ from fastapi import HTTPException
 from opentelemetry import trace
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from app.core.telemetry.constants import (
+    TENANT_ORG_ID,
+    TENANT_PROJECT_ID,
+)
 from app.core.config import settings
 from app.core.retry import is_transient
 from app.models.llm.request import InlineValidator, InlineValidatorTypeEnum, Validator
@@ -87,8 +91,8 @@ def proxy_guardrails_request(
             tracer.start_as_current_span(
                 f"guardrails.proxy {method} {path}",
                 attributes={
-                    "kaapi.organization_id": str(organization_id),
-                    "kaapi.project_id": str(project_id),
+                    TENANT_ORG_ID: str(organization_id),
+                    TENANT_PROJECT_ID: str(project_id),
                 },
             ),
             httpx.Client(timeout=GUARDRAILS_PROXY_TIMEOUT_SECONDS) as client,
@@ -372,8 +376,8 @@ def run_guardrails_validation(
                 "guardrails.proxy.validate",
                 attributes={
                     "kaapi.job_id": str(job_id),
-                    "kaapi.organization_id": str(organization_id),
-                    "kaapi.project_id": str(project_id),
+                    TENANT_ORG_ID: str(organization_id),
+                    TENANT_PROJECT_ID: str(project_id),
                     "kaapi.validator_count": len(validators),
                 },
             ),
@@ -469,8 +473,8 @@ def list_validators_config(
             tracer.start_as_current_span(
                 "guardrails.proxy.list_validator_configs",
                 attributes={
-                    "kaapi.organization_id": str(organization_id),
-                    "kaapi.project_id": str(project_id),
+                    TENANT_ORG_ID: str(organization_id),
+                    TENANT_PROJECT_ID: str(project_id),
                 },
             ),
             httpx.Client(timeout=10.0) as client,

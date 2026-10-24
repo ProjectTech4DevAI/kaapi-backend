@@ -11,6 +11,9 @@ from celery.signals import (
 )
 from kombu import Exchange, Queue
 
+from app.core.telemetry.constants import (
+    CELERY_TASK_NAME,
+)
 from app.core.config import settings
 from app.core.logger import configure_logging
 
@@ -52,7 +55,7 @@ def _initialize_worker_observability() -> None:
             **_: object,
         ) -> None:
             """Tag the task's Sentry scope with its name and tenant so Issues can be filtered by both."""
-            sentry_sdk.set_tag("celery.task_name", task.name)
+            sentry_sdk.set_tag(CELERY_TASK_NAME, task.name)
             task_kwargs = kwargs or {}
             for tag, key in (
                 ("tenant.project_id", "project_id"),

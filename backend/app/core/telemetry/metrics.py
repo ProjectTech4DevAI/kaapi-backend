@@ -6,6 +6,20 @@ from typing import Literal
 
 import sentry_sdk
 
+from app.core.telemetry.constants import (
+    ALERT_TYPE,
+    HTTP_ROUTE_CATEGORY,
+    JOB_ACTION_TYPE,
+    JOB_STATUS,
+    JOB_TABLE,
+    JOB_TYPE,
+    METRIC_JOB_PENDING_OLDEST_AGE,
+    METRIC_JOB_PENDING_OLDEST_AGE_BY_DIMENSION,
+    METRIC_JOB_PENDING_STALE_BY_DIMENSION_COUNT,
+    METRIC_JOB_PENDING_STALE_COUNT,
+    TENANT_PROJECT_ID,
+)
+
 logger = logging.getLogger(__name__)
 
 MetricType = Literal["count", "gauge", "distribution"]
@@ -47,23 +61,23 @@ def record_stale_pending_jobs(
     summed together with the table-level count in Sentry dashboards.
     """
     attrs: dict[str, str] = {
-        "job.table": table,
-        "job.status": status,
+        JOB_TABLE: table,
+        JOB_STATUS: status,
     }
     if job_type:
-        attrs["job.type"] = job_type
+        attrs[JOB_TYPE] = job_type
     if action_type:
-        attrs["job.action_type"] = action_type
+        attrs[JOB_ACTION_TYPE] = action_type
 
     count_metric = (
-        "jobs.pending.stale.by_dimension.count"
+        METRIC_JOB_PENDING_STALE_BY_DIMENSION_COUNT
         if dimensional
-        else "jobs.pending.stale.count"
+        else METRIC_JOB_PENDING_STALE_COUNT
     )
     age_metric = (
-        "jobs.pending.oldest_age_seconds.by_dimension"
+        METRIC_JOB_PENDING_OLDEST_AGE_BY_DIMENSION
         if dimensional
-        else "jobs.pending.oldest_age_seconds"
+        else METRIC_JOB_PENDING_OLDEST_AGE
     )
 
     emit_sentry_metric(
@@ -96,9 +110,9 @@ def record_rate_threshold(
         if not sentry_sdk.get_client().is_active():
             return
         with sentry_sdk.new_scope() as scope:
-            scope.set_tag("alert.type", "threshold_rate_monitor")
-            scope.set_tag("tenant.project_id", project_id)
-            scope.set_tag("route_category", category)
+            scope.set_tag(ALERT_TYPE, "threshold_rate_monitor")
+            scope.set_tag(TENANT_PROJECT_ID, str(project_id))
+            scope.set_tag(HTTP_ROUTE_CATEGORY, category)
             scope.set_extra("request_count", request_count)
             scope.set_extra("threshold", threshold)
             sentry_sdk.capture_message(
