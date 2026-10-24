@@ -10,8 +10,10 @@ from asgi_correlation_id import correlation_id
 from langfuse import Langfuse, LangfuseOtelSpanAttributes
 from langfuse._client.span import LangfuseGeneration, LangfuseSpan
 from langfuse.api.core.api_error import ApiError
+from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
 
+from app.core.config import settings
 from app.models.llm import (
     AudioContent,
     AudioOutput,
@@ -22,10 +24,17 @@ from app.models.llm import (
     QueryParams,
     TextInput,
     TextOutput,
+    Usage,
 )
 from app.models.llm.request import QueryInput
 
 TraceInput = dict[str, object] | list[dict[str, object]]
+ModelParameterValue = str | int | float | bool | None
+
+# Prompt text belongs in the generation input, not in model parameters.
+_PROMPT_PARAM_KEYS = frozenset(
+    {"model", "instructions", "input", "messages", "system", "director_notes"}
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +54,9 @@ def get_langfuse_tracer_provider() -> TracerProvider:
     if _LANGFUSE_TRACER_PROVIDER is None:
         with _LANGFUSE_TRACER_PROVIDER_LOCK:
             if _LANGFUSE_TRACER_PROVIDER is None:
-                _LANGFUSE_TRACER_PROVIDER = TracerProvider()
+                _LANGFUSE_TRACER_PROVIDER = TracerProvider(
+                    resource=Resource.create({SERVICE_NAME: settings.OTEL_SERVICE_NAME})
+                )
     return _LANGFUSE_TRACER_PROVIDER
 
 
@@ -168,6 +179,41 @@ def extract_query_input(
     return _query_input_item(query_input)
 
 
+def _model_parameters(params: dict[str, object]) -> dict[str, ModelParameterValue]:
+    """Scalar config params, one nested level flattened (``reasoning.effort``)."""
+    scalars = (str, int, float, bool)
+    result: dict[str, ModelParameterValue] = {}
+    for key, value in params.items():
+        if key in _PROMPT_PARAM_KEYS:
+            continue
+        if isinstance(value, scalars):
+            result[key] = value
+        elif isinstance(value, dict):
+            for sub_key, sub_value in value.items():
+                if sub_key not in _PROMPT_PARAM_KEYS and isinstance(sub_value, scalars):
+                    result[f"{key}.{sub_key}"] = sub_value
+    return result
+
+
+def _generation_input(params: dict[str, object], trace_input: TraceInput) -> object:
+    """Chat-format input so Langfuse shows the system prompt."""
+    instructions = params.get("instructions")
+    if not isinstance(instructions, str) or not instructions:
+        return trace_input
+    return [
+        {"role": "system", "content": instructions},
+        {"role": "user", "content": trace_input},
+    ]
+
+
+def _usage_details(usage: Usage) -> dict[str, int]:
+    """Gemini's output_tokens exclude reasoning_tokens; fold them in so cost is right."""
+    return {
+        "input": usage.input_tokens,
+        "output": usage.output_tokens + (usage.reasoning_tokens or 0),
+    }
+
+
 def extract_response_output(
     llm_output: TextOutput | AudioOutput | None,
 ) -> str | dict[str, Any]:
@@ -225,6 +271,7 @@ class LangfuseTracer:
                     secret_key=credentials["secret_key"],
                     host=credentials["host"],
                     tracing_enabled=True,  # This ensures the client is active
+                    environment=settings.ENVIRONMENT,
                     tracer_provider=get_langfuse_tracer_provider(),
                 )
             except Exception as e:
@@ -381,6 +428,7 @@ def observe_llm_execution(
                     public_key=credentials.get("public_key"),
                     secret_key=credentials.get("secret_key"),
                     host=credentials.get("host"),
+                    environment=settings.ENVIRONMENT,
                     tracer_provider=get_langfuse_tracer_provider(),
                 )
                 logger.info(
@@ -407,6 +455,7 @@ def observe_llm_execution(
                     failed = True
                     return None
 
+            params = completion_config.params
             trace_input = extract_query_input(query.input)
             trace = langfuse_call(
                 langfuse.start_observation,
@@ -420,7 +469,9 @@ def observe_llm_execution(
                     trace,
                     name="unified-llm-call",
                     input=trace_input,
-                    tags=[completion_config.provider],
+                    session_id=session_id,
+                    # OTel drops the whole list if any item is an Enum, not a plain str.
+                    tags=[completion_config.provider, str(completion_config.type)],
                 )
 
             generation = None
@@ -429,57 +480,70 @@ def observe_llm_execution(
                     trace.start_observation,
                     as_type="generation",
                     name=f"{completion_config.provider}-completion",
-                    input=trace_input,
-                    model=(
-                        completion_config.params.get("model")
-                        if isinstance(completion_config.params, dict)
-                        else getattr(completion_config.params, "model", None)
-                    ),
+                    input=_generation_input(params, trace_input),
+                    model=params.get("model"),
+                    model_parameters=_model_parameters(params),
+                    metadata={"completion_type": completion_config.type},
                 )
+
+            def finish_failure(error_msg: str) -> None:
+                output = {"status": "failure", "error": error_msg}
+                for observation in (generation, trace):
+                    if observation:
+                        langfuse_call(
+                            observation.update,
+                            output=output,
+                            level="ERROR",
+                            status_message=error_msg,
+                        )
+                if trace:
+                    langfuse_call(
+                        set_trace_attributes,
+                        trace,
+                        output=output,
+                        session_id=session_id,
+                    )
+                for observation in (generation, trace):
+                    if observation:
+                        langfuse_call(observation.end)
+                langfuse_call(langfuse.flush)
 
             response: LLMCallResponse | None
             error: str | None
-            response, error = func(completion_config, query, **kwargs)
+            try:
+                response, error = func(completion_config, query, **kwargs)
+            except Exception as e:
+                finish_failure(str(e))
+                raise
 
-            if response:
-                if generation:
-                    langfuse_call(
-                        generation.update,
-                        output={
-                            "status": "success",
-                            "output": extract_response_output(response.response.output),
-                        },
-                        usage_details={
-                            "input": response.usage.input_tokens,
-                            "output": response.usage.output_tokens,
-                        },
-                        model=response.response.model,
-                    )
-                    langfuse_call(generation.end)
-                if trace:
-                    langfuse_call(
-                        set_trace_attributes,
-                        trace,
-                        output={
-                            "status": "success",
-                            "output": extract_response_output(response.response.output),
-                        },
-                        session_id=session_id or response.response.conversation_id,
-                    )
-                    langfuse_call(trace.end)
-            else:
-                error_msg = error or "Unknown error"
-                if generation:
-                    langfuse_call(generation.update, output={"error": error_msg})
-                    langfuse_call(generation.end)
-                if trace:
-                    langfuse_call(
-                        set_trace_attributes,
-                        trace,
-                        output={"status": "failure", "error": error_msg},
-                        session_id=session_id,
-                    )
-                    langfuse_call(trace.end)
+            if not response:
+                finish_failure(error or "Unknown error")
+                return response, error
+
+            output = {
+                "status": "success",
+                "output": extract_response_output(response.response.output),
+            }
+            if generation:
+                langfuse_call(
+                    generation.update,
+                    output=output,
+                    usage_details=_usage_details(response.usage),
+                    model=response.response.model,
+                    metadata={
+                        "provider_response_id": response.response.provider_response_id
+                    },
+                )
+                langfuse_call(generation.end)
+            if trace:
+                langfuse_call(trace.update, output=output)
+                langfuse_call(
+                    set_trace_attributes,
+                    trace,
+                    output=output,
+                    session_id=session_id or response.response.conversation_id,
+                )
+                langfuse_call(trace.end)
 
             langfuse_call(langfuse.flush)
             return response, error
