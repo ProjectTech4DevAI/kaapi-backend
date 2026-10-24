@@ -12,6 +12,7 @@ from opentelemetry import trace
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.core.telemetry.constants import (
+    JOB_ID,
     TENANT_ORG_ID,
     TENANT_PROJECT_ID,
 )
@@ -375,10 +376,10 @@ def run_guardrails_validation(
             tracer.start_as_current_span(
                 "guardrails.proxy.validate",
                 attributes={
-                    "kaapi.job_id": str(job_id),
+                    JOB_ID: str(job_id),
                     TENANT_ORG_ID: str(organization_id),
                     TENANT_PROJECT_ID: str(project_id),
-                    "kaapi.validator_count": len(validators),
+                    "guardrails.validator_count": len(validators),
                 },
             ),
             httpx.Client(timeout=45.0) as client,

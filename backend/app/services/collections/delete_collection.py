@@ -10,8 +10,6 @@ from sqlmodel import Session
 from asgi_correlation_id import correlation_id
 
 from app.core.telemetry.constants import (
-    COLLECTION_ID,
-    COLLECTION_PROVIDER,
     JOB_ID,
     TENANT_ORG_ID,
     TENANT_PROJECT_ID,
@@ -50,7 +48,7 @@ def start_job(
         tag="collection",
         lifecycle="collection.delete.start_job",
         action="delete",
-        collection_job_id=str(collection_job_id),
+        job_id=str(collection_job_id),
         collection_id=str(request.collection_id),
         project_id=project_id,
         org_id=organization_id,
@@ -197,13 +195,13 @@ def execute_job(
         tag="collection",
         lifecycle="collection.delete.execute_job",
         action="delete",
-        collection_job_id=job_id,
+        job_id=job_id,
         collection_id=str(collection_uuid),
         task_id=task_id,
         project_id=project_id,
         org_id=organization_id,
     ), tracer.start_as_current_span("collections.delete.execute_job") as span:
-        span.set_attribute(COLLECTION_ID, str(collection_uuid))
+        span.set_attribute("collection.id", str(collection_uuid))
         span.set_attribute(JOB_ID, str(job_uuid))
         span.set_attribute(TENANT_PROJECT_ID, str(project_id))
         span.set_attribute(TENANT_ORG_ID, str(organization_id))
@@ -223,7 +221,7 @@ def execute_job(
                 collection = CollectionCrud(session, project_id).read_one(
                     collection_uuid
                 )
-                span.set_attribute(COLLECTION_PROVIDER, str(collection.provider))
+                span.set_attribute("collection.provider", str(collection.provider))
 
                 provider = get_llm_provider(
                     session=session,

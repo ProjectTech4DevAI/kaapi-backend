@@ -21,19 +21,10 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 from app.core.telemetry.constants import (
     CALLBACK_STATUS,
     CALLBACK_URL,
-    CELERY_TASK_ID,
     CORRELATION_ID,
     GEN_AI_PROVIDER_NAME,
     GEN_AI_REQUEST_MODEL,
     JOB_ID,
-    LLM_CALL_ID,
-    LLM_CHAIN_ID,
-    LLM_COMPLETION_TYPE,
-    LLM_CONFIG_ID,
-    LLM_CONFIG_IS_STORED,
-    LLM_CONFIG_VERSION,
-    LLM_PROXY_URL,
-    SENTRY_OP,
     TENANT_ORG_ID,
     TENANT_PROJECT_ID,
 )
@@ -125,9 +116,9 @@ def _set_traceability_attributes(
     if job_id is not None:
         span.set_attribute(JOB_ID, str(job_id))
     if llm_call_id is not None:
-        span.set_attribute(LLM_CALL_ID, str(llm_call_id))
+        span.set_attribute("llm.call_id", str(llm_call_id))
     if chain_id is not None:
-        span.set_attribute(LLM_CHAIN_ID, str(chain_id))
+        span.set_attribute("llm.chain_id", str(chain_id))
     if trace_id is not None:
         span.set_attribute(CORRELATION_ID, trace_id)
     if project_id is not None:
@@ -135,7 +126,7 @@ def _set_traceability_attributes(
     if organization_id is not None:
         span.set_attribute(TENANT_ORG_ID, str(organization_id))
     if task_id is not None:
-        span.set_attribute(CELERY_TASK_ID, task_id)
+        span.set_attribute("celery.task_id", task_id)
 
 
 def _execute_provider_call(
@@ -670,10 +661,10 @@ def _load_config_blob(
 ) -> tuple[ConfigBlob | None, str | None]:
     """Resolve a stored or ad-hoc config, filling in the default audio provider."""
     with ctx.span("llm.resolve_config") as cfg_span:
-        cfg_span.set_attribute(LLM_CONFIG_IS_STORED, config.is_stored_config)
+        cfg_span.set_attribute("llm.config.is_stored", config.is_stored_config)
         if config.is_stored_config:
-            cfg_span.set_attribute(LLM_CONFIG_ID, str(config.id))
-            cfg_span.set_attribute(LLM_CONFIG_VERSION, str(config.version))
+            cfg_span.set_attribute("llm.config.id", str(config.id))
+            cfg_span.set_attribute("llm.config.version", str(config.version))
             config_crud = ConfigVersionCrud(
                 session=session, project_id=ctx.project_id, config_id=config.id
             )
@@ -971,7 +962,7 @@ def _execute_proxy_call(
 
     with ctx.span("llm.proxy.execute") as proxy_span:
         proxy_span.set_attribute(GEN_AI_PROVIDER_NAME, Provider.PROXY.value)
-        proxy_span.set_attribute(LLM_PROXY_URL, client_llm_url)
+        proxy_span.set_attribute("llm.proxy.url", client_llm_url)
 
         try:
             with suppress_http_instrumentation():
@@ -1361,9 +1352,9 @@ def execute_llm_call(
 
         ai_span_name = f"chat {model_name}" if model_name else f"chat {provider_name}"
         with ctx.span(ai_span_name) as ai_span:
-            ai_span.set_attribute(SENTRY_OP, "gen_ai.chat")
+            ai_span.set_attribute("sentry.op", "gen_ai.chat")
             if completion_type:
-                ai_span.set_attribute(LLM_COMPLETION_TYPE, completion_type)
+                ai_span.set_attribute("llm.completion_type", completion_type)
             set_gen_ai_request_attributes(
                 ai_span,
                 provider=provider_name,
@@ -1385,7 +1376,7 @@ def execute_llm_call(
                     )
                     if completion_type:
                         provider_span.set_attribute(
-                            LLM_COMPLETION_TYPE, completion_type
+                            "llm.completion_type", completion_type
                         )
                     if model_name:
                         provider_span.set_attribute(GEN_AI_REQUEST_MODEL, model_name)

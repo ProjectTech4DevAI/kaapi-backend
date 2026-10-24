@@ -9,9 +9,9 @@ from starlette.middleware.base import RequestResponseEndpoint
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.telemetry.constants import (
+    HTTP_REQUEST_BODY_SIZE,
     CORRELATION_ID,
     HTTP_METHOD,
-    HTTP_REQUEST_BODY_SIZE,
     HTTP_ROUTE,
     HTTP_STATUS_CODE,
 )

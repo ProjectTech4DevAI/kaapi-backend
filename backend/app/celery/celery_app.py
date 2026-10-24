@@ -11,9 +11,6 @@ from celery.signals import (
 )
 from kombu import Exchange, Queue
 
-from app.core.telemetry.constants import (
-    CELERY_TASK_NAME,
-)
 from app.core.config import settings
 from app.core.logger import configure_logging
 
@@ -40,6 +37,7 @@ def _initialize_worker_observability() -> None:
         from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
         from app.core.telemetry import init_sentry
+        from app.core.telemetry.constants import TENANT_ORG_ID, TENANT_PROJECT_ID
 
         init_sentry(
             integrations=[
@@ -55,11 +53,11 @@ def _initialize_worker_observability() -> None:
             **_: object,
         ) -> None:
             """Tag the task's Sentry scope with its name and tenant so Issues can be filtered by both."""
-            sentry_sdk.set_tag(CELERY_TASK_NAME, task.name)
+            sentry_sdk.set_tag("celery.task_name", task.name)
             task_kwargs = kwargs or {}
             for tag, key in (
-                ("tenant.project_id", "project_id"),
-                ("tenant.org_id", "organization_id"),
+                (TENANT_PROJECT_ID, "project_id"),
+                (TENANT_ORG_ID, "organization_id"),
             ):
                 if task_kwargs.get(key) is not None:
                     sentry_sdk.set_tag(tag, str(task_kwargs[key]))

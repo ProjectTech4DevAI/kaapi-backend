@@ -11,8 +11,6 @@ from opentelemetry import trace
 from asgi_correlation_id import correlation_id
 
 from app.core.telemetry.constants import (
-    COLLECTION_ID,
-    COLLECTION_PROVIDER,
     JOB_ID,
     TENANT_ORG_ID,
     TENANT_PROJECT_ID,
@@ -202,7 +200,7 @@ def execute_setup_job(
         tag="collection",
         lifecycle="collection.create.execute_setup_job",
         action="create",
-        collection_job_id=job_id,
+        job_id=job_id,
         task_id=task_id,
         project_id=project_id,
         org_id=organization_id,
@@ -213,7 +211,7 @@ def execute_setup_job(
 
         try:
             creation_request = CreationRequest.model_validate(request)
-            span.set_attribute(COLLECTION_PROVIDER, str(creation_request.provider))
+            span.set_attribute("collection.provider", str(creation_request.provider))
 
             job_uuid = UUID(job_id)
             trace_id = correlation_id.get() or "N/A"
@@ -361,7 +359,7 @@ def execute_batch_job(
         tag="collection",
         lifecycle="collection.create.execute_batch_job",
         action="create",
-        collection_job_id=job_id,
+        job_id=job_id,
         task_id=task_id,
         project_id=project_id,
         org_id=organization_id,
@@ -373,7 +371,7 @@ def execute_batch_job(
         try:
             batch_start_time = time.time()
             creation_request = CreationRequest.model_validate(request)
-            span.set_attribute(COLLECTION_PROVIDER, str(creation_request.provider))
+            span.set_attribute("collection.provider", str(creation_request.provider))
 
             result = Collection(  # pyright: ignore[reportCallIssue]
                 knowledge_base_id=vector_store_id,
@@ -512,7 +510,7 @@ def execute_batch_job(
 
                 success_payload = build_success_payload(collection_job, collection)
 
-            span.set_attribute(COLLECTION_ID, str(collection_id))
+            span.set_attribute("collection.id", str(collection_id))
 
             logger.info(
                 "[create_collection.execute_batch_job] All batches done, collection created: %s | "

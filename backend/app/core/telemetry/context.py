@@ -16,13 +16,11 @@ _log_context_var: ContextVar[dict[str, str] | None] = ContextVar(
 )
 
 from app.core.telemetry.constants import (
+    LOG_LOCATION_FIELD,
+    LOG_MODULE_FIELD,
     TENANT_ORG_ID,
     TENANT_PROJECT_ID,
 )
-
-# Sentry skips "_"-prefixed record attributes, so only LOG_MODULE_FIELD reaches Sentry Logs.
-LOG_MODULE_FIELD = "log_module"
-LOG_LOCATION_FIELD = "_log_location"
 
 
 class LogModuleEnum(StrEnum):

@@ -26,12 +26,6 @@ from app.core.telemetry.constants import (
     GEN_AI_USAGE_OUTPUT_TOKENS,
     GEN_AI_USAGE_REASONING_OUTPUT_TOKENS,
     GEN_AI_USAGE_TOTAL_TOKENS,
-    METRIC_LLM_CALL_COUNT,
-    METRIC_LLM_CALL_DURATION,
-    METRIC_LLM_CALL_ERROR,
-    METRIC_LLM_TOKENS_INPUT,
-    METRIC_LLM_TOKENS_OUTPUT,
-    METRIC_LLM_TOKENS_TOTAL,
     TENANT_ORG_ID,
     TENANT_PROJECT_ID,
 )
@@ -69,7 +63,7 @@ def record_llm_call_started(
 ) -> None:
     """Emit LLM call-start metric to Sentry."""
     attrs = _llm_call_attrs(provider, model, operation, organization_id, project_id)
-    emit_sentry_metric("count", METRIC_LLM_CALL_COUNT, 1, attributes=attrs)
+    emit_sentry_metric("count", "llm.call.count", 1, attributes=attrs)
 
 
 def record_llm_call_finished(
@@ -89,25 +83,21 @@ def record_llm_call_finished(
 
     emit_sentry_metric(
         "distribution",
-        METRIC_LLM_CALL_DURATION,
+        "llm.call.duration",
         duration_ms,
         unit="millisecond",
         attributes=attrs,
     )
     if error:
-        emit_sentry_metric("count", METRIC_LLM_CALL_ERROR, 1, attributes=attrs)
+        emit_sentry_metric("count", "llm.call.error", 1, attributes=attrs)
     if input_tokens is not None:
-        emit_sentry_metric(
-            "count", METRIC_LLM_TOKENS_INPUT, input_tokens, attributes=attrs
-        )
+        emit_sentry_metric("count", "llm.tokens.input", input_tokens, attributes=attrs)
     if output_tokens is not None:
         emit_sentry_metric(
-            "count", METRIC_LLM_TOKENS_OUTPUT, output_tokens, attributes=attrs
+            "count", "llm.tokens.output", output_tokens, attributes=attrs
         )
     if total_tokens is not None:
-        emit_sentry_metric(
-            "count", METRIC_LLM_TOKENS_TOTAL, total_tokens, attributes=attrs
-        )
+        emit_sentry_metric("count", "llm.tokens.total", total_tokens, attributes=attrs)
 
 
 def set_gen_ai_request_attributes(
