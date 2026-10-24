@@ -128,7 +128,7 @@ All metrics go through `emit_sentry_metric()`, which never raises and does nothi
 |---|---|
 | **HTTP** | `http.server.request.count`, `.duration`, `.body.size`, `.error`, `.unmatched` |
 | **DB** | `db.query.failed` (tagged by Postgres SQLSTATE), `db.query.slow` (≥ `DB_SLOW_QUERY_MS`), `db.connection.opened/closed/invalidated`, `db.transaction.commit/rollback` (rollback ratio), `db.pool.active/idle/total/overflow` (pool saturation) |
-| **LLM** | `llm.call.total`, `llm.call.duration`, `llm.call.errors`, `llm.tokens.input/output/total` (by provider and model) |
+| **LLM** | `llm.call.count`, `llm.call.duration`, `llm.call.error`, `llm.tokens.input/output/total` (by provider and model) |
 | **Jobs** | `jobs.pending.stale.count`, `jobs.pending.oldest_age_seconds` (table-level and by job type) |
 
 Metrics use the Sentry SDK directly because Sentry does not ingest OpenTelemetry metrics.

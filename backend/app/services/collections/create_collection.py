@@ -10,6 +10,13 @@ from celery.exceptions import (
 from opentelemetry import trace
 from asgi_correlation_id import correlation_id
 
+from app.core.telemetry.constants import (
+    COLLECTION_ID,
+    COLLECTION_PROVIDER,
+    JOB_ID,
+    TENANT_ORG_ID,
+    TENANT_PROJECT_ID,
+)
 from app.core.cloud import get_cloud_storage
 from app.core.db import engine
 from app.core.telemetry import log_context
@@ -198,15 +205,15 @@ def execute_setup_job(
         collection_job_id=job_id,
         task_id=task_id,
         project_id=project_id,
-        organization_id=organization_id,
+        org_id=organization_id,
     ), tracer.start_as_current_span("collections.create.execute_setup_job") as span:
-        span.set_attribute("collection.job_id", str(job_id))
-        span.set_attribute("kaapi.project_id", project_id)
-        span.set_attribute("kaapi.organization_id", organization_id)
+        span.set_attribute(JOB_ID, str(job_id))
+        span.set_attribute(TENANT_PROJECT_ID, str(project_id))
+        span.set_attribute(TENANT_ORG_ID, str(organization_id))
 
         try:
             creation_request = CreationRequest.model_validate(request)
-            span.set_attribute("collection.provider", str(creation_request.provider))
+            span.set_attribute(COLLECTION_PROVIDER, str(creation_request.provider))
 
             job_uuid = UUID(job_id)
             trace_id = correlation_id.get() or "N/A"
@@ -357,16 +364,16 @@ def execute_batch_job(
         collection_job_id=job_id,
         task_id=task_id,
         project_id=project_id,
-        organization_id=organization_id,
+        org_id=organization_id,
     ), tracer.start_as_current_span("collections.create.execute_batch_job") as span:
-        span.set_attribute("collection.job_id", str(job_id))
-        span.set_attribute("kaapi.project_id", project_id)
-        span.set_attribute("kaapi.organization_id", organization_id)
+        span.set_attribute(JOB_ID, str(job_id))
+        span.set_attribute(TENANT_PROJECT_ID, str(project_id))
+        span.set_attribute(TENANT_ORG_ID, str(organization_id))
 
         try:
             batch_start_time = time.time()
             creation_request = CreationRequest.model_validate(request)
-            span.set_attribute("collection.provider", str(creation_request.provider))
+            span.set_attribute(COLLECTION_PROVIDER, str(creation_request.provider))
 
             result = Collection(  # pyright: ignore[reportCallIssue]
                 knowledge_base_id=vector_store_id,
@@ -505,7 +512,7 @@ def execute_batch_job(
 
                 success_payload = build_success_payload(collection_job, collection)
 
-            span.set_attribute("collection.id", str(collection_id))
+            span.set_attribute(COLLECTION_ID, str(collection_id))
 
             logger.info(
                 "[create_collection.execute_batch_job] All batches done, collection created: %s | "

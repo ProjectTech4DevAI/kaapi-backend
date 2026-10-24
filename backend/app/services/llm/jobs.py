@@ -18,6 +18,25 @@ from opentelemetry import trace
 from sqlmodel import Session
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from app.core.telemetry.constants import (
+    CALLBACK_STATUS,
+    CALLBACK_URL,
+    CELERY_TASK_ID,
+    CORRELATION_ID,
+    GEN_AI_PROVIDER_NAME,
+    GEN_AI_REQUEST_MODEL,
+    JOB_ID,
+    LLM_CALL_ID,
+    LLM_CHAIN_ID,
+    LLM_COMPLETION_TYPE,
+    LLM_CONFIG_ID,
+    LLM_CONFIG_IS_STORED,
+    LLM_CONFIG_VERSION,
+    LLM_PROXY_URL,
+    SENTRY_OP,
+    TENANT_ORG_ID,
+    TENANT_PROJECT_ID,
+)
 from app.celery.utils import start_llm_chain_job, start_llm_job
 from app.core.db import engine
 from app.core.providers import Provider
@@ -104,19 +123,19 @@ def _set_traceability_attributes(
     task_id: str | None = None,
 ) -> None:
     if job_id is not None:
-        span.set_attribute("llm.job_id", str(job_id))
+        span.set_attribute(JOB_ID, str(job_id))
     if llm_call_id is not None:
-        span.set_attribute("llm.call_id", str(llm_call_id))
+        span.set_attribute(LLM_CALL_ID, str(llm_call_id))
     if chain_id is not None:
-        span.set_attribute("llm.chain_id", str(chain_id))
+        span.set_attribute(LLM_CHAIN_ID, str(chain_id))
     if trace_id is not None:
-        span.set_attribute("kaapi.trace_id", trace_id)
+        span.set_attribute(CORRELATION_ID, trace_id)
     if project_id is not None:
-        span.set_attribute("kaapi.project_id", project_id)
+        span.set_attribute(TENANT_PROJECT_ID, str(project_id))
     if organization_id is not None:
-        span.set_attribute("kaapi.organization_id", organization_id)
+        span.set_attribute(TENANT_ORG_ID, str(organization_id))
     if task_id is not None:
-        span.set_attribute("celery.task_id", task_id)
+        span.set_attribute(CELERY_TASK_ID, task_id)
 
 
 def _execute_provider_call(
@@ -152,7 +171,7 @@ def start_job(
         tag="llm-call",
         lifecycle="llm.call.start_job",
         project_id=project_id,
-        organization_id=organization_id,
+        org_id=organization_id,
     ), tracer.start_as_current_span("llm.start_job") as span:
         trace_id = correlation_id.get() or "N/A"
         _set_traceability_attributes(
@@ -220,7 +239,7 @@ def start_chain_job(
         lifecycle="llm.chain.start_job",
         job_id=job.id,
         project_id=project_id,
-        organization_id=organization_id,
+        org_id=organization_id,
     ), tracer.start_as_current_span("llm.chain.start_job") as span:
         _set_traceability_attributes(
             span,
@@ -297,8 +316,8 @@ def handle_job_error(
     if callback_url:
         webhook_secret = get_webhook_secret(project_id, organization_id)
         with tracer.start_as_current_span("llm.send_callback") as cb_span:
-            cb_span.set_attribute("callback.url", callback_url)
-            cb_span.set_attribute("callback.status", "failure")
+            cb_span.set_attribute(CALLBACK_URL, callback_url)
+            cb_span.set_attribute(CALLBACK_STATUS, "failure")
             _set_traceability_attributes(
                 cb_span,
                 job_id=job_id,
@@ -651,10 +670,10 @@ def _load_config_blob(
 ) -> tuple[ConfigBlob | None, str | None]:
     """Resolve a stored or ad-hoc config, filling in the default audio provider."""
     with ctx.span("llm.resolve_config") as cfg_span:
-        cfg_span.set_attribute("llm.config.is_stored", config.is_stored_config)
+        cfg_span.set_attribute(LLM_CONFIG_IS_STORED, config.is_stored_config)
         if config.is_stored_config:
-            cfg_span.set_attribute("llm.config.id", str(config.id))
-            cfg_span.set_attribute("llm.config.version", str(config.version))
+            cfg_span.set_attribute(LLM_CONFIG_ID, str(config.id))
+            cfg_span.set_attribute(LLM_CONFIG_VERSION, str(config.version))
             config_crud = ConfigVersionCrud(
                 session=session, project_id=ctx.project_id, config_id=config.id
             )
@@ -951,8 +970,8 @@ def _execute_proxy_call(
     proxy_data: dict | None = None
 
     with ctx.span("llm.proxy.execute") as proxy_span:
-        proxy_span.set_attribute("llm.provider", Provider.PROXY.value)
-        proxy_span.set_attribute("llm.proxy.url", client_llm_url)
+        proxy_span.set_attribute(GEN_AI_PROVIDER_NAME, Provider.PROXY.value)
+        proxy_span.set_attribute(LLM_PROXY_URL, client_llm_url)
 
         try:
             with suppress_http_instrumentation():
@@ -1288,10 +1307,10 @@ def execute_llm_call(
 
             with ctx.span("llm.create_call_record") as create_span:
                 create_span.set_attribute(
-                    "llm.provider", str(completion_config.provider)
+                    GEN_AI_PROVIDER_NAME, str(completion_config.provider)
                 )
                 if model_name:
-                    create_span.set_attribute("llm.request.model", model_name)
+                    create_span.set_attribute(GEN_AI_REQUEST_MODEL, model_name)
                 try:
                     _create_call_record(
                         session,
@@ -1342,9 +1361,9 @@ def execute_llm_call(
 
         ai_span_name = f"chat {model_name}" if model_name else f"chat {provider_name}"
         with ctx.span(ai_span_name) as ai_span:
-            ai_span.set_attribute("sentry.op", "gen_ai.chat")
+            ai_span.set_attribute(SENTRY_OP, "gen_ai.chat")
             if completion_type:
-                ai_span.set_attribute("completion_type", completion_type)
+                ai_span.set_attribute(LLM_COMPLETION_TYPE, completion_type)
             set_gen_ai_request_attributes(
                 ai_span,
                 provider=provider_name,
@@ -1360,14 +1379,16 @@ def execute_llm_call(
                     resolved_input_context(query.input) as resolved_input,
                     ctx.span("llm.provider.execute") as provider_span,
                 ):
-                    provider_span.set_attribute("llm.provider", provider_name)
+                    provider_span.set_attribute(GEN_AI_PROVIDER_NAME, provider_name)
                     provider_span.set_attribute(
                         "llm.operation.name", "provider.execute"
                     )
                     if completion_type:
-                        provider_span.set_attribute("completion_type", completion_type)
+                        provider_span.set_attribute(
+                            LLM_COMPLETION_TYPE, completion_type
+                        )
                     if model_name:
-                        provider_span.set_attribute("llm.request.model", model_name)
+                        provider_span.set_attribute(GEN_AI_REQUEST_MODEL, model_name)
                     # real blocking network call to referenced provider
                     response, error = _execute_provider_call(
                         func=provider_instance.execute,
@@ -1473,7 +1494,7 @@ def execute_job(
         job_id=job_uuid,
         task_id=task_id,
         project_id=project_id,
-        organization_id=organization_id,
+        org_id=organization_id,
     ):
         _set_traceability_attributes(
             trace.get_current_span(),
@@ -1542,8 +1563,8 @@ def execute_job(
                 if callback_url_str:
                     webhook_secret = get_webhook_secret(project_id, organization_id)
                     with tracer.start_as_current_span("llm.send_callback") as cb_span:
-                        cb_span.set_attribute("callback.url", callback_url_str)
-                        cb_span.set_attribute("callback.status", "success")
+                        cb_span.set_attribute(CALLBACK_URL, callback_url_str)
+                        cb_span.set_attribute(CALLBACK_STATUS, "success")
                         _set_traceability_attributes(
                             cb_span,
                             job_id=job_uuid,
@@ -1647,7 +1668,7 @@ def execute_chain_job(
         job_id=job_uuid,
         task_id=task_id,
         project_id=project_id,
-        organization_id=organization_id,
+        org_id=organization_id,
         total_blocks=len(request.blocks),
     ):
         _set_traceability_attributes(

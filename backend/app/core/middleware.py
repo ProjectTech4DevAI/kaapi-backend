@@ -8,6 +8,13 @@ from opentelemetry import trace
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.core.telemetry.constants import (
+    CORRELATION_ID,
+    HTTP_METHOD,
+    HTTP_REQUEST_BODY_SIZE,
+    HTTP_ROUTE,
+    HTTP_STATUS_CODE,
+)
 from app.core.config import settings
 from app.core.logger import log_service_name
 from app.core.telemetry import record_http_request, record_unmatched_request
@@ -89,12 +96,12 @@ async def _log_http_request(
 
     span = trace.get_current_span()
     if span.is_recording():
-        span.set_attribute("http.request.body.size", request_body_size)
+        span.set_attribute(HTTP_REQUEST_BODY_SIZE, request_body_size)
 
     if sentry_sdk.get_client().is_active():
-        sentry_sdk.set_tag("http.method", method)
+        sentry_sdk.set_tag(HTTP_METHOD, method)
         if request_id := correlation_id.get():
-            sentry_sdk.set_tag("correlation_id", request_id)
+            sentry_sdk.set_tag(CORRELATION_ID, request_id)
 
     try:
         response = await call_next(request)
@@ -103,8 +110,8 @@ async def _log_http_request(
         status = 500
         http_route = _resolve_http_route(request)
         if sentry_sdk.get_client().is_active():
-            sentry_sdk.set_tag("http.route", http_route)
-            sentry_sdk.set_tag("http.status_code", str(status))
+            sentry_sdk.set_tag(HTTP_ROUTE, http_route)
+            sentry_sdk.set_tag(HTTP_STATUS_CODE, str(status))
         if http_route == UNMATCHED_ROUTE:
             record_unmatched_request(method=method)
         elif metrics_enabled:
@@ -123,8 +130,8 @@ async def _log_http_request(
     http_route = _resolve_http_route(request)
 
     if sentry_sdk.get_client().is_active():
-        sentry_sdk.set_tag("http.route", http_route)
-        sentry_sdk.set_tag("http.status_code", str(status))
+        sentry_sdk.set_tag(HTTP_ROUTE, http_route)
+        sentry_sdk.set_tag(HTTP_STATUS_CODE, str(status))
 
     if http_route == UNMATCHED_ROUTE:
         record_unmatched_request(method=method)

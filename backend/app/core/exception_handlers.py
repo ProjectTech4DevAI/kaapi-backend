@@ -16,6 +16,13 @@ from starlette.status import (
     HTTP_503_SERVICE_UNAVAILABLE,
 )
 
+from app.core.telemetry.constants import (
+    DB_CONSTRAINT,
+    ERROR_CLASS,
+    HTTP_METHOD,
+    HTTP_ROUTE,
+    HTTP_STATUS_CODE,
+)
 from app.utils import APIResponse
 
 logger = logging.getLogger(__name__)
@@ -136,11 +143,11 @@ def _tag_error_scope(request: Request, status_code: int) -> None:
     scope = sentry_sdk.get_current_scope()
     route = getattr(request.scope.get("route"), "path", None)
     if route:
-        scope.set_tag("http.route", route)
+        scope.set_tag(HTTP_ROUTE, route)
         scope.set_transaction_name(f"{request.method} {route}")
-    scope.set_tag("http.method", request.method)
-    scope.set_tag("http.status_code", str(status_code))
-    scope.set_tag("error.class", "server" if status_code >= 500 else "client")
+    scope.set_tag(HTTP_METHOD, request.method)
+    scope.set_tag(HTTP_STATUS_CODE, str(status_code))
+    scope.set_tag(ERROR_CLASS, "server" if status_code >= 500 else "client")
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -181,7 +188,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         sqlstate, constraint = _db_error_constraint(exc)
         _tag_error_scope(request, status_code)
         if constraint and sentry_sdk.get_client().is_active():
-            sentry_sdk.set_tag("db.constraint", constraint)
+            sentry_sdk.set_tag(DB_CONSTRAINT, constraint)
         log = logger.error if status_code >= 500 else logger.warning
         log(
             f"[db_error_handler] Unhandled DB error | path: {request.url.path}, "
