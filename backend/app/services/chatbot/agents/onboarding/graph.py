@@ -166,6 +166,28 @@ def _get_extraction_model(chat_model: BaseChatModel) -> ExtractionModel:
     return chat_model.with_structured_output(FieldExtraction, method=EXTRACTION_METHOD)
 
 
+def _to_provider_error(error: Exception, *, model: str) -> ChatbotProviderError:
+    if isinstance(error, anthropic.APITimeoutError):
+        return ChatbotProviderError(
+            "[KAAPI] Request timed out — retry smaller. If persistent, contact Kaapi. "
+            "(code: APITimeoutError)"
+        )
+    if isinstance(error, anthropic.APIConnectionError):
+        return ChatbotProviderError(
+            "[KAAPI] Network/DNS issue reaching provider — check connectivity. "
+            "If persistent, contact Kaapi. (code: APIConnectionError)"
+        )
+    if isinstance(error, anthropic.APIStatusError):
+        return ChatbotProviderError(
+            f"[ANTHROPIC] Chat model call failed: {error.message} "
+            f"(code: {error.status_code}, request_id: {error.request_id})"
+        )
+    return ChatbotProviderError(
+        f"[KAAPI] Unsupported model configuration for '{model}': {error} "
+        "— update the config's model, thinking, or effort. (code: ValueError)"
+    )
+
+
 async def run_chatbot_turn(
     *,
     system_prompt: str,
@@ -200,27 +222,8 @@ async def run_chatbot_turn(
         )
         # ChatAnthropic.invoke is sync; keep it off the event loop.
         result = await asyncio.to_thread(graph.invoke, initial_state)
-    except anthropic.APITimeoutError as e:
-        raise ChatbotProviderError(
-            "[KAAPI] Request timed out — retry smaller. If persistent, contact Kaapi. "
-            "(code: APITimeoutError)"
-        ) from e
-    except anthropic.APIConnectionError as e:
-        raise ChatbotProviderError(
-            "[KAAPI] Network/DNS issue reaching provider — check connectivity. "
-            "If persistent, contact Kaapi. (code: APIConnectionError)"
-        ) from e
-    except anthropic.APIStatusError as e:
-        raise ChatbotProviderError(
-            f"[ANTHROPIC] Chat model call failed: {e.message} (code: {e.status_code}, "
-            f"request_id: {e.request_id})"
-        ) from e
-    except ValueError as e:
-        error_message = (
-            f"[KAAPI] Unsupported model configuration for '{model_settings.model}': "
-            f"{e} — update the config's model, thinking, or effort. (code: ValueError)"
-        )
-        raise ChatbotProviderError(error_message) from e
+    except (anthropic.APIConnectionError, anthropic.APIStatusError, ValueError) as e:
+        raise _to_provider_error(e, model=model_settings.model) from e
 
     transcript = to_message_dicts(
         system_prompt=system_prompt, messages=result["messages"]
