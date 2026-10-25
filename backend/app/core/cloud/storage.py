@@ -12,6 +12,7 @@ from urllib.parse import ParseResult, quote, unquote, urlparse, urlunparse
 from abc import ABC, abstractmethod
 from typing import Any, NamedTuple
 import boto3
+from boto3.s3.transfer import TransferConfig
 from fastapi import UploadFile
 from botocore.exceptions import ClientError
 from botocore.response import StreamingBody
@@ -30,6 +31,9 @@ def _mask(value: str | None) -> str:
 
 
 logger = logging.getLogger(__name__)
+
+# s3transfer's thread pool drops the OTel context, so each PutObject became its own root trace.
+_SAME_THREAD_TRANSFER = TransferConfig(use_threads=False)
 
 
 def _attachment_disposition(filename: str) -> str:
@@ -288,6 +292,7 @@ class AmazonCloudStorage(CloudStorage):
                 ExtraArgs={
                     "ContentType": source.content_type,
                 },
+                Config=_SAME_THREAD_TRANSFER,
                 **kwargs,
             )
             logger.info(

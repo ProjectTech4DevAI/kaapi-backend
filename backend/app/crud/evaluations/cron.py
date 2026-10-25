@@ -9,8 +9,15 @@ from typing import Any
 from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.core.telemetry.constants import (
+    CRON_AGGREGATES_DISPATCHED,
+    CRON_CHUNKS_REENQUEUED,
+    CRON_RESUMES_DISPATCHED,
+    CRON_RUNS_REAPED,
+)
 from app.core.util import now
 from app.crud.evaluations.core import update_evaluation_run
+from app.crud.evaluations.cron_utils import cron_work_span
 from app.crud.evaluations.fast_chunks import (
     CHUNK_CONFIG_INDEX,
     list_response_chunk_jobs,
@@ -50,36 +57,51 @@ def dispatch_fast_evaluation_barriers(session: Session) -> dict[str, Any]:
     chunks_reenqueued = 0
     stall_cutoff = now() - timedelta(minutes=settings.EVAL_FAST_STALL_THRESHOLD_MINUTES)
 
-    for run in runs:
-        expected = math.ceil(max(run.total_items, 0) / settings.EVAL_FAST_CHUNK_SIZE)
-        if expected == 0:
-            continue
+    if not runs:
+        return {"total": 0, "aggregates_dispatched": 0, "chunks_reenqueued": 0}
 
-        done_indices = {
-            int(job.config.get(CHUNK_CONFIG_INDEX, -1))
-            for job in list_response_chunk_jobs(session=session, eval_run_id=run.id)
-            if job.raw_output_url
-        }
-        done = len(done_indices)
-
-        if done >= expected and run.batch_job_id is None:
-            start_fast_evaluation_aggregate(eval_run_id=run.id)
-            aggregates_dispatched += 1
-            continue
-
-        if done < expected and run.updated_at < stall_cutoff:
-            missing = [i for i in range(expected) if i not in done_indices]
-            for chunk_index in missing:
-                start_fast_evaluation_chunk(eval_run_id=run.id, chunk_index=chunk_index)
-            chunks_reenqueued += len(missing)
-            update_evaluation_run(
-                session=session, eval_run=run, update=EvaluationRunUpdate()
+    with cron_work_span("evaluation.cron.fast_barrier", len(runs)) as span:
+        for run in runs:
+            expected = math.ceil(
+                max(run.total_items, 0) / settings.EVAL_FAST_CHUNK_SIZE
             )
-            logger.warning(
-                f"[dispatch_fast_evaluation_barriers] Stalled run, re-enqueued "
-                f"chunks | run_id={run.id} | missing={missing} | "
-                f"done={done}/{expected}"
-            )
+            if expected == 0:
+                continue
+
+            done_indices = {
+                int(job.config.get(CHUNK_CONFIG_INDEX, -1))
+                for job in list_response_chunk_jobs(session=session, eval_run_id=run.id)
+                if job.raw_output_url
+            }
+            done = len(done_indices)
+
+            if done >= expected and run.batch_job_id is None:
+                start_fast_evaluation_aggregate(eval_run_id=run.id)
+                aggregates_dispatched += 1
+                continue
+
+            if done < expected and run.updated_at < stall_cutoff:
+                missing = [i for i in range(expected) if i not in done_indices]
+                for chunk_index in missing:
+                    start_fast_evaluation_chunk(
+                        eval_run_id=run.id, chunk_index=chunk_index
+                    )
+                chunks_reenqueued += len(missing)
+                update_evaluation_run(
+                    session=session, eval_run=run, update=EvaluationRunUpdate()
+                )
+                logger.warning(
+                    f"[dispatch_fast_evaluation_barriers] Stalled run, re-enqueued "
+                    f"chunks | run_id={run.id} | missing={missing} | "
+                    f"done={done}/{expected}"
+                )
+
+        span.set_attributes(
+            {
+                CRON_AGGREGATES_DISPATCHED: aggregates_dispatched,
+                CRON_CHUNKS_REENQUEUED: chunks_reenqueued,
+            }
+        )
 
     return {
         "total": len(runs),
@@ -110,44 +132,61 @@ def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str,
     reaped = 0
     in_flight = 0
 
-    for run in runs:
-        if run.inserted_at < stall_cutoff:
-            logger.warning(
-                f"[dispatch_pending_evaluation_iteration_resumes] Reaping stalled "
-                f"loop | iteration_run_id={run.id} | inserted_at={run.inserted_at}"
-            )
-            mark_iteration_run_failed(
+    if not runs:
+        return {
+            "total": 0,
+            "resumes_dispatched": 0,
+            "in_flight_skipped": 0,
+            "reaped": 0,
+        }
+
+    with cron_work_span("evaluation.cron.iteration_resume", len(runs)) as span:
+        for run in runs:
+            if run.inserted_at < stall_cutoff:
+                logger.warning(
+                    f"[dispatch_pending_evaluation_iteration_resumes] Reaping stalled "
+                    f"loop | iteration_run_id={run.id} | inserted_at={run.inserted_at}"
+                )
+                mark_iteration_run_failed(
+                    iteration_run_id=run.id,
+                    organization_id=run.organization_id,
+                    project_id=run.project_id,
+                    error_message=(
+                        f"Evaluation iteration loop stalled: still processing more than "
+                        f"{settings.EVAL_ITERATION_STALL_THRESHOLD_HOURS}h after it started."
+                    ),
+                )
+                reaped += 1
+                continue
+
+            if (
+                run.last_dispatched_at is not None
+                and run.last_dispatched_at > cooldown_cutoff
+            ):
+                in_flight += 1
+                continue
+
+            start_evaluation_iteration_round(
                 iteration_run_id=run.id,
+                resume=True,
                 organization_id=run.organization_id,
                 project_id=run.project_id,
-                error_message=(
-                    f"Evaluation iteration loop stalled: still processing more than "
-                    f"{settings.EVAL_ITERATION_STALL_THRESHOLD_HOURS}h after it started."
-                ),
             )
-            reaped += 1
-            continue
+            # Stamp after enqueue so a failed dispatch retries next tick.
+            update_evaluation_iteration_run(
+                session=session,
+                iteration_run=run,
+                update=EvaluationIterationRunUpdate(last_dispatched_at=current_time),
+            )
+            dispatched += 1
 
-        if (
-            run.last_dispatched_at is not None
-            and run.last_dispatched_at > cooldown_cutoff
-        ):
-            in_flight += 1
-            continue
-
-        start_evaluation_iteration_round(
-            iteration_run_id=run.id,
-            resume=True,
-            organization_id=run.organization_id,
-            project_id=run.project_id,
+        span.set_attributes(
+            {
+                CRON_RESUMES_DISPATCHED: dispatched,
+                "cron.in_flight_skipped": in_flight,
+                CRON_RUNS_REAPED: reaped,
+            }
         )
-        # Stamp after enqueue so a failed dispatch retries next tick.
-        update_evaluation_iteration_run(
-            session=session,
-            iteration_run=run,
-            update=EvaluationIterationRunUpdate(last_dispatched_at=current_time),
-        )
-        dispatched += 1
 
     return {
         "total": len(runs),
@@ -158,62 +197,46 @@ def dispatch_pending_evaluation_iteration_resumes(session: Session) -> dict[str,
 
 
 async def process_all_pending_evaluations(session: Session) -> dict[str, Any]:
-    """Poll text/STT/TTS evaluations, then run the fast-eval barrier and iteration resumes."""
-    try:
-        text_summary = await poll_all_pending_evaluations(session=session)
+    """Poll text/STT/TTS evaluations, then run the fast-eval barrier and iteration resumes.
 
-        from app.crud.stt_evaluations import poll_all_pending_stt_evaluations
-        from app.crud.tts_evaluations import poll_all_pending_tts_evaluations
+    Errors propagate so the cron route's Sentry monitor records a failed check-in.
+    """
+    text_summary = await poll_all_pending_evaluations(session=session)
 
-        stt_summary = await poll_all_pending_stt_evaluations(session=session)
-        tts_summary = await poll_all_pending_tts_evaluations(session=session)
-        fast_summary = dispatch_fast_evaluation_barriers(session=session)
-        iteration_summary = dispatch_pending_evaluation_iteration_resumes(
-            session=session
-        )
+    from app.crud.stt_evaluations import poll_all_pending_stt_evaluations
+    from app.crud.tts_evaluations import poll_all_pending_tts_evaluations
 
-        total_processed = (
-            text_summary["processed"]
-            + stt_summary["processed"]
-            + tts_summary["processed"]
-        )
-        total_failed = (
-            text_summary["failed"] + stt_summary["failed"] + tts_summary["failed"]
-        )
-        total_still_processing = (
-            text_summary["still_processing"]
-            + stt_summary["still_processing"]
-            + tts_summary["still_processing"]
-        )
-        all_details = (
-            text_summary.get("details", [])
-            + stt_summary.get("details", [])
-            + tts_summary.get("details", [])
-        )
+    stt_summary = await poll_all_pending_stt_evaluations(session=session)
+    tts_summary = await poll_all_pending_tts_evaluations(session=session)
+    fast_summary = dispatch_fast_evaluation_barriers(session=session)
+    iteration_summary = dispatch_pending_evaluation_iteration_resumes(session=session)
 
-        return {
-            "status": "success",
-            "total_processed": total_processed,
-            "total_failed": total_failed,
-            "total_still_processing": total_still_processing,
-            "results": all_details,
-            "fast": fast_summary,
-            "iteration": iteration_summary,
-        }
+    total_processed = (
+        text_summary["processed"] + stt_summary["processed"] + tts_summary["processed"]
+    )
+    total_failed = (
+        text_summary["failed"] + stt_summary["failed"] + tts_summary["failed"]
+    )
+    total_still_processing = (
+        text_summary["still_processing"]
+        + stt_summary["still_processing"]
+        + tts_summary["still_processing"]
+    )
+    all_details = (
+        text_summary.get("details", [])
+        + stt_summary.get("details", [])
+        + tts_summary.get("details", [])
+    )
 
-    except Exception as e:
-        logger.error(
-            f"[process_all_pending_evaluations] Fatal error: {e}",
-            exc_info=True,
-        )
-        return {
-            "status": "error",
-            "total_processed": 0,
-            "total_failed": 0,
-            "total_still_processing": 0,
-            "error": str(e),
-            "results": [],
-        }
+    return {
+        "status": "success",
+        "total_processed": total_processed,
+        "total_failed": total_failed,
+        "total_still_processing": total_still_processing,
+        "results": all_details,
+        "fast": fast_summary,
+        "iteration": iteration_summary,
+    }
 
 
 def process_all_pending_evaluations_sync(session: Session) -> dict[str, Any]:

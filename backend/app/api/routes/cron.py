@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Cron"])
 
+CRON_MONITOR_TIMEZONE = "Asia/Kolkata"
+
 EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
     # Expected cadence: a check-in every CRON_INTERVAL_MINUTES minutes.
     "schedule": {
@@ -25,7 +27,7 @@ EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
         "value": settings.CRON_INTERVAL_MINUTES,
         "unit": "minute",
     },
-    "timezone": "UTC",
+    "timezone": CRON_MONITOR_TIMEZONE,
     "checkin_margin": 2,
     "max_runtime": 2 * settings.CRON_INTERVAL_MINUTES,
     "failure_issue_threshold": 2,
@@ -34,7 +36,7 @@ EVALUATION_CRON_MONITOR_CONFIG: MonitorConfig = {
 
 DAILY_STATS_CRON_MONITOR_CONFIG: MonitorConfig = {
     "schedule": {"type": "crontab", "value": "0 9 * * *"},
-    "timezone": "Asia/Kolkata",
+    "timezone": CRON_MONITOR_TIMEZONE,
     "checkin_margin": 5,
     "max_runtime": 10,
     "failure_issue_threshold": 1,
@@ -48,7 +50,7 @@ PENDING_JOBS_CRON_MONITOR_CONFIG: MonitorConfig = {
         "value": settings.PENDING_JOB_MONITOR_INTERVAL_MINUTES,
         "unit": "minute",
     },
-    "timezone": "Asia/Kolkata",
+    "timezone": CRON_MONITOR_TIMEZONE,
     "checkin_margin": 2,
     "max_runtime": 2 * settings.PENDING_JOB_MONITOR_INTERVAL_MINUTES,
     "failure_issue_threshold": 2,
@@ -61,7 +63,7 @@ LLM_CALL_RETENTION_CRON_MONITOR_CONFIG: MonitorConfig = {
         "type": "crontab",
         "value": "0 9 * * *",
     },
-    "timezone": "Asia/Kolkata",
+    "timezone": CRON_MONITOR_TIMEZONE,
     "checkin_margin": 5,
     "max_runtime": 30,
     "failure_issue_threshold": 1,

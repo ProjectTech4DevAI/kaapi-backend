@@ -21,7 +21,15 @@ from opentelemetry.trace import SpanContext, SpanKind, StatusCode, format_span_i
 from sentry_sdk.integrations.opentelemetry import SentryPropagator, SentrySpanProcessor
 from sentry_sdk.tracing import Span as SentrySpan
 
-from app.core.telemetry.constants import HTTP_ROUTE
+from app.core.telemetry.constants import (
+    CRON_AGGREGATES_DISPATCHED,
+    CRON_CHUNKS_REENQUEUED,
+    CRON_RESUMES_DISPATCHED,
+    CRON_RUNS_FAILED,
+    CRON_RUNS_PROCESSED,
+    CRON_RUNS_REAPED,
+    HTTP_ROUTE,
+)
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -32,6 +40,16 @@ OTEL_SEMCONV_OPT_IN_DEFAULT = "http/dup"
 os.environ.setdefault(OTEL_SEMCONV_OPT_IN_ENV, OTEL_SEMCONV_OPT_IN_DEFAULT)
 
 FASTAPI_EXCLUDED_SPANS: list[Literal["receive", "send"]] = ["receive", "send"]
+
+_CRON_SPAN_PREFIX = "evaluation.cron."
+_CRON_OUTCOME_KEYS = (
+    CRON_RUNS_PROCESSED,
+    CRON_RUNS_FAILED,
+    CRON_RUNS_REAPED,
+    CRON_AGGREGATES_DISPATCHED,
+    CRON_CHUNKS_REENQUEUED,
+    CRON_RESUMES_DISPATCHED,
+)
 
 
 def _should_drop_unrouted_server_span(
@@ -51,6 +69,22 @@ def _should_drop_bare_http_trace(
         and kind == SpanKind.SERVER
         and status_code != StatusCode.ERROR
     )
+
+
+def _should_drop_idle_cron_span(
+    *,
+    is_root: bool,
+    name: str,
+    status_code: StatusCode,
+    attributes: Mapping[str, object] | None,
+) -> bool:
+    """True for an error-free cron span where nothing completed, failed or was dispatched."""
+    if not is_root or status_code == StatusCode.ERROR:
+        return False
+    if not name.startswith(_CRON_SPAN_PREFIX):
+        return False
+    attributes = attributes or {}
+    return not any(attributes.get(key) for key in _CRON_OUTCOME_KEYS)
 
 
 def _build_resource(service_name: str | None = None) -> Resource:
@@ -91,13 +125,22 @@ class _NoiseFilteringSpanProcessor(SentrySpanProcessor):
         had_children = span_context.trace_id in self._traces_with_children
         if is_root:
             self._traces_with_children.discard(span_context.trace_id)
-        if _should_drop_unrouted_server_span(
-            is_root=is_root, kind=otel_span.kind, attributes=otel_span.attributes
-        ) or _should_drop_bare_http_trace(
-            is_root=is_root,
-            kind=otel_span.kind,
-            status_code=otel_span.status.status_code,
-            had_children=had_children,
+        if (
+            _should_drop_unrouted_server_span(
+                is_root=is_root, kind=otel_span.kind, attributes=otel_span.attributes
+            )
+            or _should_drop_bare_http_trace(
+                is_root=is_root,
+                kind=otel_span.kind,
+                status_code=otel_span.status.status_code,
+                had_children=had_children,
+            )
+            or _should_drop_idle_cron_span(
+                is_root=is_root,
+                name=otel_span.name,
+                status_code=otel_span.status.status_code,
+                attributes=otel_span.attributes,
+            )
         ):
             self._forget_span(otel_span, span_context)
             return

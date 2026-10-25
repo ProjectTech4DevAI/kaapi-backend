@@ -42,6 +42,10 @@ from app.crud.evaluations.core import (
 )
 from app.services.llm.providers.registry import LLMProvider
 from app.crud.evaluations.cost import attach_cost
+from app.crud.evaluations.cron_utils import (
+    cron_work_span,
+    set_cron_summary_attributes,
+)
 from app.crud.evaluations.embeddings import (
     EMBEDDING_MODEL,
     calculate_average_similarity,
@@ -1173,6 +1177,16 @@ async def poll_all_pending_evaluations(session: Session) -> dict[str, Any]:
             "details": [],
         }
 
+    with cron_work_span("evaluation.cron.poll", len(pending_runs)) as span:
+        summary = await _poll_pending_evaluation_runs(session, list(pending_runs))
+        set_cron_summary_attributes(span, summary)
+    return summary
+
+
+async def _poll_pending_evaluation_runs(
+    session: Session, pending_runs: list[EvaluationRun]
+) -> dict[str, Any]:
+    """Poll each pending batch text run, grouped by project, and summarize the outcomes."""
     logger.info(
         f"[poll_all_pending_evaluations] Found {len(pending_runs)} pending evaluation runs"
     )

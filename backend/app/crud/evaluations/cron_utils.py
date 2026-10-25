@@ -6,10 +6,12 @@ evaluation polling loops.
 
 import logging
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from opentelemetry import trace
 from sqlalchemy import Integer
 from sqlmodel import Session, col, select
 
@@ -19,10 +21,37 @@ from app.core.batch import (
     GeminiClient,
     poll_batch_status,
 )
+from app.core.telemetry.constants import (
+    CRON_RUNS_FAILED,
+    CRON_RUNS_PENDING,
+    CRON_RUNS_PROCESSED,
+    CRON_RUNS_STILL_PROCESSING,
+)
 from app.models import EvaluationRun
 from app.models.batch_job import BatchJob
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
+
+
+@contextmanager
+def cron_work_span(name: str, pending: int) -> Iterator[trace.Span]:
+    """Opened only once a cron step finds work: /cron is untraced, so idle runs stay silent."""
+    with tracer.start_as_current_span(name) as span:
+        span.set_attribute(CRON_RUNS_PENDING, pending)
+        yield span
+
+
+def set_cron_summary_attributes(span: trace.Span, summary: dict[str, Any]) -> None:
+    """Record a poll summary's outcome counts on its cron span."""
+    span.set_attributes(
+        {
+            CRON_RUNS_PROCESSED: summary["processed"],
+            CRON_RUNS_FAILED: summary["failed"],
+            CRON_RUNS_STILL_PROCESSING: summary["still_processing"],
+        }
+    )
+
 
 # Terminal states that indicate batch processing is complete
 TERMINAL_STATES = {
@@ -300,6 +329,30 @@ async def poll_all_pending_evaluations_by_type(
         logger.info(f"[{fn_name}] No pending {eval_type.upper()} runs found")
         return make_empty_summary()
 
+    with cron_work_span(f"evaluation.cron.poll_{eval_type}", len(pending_runs)) as span:
+        summary = await _poll_pending_runs_by_type(
+            session,
+            pending_runs,
+            eval_type=eval_type,
+            update_run_fn=update_run_fn,
+            poll_run_fn=poll_run_fn,
+            success_actions=success_actions,
+        )
+        set_cron_summary_attributes(span, summary)
+    return summary
+
+
+async def _poll_pending_runs_by_type(
+    session: Session,
+    pending_runs: list[EvaluationRun],
+    *,
+    eval_type: str,
+    update_run_fn: Callable[..., Any],
+    poll_run_fn: Callable[..., Awaitable[dict[str, Any]]],
+    success_actions: tuple[str, ...],
+) -> dict[str, Any]:
+    """Poll each pending run of one type, grouped by project, and summarize the outcomes."""
+    fn_name = f"poll_all_pending_{eval_type}_evaluations"
     logger.info(
         f"[{fn_name}] Found {len(pending_runs)} pending {eval_type.upper()} runs"
     )

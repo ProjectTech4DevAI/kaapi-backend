@@ -66,3 +66,13 @@ CALLBACK_STATUS = "callback.status"
 CALLBACK_REQUEST_BODY_SIZE = "callback.request.body.size"
 CALLBACK_RESPONSE_STATUS_CODE = "callback.response.status_code"
 CALLBACK_DURATION_MS = "callback.duration_ms"
+
+# --- Cron: counts on the spans a cron run opens when it finds work ---
+CRON_RUNS_PENDING = "cron.runs.pending"
+CRON_RUNS_PROCESSED = "cron.runs.processed"
+CRON_RUNS_FAILED = "cron.runs.failed"
+CRON_RUNS_STILL_PROCESSING = "cron.runs.still_processing"
+CRON_RUNS_REAPED = "cron.runs.reaped"
+CRON_AGGREGATES_DISPATCHED = "cron.aggregates_dispatched"
+CRON_CHUNKS_REENQUEUED = "cron.chunks_reenqueued"
+CRON_RESUMES_DISPATCHED = "cron.resumes_dispatched"
