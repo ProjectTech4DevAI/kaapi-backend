@@ -5,6 +5,7 @@ seeds the staged-batch runtime bag, and hands the pipeline off to Celery. Only t
 BATCH method is wired here; RESPONSE stays a route-level 501 stub (deferred).
 """
 
+import json
 import logging
 from urllib.parse import urlparse
 from uuid import UUID, uuid4
@@ -35,6 +36,10 @@ from app.services.assessment.api import batch as batch_service
 from app.services.assessment.api.submission_store import (
     open_uploaded_rows,
     upload_submission_rows,
+)
+from app.services.assessment.validators import (
+    MAX_FILE_SIZE,
+    MAX_SUBMISSION_ROWS,
 )
 from app.utils import validate_callback_url
 
@@ -70,6 +75,31 @@ def _url_attachment_type(url: str) -> str | None:
     return next(
         (kind for ext, kind in _EXTENSION_TYPES.items() if path.endswith(ext)), None
     )
+
+
+def _validate_inline_data_size(rows: list[dict[str, str]]) -> None:
+    """Reject inline rows whose JSON-encoded size exceeds MAX_FILE_SIZE."""
+    data_size = len(json.dumps(rows, ensure_ascii=False).encode("utf-8"))
+    if data_size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"input.data is too large. Maximum size: "
+                f"{MAX_FILE_SIZE // (1024 * 1024)}MB"
+            ),
+        )
+
+
+def _validate_row_count(rows: list[dict[str, str]]) -> None:
+    """Reject a submission with more than MAX_SUBMISSION_ROWS rows."""
+    if len(rows) > MAX_SUBMISSION_ROWS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Submission has {len(rows)} rows. "
+                f"Maximum allowed: {MAX_SUBMISSION_ROWS}"
+            ),
+        )
 
 
 def _validate_rows_against_schema(
@@ -236,13 +266,16 @@ def submit(
 
     batch_input: BatchInput = request.input
     submission_id = batch_input.submission_doc_id
-    if submission_id is not None:
+    if submission_id is None:
+        _validate_inline_data_size(batch_input.data or [])
+    else:
         batch_input = _rows_from_submission(
             session=session,
             submission_doc_id=submission_id,
             organization_id=organization_id,
             project_id=project_id,
         )
+    _validate_row_count(batch_input.data or [])
 
     blob, provider, model = _resolve_config(
         session=session, request=request, project_id=project_id

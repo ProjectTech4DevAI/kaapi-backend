@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 
 # ─── UPLOAD VALIDATION ───────────────────────────────────────────────────────
 
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
+MAX_SUBMISSION_ROWS = 1000
 
 ALLOWED_EXTENSIONS = {".csv", ".xlsx"}
 ALLOWED_MIME_TYPES = {

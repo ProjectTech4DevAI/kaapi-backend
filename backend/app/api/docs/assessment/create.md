@@ -148,3 +148,5 @@ On completion the platform POSTs this payload to `callback_url`:
   an input shape carrying both `data` and `submission_doc_id`, or neither), or a
   submission row does not match the config's `input_schema` (a strict column absent or blank, an
   undeclared extra column, or a non-URL `image`/`pdf` value). The row index is named in the error.
+  Also returned when a submission has more than 1000 rows.
+* `413 Content Too Large` — inline `data` exceeds 20 MB.
