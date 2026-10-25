@@ -196,8 +196,14 @@ class TestHistorySummarization:
 
         summarize_call, reply_call = chat_model.calls
         # 9 conversation messages, keep-recent=6 lands on an assistant turn, so the
-        # window widens back to the preceding user turn: [user 0, bot 0] get summarized.
-        assert [m.content for m in summarize_call[1:]] == ["user 0", "bot 0"]
+        # window widens back to the preceding user turn: [user 0, bot 0] get summarized,
+        # sent as one user message so the request never ends on an assistant turn.
+        instruction, transcript_message = summarize_call
+        assert isinstance(instruction, SystemMessage)
+        assert isinstance(transcript_message, HumanMessage)
+        assert transcript_message.content == (
+            "<conversation>\nUser: user 0\nAssistant: bot 0\n</conversation>"
+        )
         assert [m.content for m in reply_call] == [
             SYSTEM_PROMPT,
             f"[Earlier conversation summary] {SUMMARY_TEXT}",
@@ -299,7 +305,9 @@ class TestHistorySummarization:
 
         # Exactly one summarize call: the extraction node's view is reused for the reply.
         summarize_call, reply_call = chat_model.calls
-        assert [m.content for m in summarize_call[1:]] == ["user 0", "bot 0"]
+        assert summarize_call[-1].content == (
+            "<conversation>\nUser: user 0\nAssistant: bot 0\n</conversation>"
+        )
         summary_note = f"[Earlier conversation summary] {SUMMARY_TEXT}"
         recent = ["user 1", "bot 1", "user 2", "bot 2", "user 3", "bot 3", "user 4"]
         [extraction_call] = chat_model.extraction_calls

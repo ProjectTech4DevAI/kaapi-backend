@@ -13,6 +13,9 @@ SUMMARIZE_INSTRUCTION = (
     "Summarize the conversation so far in 2-3 sentences. Keep every fact the "
     "user has already given -- this note replaces the original messages."
 )
+SUMMARIZE_TRANSCRIPT_TEMPLATE = "<conversation>\n{rendered}\n</conversation>"
+TRANSCRIPT_USER_LABEL = "User"
+TRANSCRIPT_ASSISTANT_LABEL = "Assistant"
 
 KICKOFF_MESSAGE_ID = "chatbot-kickoff"
 KICKOFF_MESSAGE_CONTENT = "Begin the conversation."
@@ -40,11 +43,31 @@ def summarize_if_needed(
     if not to_summarize:
         return messages
 
+    rendered = _render_transcript(to_summarize)
     summary = chat_model.invoke(
-        [SystemMessage(content=SUMMARIZE_INSTRUCTION), *to_summarize]
+        [
+            SystemMessage(content=SUMMARIZE_INSTRUCTION),
+            HumanMessage(
+                content=SUMMARIZE_TRANSCRIPT_TEMPLATE.format(rendered=rendered)
+            ),
+        ]
     )
     summary_note = SystemMessage(content=f"{SUMMARY_NOTE_PREFIX}{summary.text}")
     return [system_message, summary_note, *recent]
+
+
+def _render_transcript(messages: list[BaseMessage]) -> str:
+    lines: list[str] = []
+    for message in messages:
+        if message.id == KICKOFF_MESSAGE_ID:
+            continue
+        speaker = (
+            TRANSCRIPT_USER_LABEL
+            if isinstance(message, HumanMessage)
+            else TRANSCRIPT_ASSISTANT_LABEL
+        )
+        lines.append(f"{speaker}: {message.text}")
+    return "\n".join(lines)
 
 
 def has_user_turn(messages: list[BaseMessage]) -> bool:

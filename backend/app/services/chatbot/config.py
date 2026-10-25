@@ -1,4 +1,4 @@
-from typing import get_args
+from typing import Any, get_args
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -19,6 +19,7 @@ from app.services.chatbot.utils import (
 )
 
 _ANTHROPIC_EFFORT_LEVELS: tuple[AnthropicEffort, ...] = get_args(AnthropicEffort)
+THINKING_TYPE_ENABLED = "enabled"
 
 
 def _get_config_version(
@@ -49,6 +50,18 @@ def _to_anthropic_effort(effort: str | None) -> AnthropicEffort | None:
         f"[KAAPI] Config param 'effort' value '{effort}' is not an Anthropic effort "
         f"level ({', '.join(_ANTHROPIC_EFFORT_LEVELS)}); update the config."
     )
+
+
+def _validate_thinking_budget(thinking: dict[str, Any], *, max_tokens: int) -> None:
+    if thinking.get("type") != THINKING_TYPE_ENABLED:
+        return
+    budget = thinking.get("budget_tokens")
+    if not isinstance(budget, int) or budget >= max_tokens:
+        raise ChatbotInputError(
+            f"[KAAPI] Config thinking.budget_tokens ({budget}) must be an integer below "
+            f"the chatbot's max output tokens ({max_tokens}); lower the budget or use "
+            "thinking type 'adaptive'."
+        )
 
 
 def resolve_chatbot_model_settings(
@@ -93,9 +106,13 @@ def resolve_chatbot_model_settings(
         )
 
     thinking = params.thinking if params.thinking is not None else default_thinking()
+    resolved_max_tokens = (
+        max_tokens if max_tokens is not None else DEFAULT_MAX_OUTPUT_TOKENS
+    )
+    _validate_thinking_budget(thinking, max_tokens=resolved_max_tokens)
     model_settings = ChatbotModelSettings(
         model=params.model,
-        max_tokens=max_tokens if max_tokens is not None else DEFAULT_MAX_OUTPUT_TOKENS,
+        max_tokens=resolved_max_tokens,
         reasoning_effort=_to_anthropic_effort(params.effort),
         thinking=thinking,
         history_token_limit=(

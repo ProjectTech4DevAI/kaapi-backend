@@ -59,7 +59,7 @@ class TestResolveChatbotModelSettings:
             config_blob=build_anthropic_text_config_blob(
                 model="claude-opus-5-5",
                 effort="high",
-                thinking={"type": "enabled", "budget_tokens": 2048},
+                thinking={"type": "adaptive", "display": "summarized"},
             ),
         )
 
@@ -69,9 +69,41 @@ class TestResolveChatbotModelSettings:
             model="claude-opus-5-5",
             max_tokens=1024,
             reasoning_effort="high",
-            thinking={"type": "enabled", "budget_tokens": 2048},
+            thinking={"type": "adaptive", "display": "summarized"},
             history_token_limit=4000,
         )
+
+    def test_enabled_thinking_with_budget_below_max_tokens_is_accepted(
+        self, db: Session
+    ) -> None:
+        thinking = {"type": "enabled", "budget_tokens": 2048}
+        config = create_test_config(
+            db, config_blob=build_anthropic_text_config_blob(thinking=thinking)
+        )
+
+        model_settings = _resolve(db, config, max_tokens=4096)
+
+        assert model_settings.thinking == thinking
+        assert model_settings.max_tokens == 4096
+
+    @pytest.mark.parametrize(
+        "thinking",
+        [
+            {"type": "enabled", "budget_tokens": 2048},
+            {"type": "enabled", "budget_tokens": 1024},
+            {"type": "enabled"},
+        ],
+        ids=["budget-above-max", "budget-equal-max", "budget-missing"],
+    )
+    def test_enabled_thinking_budget_not_below_max_tokens_rejected(
+        self, db: Session, thinking: dict[str, Any]
+    ) -> None:
+        config = create_test_config(
+            db, config_blob=build_anthropic_text_config_blob(thinking=thinking)
+        )
+
+        with pytest.raises(ChatbotInputError, match="budget_tokens"):
+            _resolve(db, config)
 
     def test_explicit_version_and_request_overrides(self, db: Session) -> None:
         config = create_test_config(
