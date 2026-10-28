@@ -10,7 +10,8 @@ assistant's configured instructions; applies only when the run resolves a config
 prompt), and **Adherence to Knowledge Base** (groundedness of the answer against
 the retrieved chunks; applies only to rows that retrieved chunks). Per-row scores +
 reasoning are stored natively by Kaapi in the `score_trace_url` trace unit; the
-single `judge` cost stage covers the one combined call. v2 runs compute **no cosine
+single `judge` cost stage covers the one combined call. The run also records the
+per-stage average OpenAI call latency (response, judge) on `latency`. v2 runs compute **no cosine
 similarity** and do **not** touch Langfuse.
 
 Judging is system-config only: the judge always uses the configured model
@@ -37,7 +38,7 @@ reaches a terminal state. A single POST fires on **both** completion and failure
 carrying an `APIResponse` body — `success: true` for a completed run, `success:
 false` with the `error` message for a failed one; either way `data` is a slim run
 snapshot (`id`, `run_name`, `dataset_name`, `status`, `run_mode`, `inserted_at`,
-`updated_at` — no `score`/`cost`; fetch those from the run's own endpoint). When a
+`updated_at` — no `score`/`cost`/`latency`; fetch those from the run's own endpoint). When a
 `webhook_secret` credential is configured for the project the request is signed
 (`X-Webhook-Signature` / `X-Webhook-Timestamp`). Delivery is best-effort and
 at-least-once, so the receiver should be idempotent. The URL is rejected with

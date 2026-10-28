@@ -1,6 +1,7 @@
 import logging
 import base64
 import json
+from datetime import datetime
 from uuid import UUID
 from typing import Any, Literal
 
@@ -8,6 +9,7 @@ from sqlmodel import Session, select
 
 from app.core.util import now
 from app.models.llm import LlmCall, LLMCallRequest, ConfigBlob
+from app.models.llm.constants import REDACT_LLM_CALL_RECORDS_SQL, REDACTION_PLACEHOLDER
 from app.models.llm.request import (
     TextInput,
     AudioInput,
@@ -343,6 +345,19 @@ def get_llm_call_by_id(
         statement = statement.where(LlmCall.project_id == project_id)
 
     return session.exec(statement).first()
+
+
+def redact_llm_call_records(*, session: Session, retention_cutoff: datetime) -> int:
+    update_result = session.connection().execute(
+        REDACT_LLM_CALL_RECORDS_SQL,
+        {
+            "retention_cutoff": retention_cutoff,
+            "redaction_placeholder": REDACTION_PLACEHOLDER,
+        },
+    )
+    session.commit()
+
+    return update_result.rowcount
 
 
 def get_llm_calls_by_job_id(

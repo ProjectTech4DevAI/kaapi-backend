@@ -595,6 +595,8 @@ class TestProcessCompletedEvaluation:
         assert result.cost["total_cost_usd"] == response_cost["cost_usd"]
         # Embedding cost is added later by process_completed_embedding_batch.
         assert "embedding" not in result.cost
+        # Batch has no per-call timing; no stand-in latency is ever written.
+        assert result.latency is None
 
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.persist_score_traces")
@@ -902,6 +904,7 @@ class TestProcessCompletedEmbeddingBatch:
         assert result.cost["total_cost_usd"] == pytest.approx(
             0.000375 + embedding_cost["cost_usd"]
         )
+        assert result.latency is None
 
     @pytest.mark.asyncio
     @patch("app.crud.evaluations.processing.save_score")
