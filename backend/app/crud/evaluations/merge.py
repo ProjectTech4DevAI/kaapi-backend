@@ -17,13 +17,13 @@ from app.crud.evaluations.score import (
     COSINE_SCORE_COMMENT,
     COSINE_SCORE_NAME,
     DEFAULT_CATEGORY,
+    GUARDRAIL_TRACE_KEYS,
     EvaluationScore,
     NumericSummaryScore,
     SummaryScore,
-    TraceData,
-    TraceScore,
     UNSCOREABLE_REASONS,
 )
+from app.models.evaluation import TraceData, TraceScore
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +195,13 @@ def _merge_single_trace(existing: TraceData, fresh: TraceData) -> TraceData:
         merged["category"] = (
             fresh.get("category") or existing.get("category") or DEFAULT_CATEGORY
         )
+
+    # Present key wins even if None (no `or`), else a stale "blocked" sticks.
+    for key in GUARDRAIL_TRACE_KEYS:
+        if key in fresh:
+            merged[key] = fresh[key]
+        elif key in existing:
+            merged[key] = existing[key]
 
     return merged
 

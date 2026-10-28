@@ -3,7 +3,9 @@ import json
 import logging
 import socket
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -14,12 +16,15 @@ from celery.exceptions import SoftTimeLimitExceeded
 from gevent import Timeout
 from opentelemetry import trace
 from sqlmodel import Session
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.celery.utils import start_llm_chain_job, start_llm_job
 from app.core.db import engine
 from app.core.providers import Provider
+from app.core.retry import is_transient
 from app.core.langfuse.langfuse import observe_llm_execution
 from app.core.telemetry import (
+    LogModuleEnum,
     set_gen_ai_request_attributes,
     set_gen_ai_response_attributes,
     flush_telemetry,
@@ -59,6 +64,7 @@ from app.models.llm.request import (
 )
 from app.core.cloud.storage import get_cloud_storage
 from app.core.storage_utils import upload_audio_bytes_to_s3
+from app.models.llm.constants import LlmAudioKindEnum
 from app.models.llm.response import (
     AudioOutput,
     LLMCallResponse,
@@ -66,8 +72,8 @@ from app.models.llm.response import (
     TextOutput,
     Usage,
 )
-from app.services.llm.chain.types import BlockResult
-from app.services.llm.guardrails import apply_guardrails
+from app.services.llm.chain.types import BlockResult, GuardrailOutcomeEnum
+from app.services.llm.guardrails import apply_guardrails, summarize_validator_results
 from app.services.llm.mappers import (
     resolve_default_audio_provider,
     transform_kaapi_config_to_native,
@@ -210,6 +216,7 @@ def start_chain_job(
 
     with log_context(
         tag="llm-chain",
+        module=LogModuleEnum.LLM_CHAIN,
         lifecycle="llm.chain.start_job",
         job_id=job.id,
         project_id=project_id,
@@ -364,6 +371,14 @@ def resolve_config_blob(
     return blob, None
 
 
+@dataclass
+class GuardrailResult:
+    error: str | None = None
+    direct_response: str | None = None
+    metadata: dict[str, Any] | None = None
+    outcome: GuardrailOutcomeEnum | None = None
+
+
 def apply_input_guardrails(
     *,
     config_blob: ConfigBlob | None,
@@ -371,19 +386,14 @@ def apply_input_guardrails(
     job_id: UUID,
     project_id: int,
     organization_id: int,
-) -> tuple[QueryParams, str | None, str | None]:
+    include_guardrail_metadata: bool = False,
+) -> GuardrailResult:
     """Apply input guardrails from a config_blob. Shared with llm-call and llm-chain.
 
-    Thin adapter over ``apply_guardrails`` that maps the outcome onto a
-    ``QueryParams`` payload.
-
-    Returns (query, error, guardrail_direct_response) where:
-    - error is set when guardrails hard-block the request
-    - guardrail_direct_response is set when rephrase_needed=True and the safe_text
-      should be returned directly to the user without hitting the LLM
+    Rewrites `query` in place with the guardrail-safe text.
     """
     if not config_blob or not config_blob.input_guardrails:
-        return query, None, None
+        return GuardrailResult()
 
     if not isinstance(query.input, TextInput):
         logger.info(
@@ -391,29 +401,58 @@ def apply_input_guardrails(
             f"job_id={job_id}, "
             f"input_type={getattr(query.input, 'type', type(query.input).__name__)}"
         )
-        return query, None, None
+        return GuardrailResult()
 
+    original_input_text = query.input.content.value
     outcome = apply_guardrails(
-        text=query.input.content.value,
+        text=original_input_text,
         validators=config_blob.input_guardrails,
         job_id=job_id,
         project_id=project_id,
         organization_id=organization_id,
     )
+    metadata = None
+    # outocome.applied if true i.e guarrails not bypassed.
+    if outcome.applied and include_guardrail_metadata:
+        metadata = {
+            "input_guardrail": {
+                "input_from_user": original_input_text,
+                "input_to_llm": outcome.safe_text,
+                "validators": summarize_validator_results(outcome),
+            }
+        }
 
     if outcome.error is not None:
-        return query, outcome.error, None
+        return GuardrailResult(
+            error=outcome.error,
+            metadata=metadata,
+            outcome=GuardrailOutcomeEnum.BLOCKED if outcome.blocked else None,
+        )
 
     if outcome.rephrase_needed:
         logger.info(
             f"[apply_input_guardrails] rephrase_needed=True, returning safe_text directly | job_id={job_id}"
         )
-        return query, None, outcome.safe_text
+        return GuardrailResult(
+            direct_response=outcome.safe_text,
+            metadata=metadata,
+            outcome=GuardrailOutcomeEnum.REPHRASED,
+        )
 
     # No-op paths (no validators, bypassed) leave the query untouched.
     if outcome.applied and outcome.safe_text is not None:
+        if not outcome.safe_text.strip():
+            logger.warning(
+                f"[apply_input_guardrails] Guardrails reduced input to empty text; "
+                f"blocking request | job_id={job_id}"
+            )
+            return GuardrailResult(
+                error="Input guardrails rejected the request and left no usable content.",
+                metadata=metadata,
+                outcome=GuardrailOutcomeEnum.BLOCKED,
+            )
         query.input.content.value = outcome.safe_text
-    return query, None, None
+    return GuardrailResult(metadata=metadata)
 
 
 def apply_output_guardrails(
@@ -424,16 +463,14 @@ def apply_output_guardrails(
     project_id: int,
     organization_id: int,
     input_text: str | None = None,
-) -> tuple[BlockResult, str | None]:
+    include_guardrail_metadata: bool = False,
+) -> GuardrailResult:
     """Apply output guardrails from a config_blob. Shared by /llm/call and /llm/chain.
 
-    Thin adapter over ``apply_guardrails`` that maps the outcome onto a
-    ``BlockResult``.
-
-    Returns (modified_result, None) on success, or (result, error_string) on failure.
+    Rewrites `result` in place with the guardrail-safe output and metadata.
     """
     if not config_blob or not config_blob.output_guardrails:
-        return result, None
+        return GuardrailResult()
 
     if not isinstance(result.response.response.output, TextOutput):
         logger.info(
@@ -441,23 +478,71 @@ def apply_output_guardrails(
             f"job_id={job_id}, "
             f"output_type={getattr(result.response.response.output, 'type', type(result.response.response.output).__name__)}"
         )
-        return result, None
+        return GuardrailResult()
 
+    original_output_text = result.response.response.output.content.value
     outcome = apply_guardrails(
         text=input_text or "",
         validators=config_blob.output_guardrails,
         job_id=job_id,
         project_id=project_id,
         organization_id=organization_id,
-        output_text=result.response.response.output.content.value,
+        output_text=original_output_text,
     )
 
+    if outcome.applied and include_guardrail_metadata:
+        existing_metadata = result.metadata or {}
+        existing_metadata["output_guardrail"] = {
+            "output_from_llm": original_output_text,
+            "output_to_user": outcome.safe_text,
+            "validators": summarize_validator_results(outcome),
+        }
+        result.metadata = existing_metadata
+
     if outcome.error is not None:
-        return result, outcome.error
+        return GuardrailResult(
+            error=outcome.error,
+            outcome=GuardrailOutcomeEnum.BLOCKED if outcome.blocked else None,
+        )
 
     if outcome.applied and outcome.safe_text is not None:
+        if not outcome.safe_text.strip():
+            logger.warning(
+                f"[apply_output_guardrails] Guardrails reduced output to empty text; "
+                f"blocking response | job_id={job_id}"
+            )
+            return GuardrailResult(
+                error="Output guardrails rejected the response and left no usable content.",
+                outcome=GuardrailOutcomeEnum.BLOCKED,
+            )
         result.response.response.output.content.value = outcome.safe_text
-    return result, None
+    return GuardrailResult()
+
+
+def persist_output_guardrail_result(
+    *,
+    llm_call_id: UUID | None,
+    content: dict[str, Any] | None,
+    metadata: dict[str, Any] | None,
+) -> None:
+    """Re-persists content/metadata onto the already-created LlmCall row
+    after output guardrails run. Uses its own session since the caller's
+    session may already be closed by this point."""
+    if not llm_call_id:
+        return
+    if content is None and metadata is None:
+        return
+    try:
+        with Session(engine) as session:
+            update_llm_call_response(
+                session, llm_call_id=llm_call_id, content=content, metadata=metadata
+            )
+    except Exception as e:
+        logger.error(
+            f"[persist_output_guardrail_result] Failed to persist guardrail "
+            f"result: {e} | llm_call_id={llm_call_id}",
+            exc_info=True,
+        )
 
 
 DETECTED_LANGUAGE_FALLBACK = "en-IN"
@@ -491,6 +576,628 @@ def _substitute_detected_language_marker(
             )
 
 
+_LLM_OPERATION = "chat"
+
+
+@dataclass
+class _CallContext:
+    """Identifiers shared by every span, metric and row of one `execute_llm_call`.
+
+    Owns the `record_call` switch, so a span or metric added later through
+    `ctx` cannot leak evaluation traffic into production telemetry.
+    """
+
+    job_id: UUID
+    project_id: int
+    organization_id: int
+    chain_id: UUID | None
+    trace_id: str | None
+    record_call: bool
+    llm_call_id: UUID | None = None
+    started_at: float = 0.0
+
+    @contextmanager
+    def span(self, name: str) -> Iterator[trace.Span]:
+        span_tracer = tracer if self.record_call else trace.NoOpTracer()
+        with span_tracer.start_as_current_span(name) as span:
+            _set_traceability_attributes(
+                span,
+                job_id=self.job_id,
+                llm_call_id=self.llm_call_id,
+                chain_id=self.chain_id,
+                trace_id=self.trace_id,
+                project_id=self.project_id,
+                organization_id=self.organization_id,
+            )
+            yield span
+
+    def metrics_started(self, *, provider: str, model: str) -> None:
+        self.started_at = time.perf_counter()
+        if self.record_call:
+            record_llm_call_started(
+                provider=provider,
+                model=model,
+                operation=_LLM_OPERATION,
+                organization_id=self.organization_id,
+                project_id=self.project_id,
+            )
+
+    def metrics_finished(
+        self,
+        *,
+        provider: str,
+        model: str,
+        usage: Usage | None = None,
+    ) -> None:
+        """`usage=None` records the call as failed."""
+        if not self.record_call:
+            return
+        record_llm_call_finished(
+            provider=provider,
+            model=model,
+            operation=_LLM_OPERATION,
+            duration_ms=(time.perf_counter() - self.started_at) * 1000,
+            input_tokens=usage.input_tokens if usage else None,
+            output_tokens=usage.output_tokens if usage else None,
+            total_tokens=usage.total_tokens if usage else None,
+            error=usage is None,
+            organization_id=self.organization_id,
+            project_id=self.project_id,
+        )
+
+
+def _load_config_blob(
+    session: Session, config: LLMCallConfig, ctx: _CallContext
+) -> tuple[ConfigBlob | None, str | None]:
+    """Resolve a stored or ad-hoc config, filling in the default audio provider."""
+    with ctx.span("llm.resolve_config") as cfg_span:
+        cfg_span.set_attribute("llm.config.is_stored", config.is_stored_config)
+        if config.is_stored_config:
+            cfg_span.set_attribute("llm.config.id", str(config.id))
+            cfg_span.set_attribute("llm.config.version", str(config.version))
+            config_crud = ConfigVersionCrud(
+                session=session, project_id=ctx.project_id, config_id=config.id
+            )
+            config_blob, error = resolve_config_blob(config_crud, config)
+            if error:
+                cfg_span.set_status(trace.Status(trace.StatusCode.ERROR, error))
+                return None, error
+        else:
+            config_blob = config.blob
+            try:
+                validate_blob_model_or_raise(session, config_blob)
+            except HTTPException as e:
+                cfg_span.set_status(trace.Status(trace.StatusCode.ERROR, e.detail))
+                return None, e.detail
+
+    completion_config = config_blob.completion
+    if (
+        isinstance(
+            completion_config,
+            (KaapiSTTCompletionConfig, KaapiTTSCompletionConfig),
+        )
+        and completion_config.provider is None
+    ):
+        completion_config.provider = resolve_default_audio_provider(
+            session=session,
+            project_id=ctx.project_id,
+            organization_id=ctx.organization_id,
+        )
+    return config_blob, None
+
+
+def _rephrase_result(
+    session: Session,
+    *,
+    input_guardrail: GuardrailResult,
+    config: LLMCallConfig,
+    config_blob: ConfigBlob,
+    query: QueryParams,
+    request_metadata: dict | None,
+    original_input_value: str | None,
+    ctx: _CallContext,
+) -> BlockResult:
+    """Answer with the input guardrail's safe text without calling the LLM."""
+    # Runs before the Kaapi->native transform, so params may be
+    # a typed model (Kaapi/proxy variants) rather than a dict.
+    completion_params = config_blob.completion.params
+    guardrail_model = (
+        completion_params.get("model")
+        if isinstance(completion_params, dict)
+        else getattr(completion_params, "model", None)
+    )
+    guardrail_usage = Usage(input_tokens=0, output_tokens=0, total_tokens=0)
+    llm_response = LLMCallResponse(
+        response=LLMResponse(
+            provider_response_id=str(ctx.job_id),
+            provider=str(config_blob.completion.provider),
+            model=str(guardrail_model or ""),
+            output=TextOutput(
+                content=TextContent(value=input_guardrail.direct_response)
+            ),
+        ),
+        usage=guardrail_usage,
+    )
+    if original_input_value is not None:
+        query.input.content.value = original_input_value
+    if ctx.record_call:
+        ctx.llm_call_id = save_rephrase_guardrail_call(
+            session=session,
+            query=query,
+            config=config,
+            request_metadata=request_metadata,
+            config_blob=config_blob,
+            guardrail_direct_response=input_guardrail.direct_response,
+            job_id=ctx.job_id,
+            project_id=ctx.project_id,
+            organization_id=ctx.organization_id,
+            chain_id=ctx.chain_id,
+        )
+    return BlockResult(
+        response=llm_response,
+        usage=guardrail_usage,
+        metadata=request_metadata,
+        llm_call_id=ctx.llm_call_id,
+        guardrail_outcome=input_guardrail.outcome,
+    )
+
+
+def _create_call_record(
+    session: Session,
+    *,
+    query: QueryParams,
+    config: LLMCallConfig,
+    request_metadata: dict | None,
+    resolved_config: ConfigBlob,
+    original_provider: str,
+    ctx: _CallContext,
+) -> None:
+    """Write the `LlmCall` row and keep its id on `ctx`. Raises on DB failure."""
+    if not ctx.record_call:
+        return
+    llm_call = create_llm_call(
+        session,
+        request=LLMCallRequest(
+            query=query, config=config, request_metadata=request_metadata
+        ),
+        job_id=ctx.job_id,
+        project_id=ctx.project_id,
+        organization_id=ctx.organization_id,
+        resolved_config=resolved_config,
+        original_provider=original_provider,
+        chain_id=ctx.chain_id,
+        metadata=request_metadata,
+    )
+    ctx.llm_call_id = llm_call.id
+
+
+def _run_input_guardrails(
+    session: Session,
+    *,
+    config: LLMCallConfig,
+    config_blob: ConfigBlob,
+    query: QueryParams,
+    request_metadata: dict | None,
+    original_input_value: str | None,
+    include_guardrail_metadata: bool,
+    ctx: _CallContext,
+) -> tuple[dict | None, BlockResult | None]:
+    """Apply input guardrails to `query` in place.
+
+    Returns the merged `request_metadata` and a `BlockResult` when the call
+    ends here (rephrased or blocked), else None.
+    """
+    with ctx.span("llm.guardrails.input") as guard_span:
+        input_guardrail = apply_input_guardrails(
+            config_blob=config_blob,
+            query=query,
+            job_id=ctx.job_id,
+            project_id=ctx.project_id,
+            organization_id=ctx.organization_id,
+            include_guardrail_metadata=include_guardrail_metadata,
+        )
+        if input_guardrail.metadata:
+            if request_metadata is None:
+                request_metadata = {}
+            request_metadata.update(input_guardrail.metadata)
+        if input_guardrail.direct_response is not None:
+            return request_metadata, _rephrase_result(
+                session,
+                input_guardrail=input_guardrail,
+                config=config,
+                config_blob=config_blob,
+                query=query,
+                request_metadata=request_metadata,
+                original_input_value=original_input_value,
+                ctx=ctx,
+            )
+        if input_guardrail.error:
+            guard_span.set_status(
+                trace.Status(trace.StatusCode.ERROR, input_guardrail.error)
+            )
+            return request_metadata, BlockResult(
+                error=input_guardrail.error,
+                guardrail_outcome=input_guardrail.outcome,
+            )
+    return request_metadata, None
+
+
+def _run_output_guardrails(
+    result: BlockResult,
+    *,
+    config_blob: ConfigBlob,
+    original_input_value: str | None,
+    include_guardrail_metadata: bool,
+    ctx: _CallContext,
+) -> BlockResult:
+    """Apply output guardrails to a provider or proxy result and persist the outcome."""
+    with ctx.span("llm.guardrails.output") as out_guard_span:
+        output_guardrail = apply_output_guardrails(
+            config_blob=config_blob,
+            result=result,
+            job_id=ctx.job_id,
+            project_id=ctx.project_id,
+            organization_id=ctx.organization_id,
+            input_text=original_input_value,
+            include_guardrail_metadata=include_guardrail_metadata,
+        )
+        if output_guardrail.error:
+            out_guard_span.set_status(
+                trace.Status(trace.StatusCode.ERROR, output_guardrail.error)
+            )
+            # The provider already billed these tokens; keep them on the result.
+            return BlockResult(
+                error=output_guardrail.error,
+                llm_call_id=ctx.llm_call_id,
+                usage=result.usage,
+                guardrail_outcome=output_guardrail.outcome,
+            )
+        if config_blob.output_guardrails:
+            output = result.response.response.output
+            persist_output_guardrail_result(
+                llm_call_id=ctx.llm_call_id,
+                content=output.model_dump() if isinstance(output, TextOutput) else None,
+                metadata=result.metadata,
+            )
+    return result
+
+
+# ReadTimeout isn't retried: the proxy may already have run (and billed) the call.
+@retry(
+    stop=stop_after_attempt(4),
+    wait=wait_exponential(max=10),
+    retry=retry_if_exception(is_transient),
+    reraise=True,
+)
+def _post_to_proxy(url: str, api_key: str, input_text: str) -> dict:
+    with httpx.Client(timeout=60.0) as client:
+        resp = client.post(
+            url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            json={"input": input_text},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _execute_proxy_call(
+    session: Session,
+    *,
+    config: LLMCallConfig,
+    config_blob: ConfigBlob,
+    query: QueryParams,
+    request_metadata: dict | None,
+    original_input_value: str | None,
+    include_guardrail_metadata: bool,
+    ctx: _CallContext,
+) -> BlockResult:
+    """Forward the query to the project's own LLM endpoint instead of a provider."""
+    if not isinstance(query.input, TextInput):
+        return BlockResult(error="Proxy completion only supports text input")
+    client_llm_url = str(config_blob.completion.params.client_llm_url)
+    if not client_llm_url:
+        return BlockResult(error="Proxy config missing client_llm_url")
+    try:
+        validate_callback_url(client_llm_url)
+    except ValueError as e:
+        if isinstance(e.__cause__, socket.gaierror):
+            logger.warning(
+                f"[_execute_proxy_call] DNS resolution failed during proxy "
+                f"SSRF check; allowing request to proceed | "
+                f"url={client_llm_url}, err={e}"
+            )
+        else:
+            logger.warning(
+                f"[_execute_proxy_call] Proxy URL rejected by SSRF guard | "
+                f"url={client_llm_url}, err={e}"
+            )
+            return BlockResult(error=f"[KAAPI] Proxy URL rejected: {str(e)}")
+
+    creds = get_provider_credential(
+        session=session,
+        org_id=ctx.organization_id,
+        project_id=ctx.project_id,
+        provider=Provider.PROXY.value,
+    )
+    if not creds or not creds.get("api_key"):
+        return BlockResult(error="Proxy credentials not registered for project")
+
+    try:
+        _create_call_record(
+            session,
+            query=query,
+            config=config,
+            request_metadata=request_metadata,
+            resolved_config=config_blob,
+            original_provider=Provider.PROXY.value,
+            ctx=ctx,
+        )
+    except Exception as e:
+        logger.error(
+            f"[_execute_proxy_call] Failed to create proxy LLM call record: {e} | job_id={ctx.job_id}",
+            exc_info=True,
+        )
+        return BlockResult(error=f"Failed to create LLM call record: {str(e)}")
+
+    # End the read transaction so no pooled connection sits idle during the proxy
+    # request and its retry backoff; nothing is pending, so this only releases it.
+    session.commit()
+
+    ctx.metrics_started(provider=Provider.PROXY.value, model="")
+    proxy_data: dict | None = None
+
+    with ctx.span("llm.proxy.execute") as proxy_span:
+        proxy_span.set_attribute("llm.provider", Provider.PROXY.value)
+        proxy_span.set_attribute("llm.proxy.url", client_llm_url)
+
+        try:
+            with suppress_http_instrumentation():
+                proxy_data = _post_to_proxy(
+                    client_llm_url, creds["api_key"], query.input.content.value
+                )
+        except httpx.HTTPError as e:
+            proxy_span.record_exception(e)
+            proxy_span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+            ctx.metrics_finished(provider=Provider.PROXY.value, model="")
+            logger.error(
+                f"[_execute_proxy_call] Proxy call failed: {e} | job_id={ctx.job_id}, url={client_llm_url}",
+                exc_info=True,
+            )
+            return BlockResult(
+                error=f"Proxy call failed: {str(e)}",
+                llm_call_id=ctx.llm_call_id,
+                # Transient failures were already retried; don't stack fast-eval retries.
+                retryable=not is_transient(e),
+            )
+
+    try:
+        proxy_output_text = proxy_data["output"][0]["content"][0]["text"]
+    except (KeyError, IndexError, TypeError) as e:
+        logger.error(
+            f"[_execute_proxy_call] Malformed proxy response: {e} | job_id={ctx.job_id}",
+            exc_info=True,
+        )
+        return BlockResult(
+            error="Proxy returned an unexpected response structure",
+            llm_call_id=ctx.llm_call_id,
+        )
+    proxy_model = str(proxy_data.get("model") or "")
+    provider_response_id = str(proxy_data.get("id") or ctx.job_id)
+    raw_usage = proxy_data.get("usage") or {}
+    proxy_usage = Usage(
+        input_tokens=int(raw_usage.get("input_tokens") or 0),
+        output_tokens=int(raw_usage.get("output_tokens") or 0),
+        total_tokens=int(raw_usage.get("total_tokens") or 0),
+    )
+
+    proxy_response = LLMCallResponse(
+        response=LLMResponse(
+            provider_response_id=provider_response_id,
+            provider=Provider.PROXY.value,
+            model=proxy_model,
+            output=TextOutput(content=TextContent(value=proxy_output_text)),
+        ),
+        usage=proxy_usage,
+    )
+
+    _update_call_record(
+        proxy_response, proxy_response.response.output.model_dump(), ctx
+    )
+    ctx.metrics_finished(
+        provider=Provider.PROXY.value,
+        model=proxy_model,
+        usage=proxy_usage,
+    )
+
+    return _run_output_guardrails(
+        BlockResult(
+            response=proxy_response,
+            llm_call_id=ctx.llm_call_id,
+            usage=proxy_usage,
+            metadata=request_metadata,
+        ),
+        config_blob=config_blob,
+        original_input_value=original_input_value,
+        include_guardrail_metadata=include_guardrail_metadata,
+        ctx=ctx,
+    )
+
+
+def _to_native_config(
+    session: Session,
+    *,
+    config_blob: ConfigBlob,
+    request_metadata: dict | None,
+    include_provider_raw_response: bool,
+    detected_language: str | None,
+    job_id: UUID,
+) -> tuple[ConfigBlob, dict | None]:
+    """Translate a Kaapi completion config into the provider's native params.
+
+    Returns the resolved blob and `request_metadata` with any transform warnings.
+    """
+    completion_config = config_blob.completion
+    if isinstance(
+        completion_config,
+        (
+            KaapiTextCompletionConfig,
+            KaapiSTTCompletionConfig,
+            KaapiTTSCompletionConfig,
+        ),
+    ):
+        completion_config, warnings = transform_kaapi_config_to_native(
+            session=session,
+            kaapi_config=completion_config,
+            # Hits only come via the raw response; skip unless requested.
+            include_file_search_results=include_provider_raw_response,
+        )
+        existing = request_metadata or {}
+        existing_warnings = list(existing.get("warnings") or [])
+        request_metadata = {
+            **existing,
+            "warnings": existing_warnings + list(warnings),
+        }
+
+    if (
+        isinstance(completion_config, NativeCompletionConfig)
+        and completion_config.type == "tts"
+    ):
+        _substitute_detected_language_marker(
+            completion_config.params, detected_language, job_id
+        )
+
+    resolved_config_blob = ConfigBlob(
+        completion=completion_config,
+        prompt_template=config_blob.prompt_template,
+        input_guardrails=config_blob.input_guardrails,
+        output_guardrails=config_blob.output_guardrails,
+    )
+    return resolved_config_blob, request_metadata
+
+
+def _upload_stt_input(session: Session, query: QueryParams, ctx: _CallContext) -> None:
+    """Upload STT input audio to S3 and overwrite `llm_call.input` with the URI.
+
+    Failures are non-fatal: the job proceeds and the provider still gets the original input.
+    """
+    if not (
+        isinstance(query.input, AudioInput)
+        and query.input.content.format in ("base64", "url")
+        and ctx.llm_call_id
+    ):
+        return
+    try:
+        if query.input.content.format == "url":
+            stt_bytes, dl_error = download_audio_bytes(query.input.content.value)
+            if dl_error or not stt_bytes:
+                raise ValueError(dl_error or "Empty audio bytes from URL")
+            # Rewrite to base64 in-place so the provider resolve path
+            # reuses these bytes instead of issuing a second HTTP download.
+            query.input.content.value = base64.b64encode(stt_bytes).decode()
+            query.input.content.format = "base64"
+        else:
+            stt_bytes = base64.b64decode(query.input.content.value)
+
+        storage = get_cloud_storage(session, ctx.project_id)
+        s3_url = upload_audio_bytes_to_s3(
+            storage,
+            stt_bytes,
+            ctx.llm_call_id,
+            query.input.content.mime_type,
+            LlmAudioKindEnum.STT,
+        )
+        if s3_url:
+            stt_input_record = json.dumps(
+                {
+                    "type": "audio",
+                    "format": "uri",
+                    "mime_type": query.input.content.mime_type,
+                    "size_bytes": len(stt_bytes),
+                    "uri": s3_url,
+                }
+            )
+            update_llm_call_input(session, ctx.llm_call_id, stt_input_record)
+            logger.info(
+                f"[_upload_stt_input] STT audio uploaded to S3 | llm_call_id={ctx.llm_call_id}"
+            )
+        else:
+            logger.warning(
+                f"[_upload_stt_input] STT S3 upload failed | llm_call_id={ctx.llm_call_id}"
+            )
+    except Exception as e:
+        logger.warning(
+            f"[_upload_stt_input] STT S3 upload error, continuing: {e} | llm_call_id={ctx.llm_call_id}",
+            exc_info=True,
+        )
+
+
+def _upload_tts_output(output: AudioOutput, ctx: _CallContext) -> dict | None:
+    """Upload base64 TTS audio to S3. Returns the URI-form row content, or None to keep base64."""
+    try:
+        with Session(engine) as s3_session:
+            storage = get_cloud_storage(s3_session, ctx.project_id)
+        tts_bytes = base64.b64decode(output.content.value)
+        s3_url = upload_audio_bytes_to_s3(
+            storage,
+            tts_bytes,
+            ctx.llm_call_id,
+            output.content.mime_type,
+            LlmAudioKindEnum.TTS,
+        )
+        if s3_url:
+            output.content.uri = s3_url
+            logger.info(
+                f"[_upload_tts_output] TTS audio uploaded to S3 | llm_call_id={ctx.llm_call_id}"
+            )
+            return {
+                "type": "audio",
+                "content": {
+                    "format": "uri",
+                    "value": s3_url,
+                    "mime_type": output.content.mime_type,
+                },
+            }
+        logger.warning(
+            f"[_upload_tts_output] TTS S3 upload failed, keeping base64 | llm_call_id={ctx.llm_call_id}"
+        )
+    except Exception as e:
+        logger.warning(
+            f"[_upload_tts_output] TTS S3 upload error, keeping base64: {e} | llm_call_id={ctx.llm_call_id}",
+            exc_info=True,
+        )
+    return None
+
+
+def _update_call_record(
+    response: LLMCallResponse, db_content: dict | None, ctx: _CallContext
+) -> None:
+    """Write the provider response onto the `LlmCall` row. Failures are logged, not raised."""
+    if not ctx.llm_call_id:
+        return
+    with Session(engine) as session, ctx.span("llm.update_call_record") as update_span:
+        try:
+            update_llm_call_response(
+                session,
+                llm_call_id=ctx.llm_call_id,
+                provider_response_id=response.response.provider_response_id,
+                content=db_content,
+                usage=response.usage.model_dump(),
+                conversation_id=response.response.conversation_id,
+            )
+        except Exception as e:
+            update_span.record_exception(e)
+            update_span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+            logger.error(
+                f"[_update_call_record] Failed to update LLM call record: {e} | "
+                f"llm_call_id={ctx.llm_call_id}",
+                exc_info=True,
+            )
+
+
 def execute_llm_call(
     *,
     config: LLMCallConfig,
@@ -501,8 +1208,10 @@ def execute_llm_call(
     request_metadata: dict | None,
     langfuse_credentials: dict | None,
     include_provider_raw_response: bool = False,
+    include_guardrail_metadata: bool = False,
     chain_id: UUID | None = None,
     detected_language: str | None = None,
+    record_call: bool = True,
 ) -> BlockResult:
     """Execute a single LLM call. Shared by /llm/call and /llm/chain.
 
@@ -510,57 +1219,24 @@ def execute_llm_call(
 
     Args:
         detected_language: Language code detected by STT (used to replace {{detected}} marker in TTS)
+        record_call: When False the call is not production traffic — no `LlmCall`
+            row is written, no AI spans are emitted and no LLM metrics are
+            recorded. Used by evaluation runs.
     """
-
-    config_blob: ConfigBlob | None = None
-    llm_call_id: UUID | None = None
-    trace_id = correlation_id.get()
+    ctx = _CallContext(
+        job_id=job_id,
+        project_id=project_id,
+        organization_id=organization_id,
+        chain_id=chain_id,
+        trace_id=correlation_id.get(),
+        record_call=record_call,
+    )
 
     try:
         with Session(engine) as session:
-            with tracer.start_as_current_span("llm.resolve_config") as cfg_span:
-                _set_traceability_attributes(
-                    cfg_span,
-                    job_id=job_id,
-                    chain_id=chain_id,
-                    trace_id=trace_id,
-                    project_id=project_id,
-                    organization_id=organization_id,
-                )
-                cfg_span.set_attribute("llm.config.is_stored", config.is_stored_config)
-                if config.is_stored_config:
-                    cfg_span.set_attribute("llm.config.id", str(config.id))
-                    cfg_span.set_attribute("llm.config.version", str(config.version))
-                    config_crud = ConfigVersionCrud(
-                        session=session, project_id=project_id, config_id=config.id
-                    )
-                    config_blob, error = resolve_config_blob(config_crud, config)
-                    if error:
-                        cfg_span.set_status(trace.Status(trace.StatusCode.ERROR, error))
-                        return BlockResult(error=error)
-                else:
-                    config_blob = config.blob
-                    try:
-                        validate_blob_model_or_raise(session, config_blob)
-                    except HTTPException as e:
-                        cfg_span.set_status(
-                            trace.Status(trace.StatusCode.ERROR, e.detail)
-                        )
-                        return BlockResult(error=e.detail)
-
-            completion_config = config_blob.completion
-            if (
-                isinstance(
-                    completion_config,
-                    (KaapiSTTCompletionConfig, KaapiTTSCompletionConfig),
-                )
-                and completion_config.provider is None
-            ):
-                completion_config.provider = resolve_default_audio_provider(
-                    session=session,
-                    project_id=project_id,
-                    organization_id=organization_id,
-                )
+            config_blob, error = _load_config_blob(session, config, ctx)
+            if error:
+                return BlockResult(error=error)
 
             original_input_value = (
                 query.input.content.value
@@ -573,361 +1249,58 @@ def execute_llm_call(
                 interpolated = template.replace("{{input}}", query.input.content.value)
                 query.input.content.value = interpolated
 
-            with tracer.start_as_current_span("llm.guardrails.input") as guard_span:
-                _set_traceability_attributes(
-                    guard_span,
-                    job_id=job_id,
-                    chain_id=chain_id,
-                    trace_id=trace_id,
-                    project_id=project_id,
-                    organization_id=organization_id,
-                )
-                query, input_error, guardrail_direct_response = apply_input_guardrails(
+            request_metadata, guardrail_result = _run_input_guardrails(
+                session,
+                config=config,
+                config_blob=config_blob,
+                query=query,
+                request_metadata=request_metadata,
+                original_input_value=original_input_value,
+                include_guardrail_metadata=include_guardrail_metadata,
+                ctx=ctx,
+            )
+            if guardrail_result is not None:
+                return guardrail_result
+
+            if config_blob.completion.type == Provider.PROXY.value:
+                return _execute_proxy_call(
+                    session,
+                    config=config,
                     config_blob=config_blob,
                     query=query,
-                    job_id=job_id,
-                    project_id=project_id,
-                    organization_id=organization_id,
-                )
-                if guardrail_direct_response is not None:
-                    # Runs before the Kaapi->native transform, so params may be
-                    # a typed model (Kaapi/proxy variants) rather than a dict.
-                    completion_params = config_blob.completion.params
-                    guardrail_model = (
-                        completion_params.get("model")
-                        if isinstance(completion_params, dict)
-                        else getattr(completion_params, "model", None)
-                    )
-                    guardrail_usage = Usage(
-                        input_tokens=0,
-                        output_tokens=0,
-                        total_tokens=0,
-                    )
-                    llm_response = LLMCallResponse(
-                        response=LLMResponse(
-                            provider_response_id=str(job_id),
-                            provider=str(config_blob.completion.provider),
-                            model=str(guardrail_model or ""),
-                            output=TextOutput(
-                                content=TextContent(value=guardrail_direct_response)
-                            ),
-                        ),
-                        usage=guardrail_usage,
-                    )
-                    if original_input_value is not None:
-                        query.input.content.value = original_input_value
-                    llm_call_id = save_rephrase_guardrail_call(
-                        session=session,
-                        query=query,
-                        config=config,
-                        request_metadata=request_metadata,
-                        config_blob=config_blob,
-                        guardrail_direct_response=guardrail_direct_response,
-                        job_id=job_id,
-                        project_id=project_id,
-                        organization_id=organization_id,
-                        chain_id=chain_id,
-                    )
-                    return BlockResult(
-                        response=llm_response,
-                        usage=guardrail_usage,
-                        metadata=request_metadata,
-                        llm_call_id=llm_call_id,
-                    )
-                if input_error:
-                    guard_span.set_status(
-                        trace.Status(trace.StatusCode.ERROR, input_error)
-                    )
-                    return BlockResult(error=input_error)
-            # proxy branch, bypass execution of API CAll
-            if config_blob.completion.type == Provider.PROXY.value:
-                if not isinstance(query.input, TextInput):
-                    return BlockResult(
-                        error="Proxy completion only supports text input"
-                    )
-                client_llm_url = str(config_blob.completion.params.client_llm_url)
-                if not client_llm_url:
-                    return BlockResult(error="Proxy config missing client_llm_url")
-                try:
-                    validate_callback_url(client_llm_url)
-                except ValueError as e:
-                    if isinstance(e.__cause__, socket.gaierror):
-                        logger.warning(
-                            f"[execute_llm_call] DNS resolution failed during proxy "
-                            f"SSRF check; allowing request to proceed | "
-                            f"url={client_llm_url}, err={e}"
-                        )
-                    else:
-                        logger.warning(
-                            f"[execute_llm_call] Proxy URL rejected by SSRF guard | "
-                            f"url={client_llm_url}, err={e}"
-                        )
-                        return BlockResult(
-                            error=f"[KAAPI] Proxy URL rejected: {str(e)}"
-                        )
-
-                creds = get_provider_credential(
-                    session=session,
-                    org_id=organization_id,
-                    project_id=project_id,
-                    provider=Provider.PROXY.value,
-                )
-                if not creds or not creds.get("api_key"):
-                    return BlockResult(
-                        error="Proxy credentials not registered for project"
-                    )
-
-                try:
-                    llm_call_request = LLMCallRequest(
-                        query=query,
-                        config=config,
-                        request_metadata=request_metadata,
-                    )
-                    llm_call = create_llm_call(
-                        session,
-                        request=llm_call_request,
-                        job_id=job_id,
-                        project_id=project_id,
-                        organization_id=organization_id,
-                        resolved_config=config_blob,
-                        original_provider=Provider.PROXY.value,
-                        chain_id=chain_id,
-                    )
-                    llm_call_id = llm_call.id
-                except Exception as e:
-                    logger.error(
-                        f"[execute_llm_call] Failed to create proxy LLM call record: {e} | job_id={job_id}",
-                        exc_info=True,
-                    )
-                    return BlockResult(
-                        error=f"Failed to create LLM call record: {str(e)}"
-                    )
-
-                record_llm_call_started(
-                    provider=Provider.PROXY.value,
-                    model="",
-                    operation="chat",
-                    organization_id=organization_id,
-                    project_id=project_id,
-                )
-                proxy_started_at = time.perf_counter()
-                proxy_data: dict | None = None
-
-                with tracer.start_as_current_span("llm.proxy.execute") as proxy_span:
-                    _set_traceability_attributes(
-                        proxy_span,
-                        job_id=job_id,
-                        llm_call_id=llm_call_id,
-                        chain_id=chain_id,
-                        trace_id=trace_id,
-                        project_id=project_id,
-                        organization_id=organization_id,
-                    )
-                    proxy_span.set_attribute("llm.provider", Provider.PROXY.value)
-                    proxy_span.set_attribute("llm.proxy.url", client_llm_url)
-
-                    try:
-                        with suppress_http_instrumentation():
-                            with httpx.Client(timeout=60.0) as client:
-                                resp = client.post(
-                                    client_llm_url,
-                                    headers={
-                                        "Authorization": f"Bearer {creds['api_key']}",
-                                        "Content-Type": "application/json",
-                                        "Accept": "application/json",
-                                    },
-                                    json={"input": query.input.content.value},
-                                )
-                                resp.raise_for_status()
-                                proxy_data = resp.json()
-                    except httpx.HTTPError as e:
-                        proxy_span.record_exception(e)
-                        proxy_span.set_status(
-                            trace.Status(trace.StatusCode.ERROR, str(e))
-                        )
-                        record_llm_call_finished(
-                            provider=Provider.PROXY.value,
-                            model="",
-                            operation="chat",
-                            duration_ms=(time.perf_counter() - proxy_started_at) * 1000,
-                            error=True,
-                            organization_id=organization_id,
-                            project_id=project_id,
-                        )
-                        logger.error(
-                            f"[execute_llm_call] Proxy call failed: {e} | job_id={job_id}, url={client_llm_url}",
-                            exc_info=True,
-                        )
-                        return BlockResult(
-                            error=f"Proxy call failed: {str(e)}",
-                            llm_call_id=llm_call_id,
-                        )
-
-                try:
-                    proxy_output_text = proxy_data["output"][0]["content"][0]["text"]
-                except (KeyError, IndexError, TypeError) as e:
-                    logger.error(
-                        f"[execute_llm_call] Malformed proxy response: {e} | job_id={job_id}",
-                        exc_info=True,
-                    )
-                    return BlockResult(
-                        error="Proxy returned an unexpected response structure",
-                        llm_call_id=llm_call_id,
-                    )
-                proxy_model = str(proxy_data.get("model") or "")
-                provider_response_id = str(proxy_data.get("id") or job_id)
-                raw_usage = proxy_data.get("usage") or {}
-                proxy_usage = Usage(
-                    input_tokens=int(raw_usage.get("input_tokens") or 0),
-                    output_tokens=int(raw_usage.get("output_tokens") or 0),
-                    total_tokens=int(raw_usage.get("total_tokens") or 0),
+                    request_metadata=request_metadata,
+                    original_input_value=original_input_value,
+                    include_guardrail_metadata=include_guardrail_metadata,
+                    ctx=ctx,
                 )
 
-                proxy_response = LLMCallResponse(
-                    response=LLMResponse(
-                        provider_response_id=provider_response_id,
-                        provider=Provider.PROXY.value,
-                        model=proxy_model,
-                        output=TextOutput(content=TextContent(value=proxy_output_text)),
-                    ),
-                    usage=proxy_usage,
-                )
-
-                try:
-                    update_llm_call_response(
-                        session,
-                        llm_call_id=llm_call_id,
-                        provider_response_id=provider_response_id,
-                        content=proxy_response.response.output.model_dump(),
-                        usage=proxy_usage.model_dump(),
-                        conversation_id=None,
-                    )
-                except Exception as e:
-                    logger.error(
-                        f"[execute_llm_call] Failed to update proxy LLM call record: {e} | llm_call_id={llm_call_id}",
-                        exc_info=True,
-                    )
-                # sentry emit metrics
-                record_llm_call_finished(
-                    provider=Provider.PROXY.value,
-                    model=proxy_model,
-                    operation="chat",
-                    duration_ms=(time.perf_counter() - proxy_started_at) * 1000,
-                    input_tokens=proxy_usage.input_tokens,
-                    output_tokens=proxy_usage.output_tokens,
-                    total_tokens=proxy_usage.total_tokens,
-                    error=False,
-                    organization_id=organization_id,
-                    project_id=project_id,
-                )
-
-                result = BlockResult(
-                    response=proxy_response,
-                    llm_call_id=llm_call_id,
-                    usage=proxy_usage,
-                    metadata=request_metadata,
-                )
-
-                with tracer.start_as_current_span(
-                    "llm.guardrails.output"
-                ) as out_guard_span:
-                    _set_traceability_attributes(
-                        out_guard_span,
-                        job_id=job_id,
-                        llm_call_id=llm_call_id,
-                        chain_id=chain_id,
-                        trace_id=trace_id,
-                        project_id=project_id,
-                        organization_id=organization_id,
-                    )
-                    result, output_error = apply_output_guardrails(
-                        config_blob=config_blob,
-                        result=result,
-                        job_id=job_id,
-                        project_id=project_id,
-                        organization_id=organization_id,
-                        input_text=original_input_value,
-                    )
-                    if output_error:
-                        out_guard_span.set_status(
-                            trace.Status(trace.StatusCode.ERROR, output_error)
-                        )
-                        return BlockResult(error=output_error, llm_call_id=llm_call_id)
-
-                return result
-
-            completion_config = config_blob.completion
-            original_provider = completion_config.provider
-
-            if isinstance(
-                completion_config,
-                (
-                    KaapiTextCompletionConfig,
-                    KaapiSTTCompletionConfig,
-                    KaapiTTSCompletionConfig,
-                ),
-            ):
-                completion_config, warnings = transform_kaapi_config_to_native(
-                    session=session, kaapi_config=completion_config
-                )
-                existing = request_metadata or {}
-                existing_warnings = list(existing.get("warnings") or [])
-                request_metadata = {
-                    **existing,
-                    "warnings": existing_warnings + list(warnings),
-                }
-
-            if (
-                isinstance(completion_config, NativeCompletionConfig)
-                and completion_config.type == "tts"
-            ):
-                _substitute_detected_language_marker(
-                    completion_config.params, detected_language, job_id
-                )
+            original_provider = config_blob.completion.provider
+            resolved_config_blob, request_metadata = _to_native_config(
+                session,
+                config_blob=config_blob,
+                request_metadata=request_metadata,
+                include_provider_raw_response=include_provider_raw_response,
+                detected_language=detected_language,
+                job_id=job_id,
+            )
+            completion_config = resolved_config_blob.completion
             model_name = str(completion_config.params.get("model") or "")
 
-            resolved_config_blob = ConfigBlob(
-                completion=completion_config,
-                prompt_template=config_blob.prompt_template,
-                input_guardrails=config_blob.input_guardrails,
-                output_guardrails=config_blob.output_guardrails,
-            )
-
-            with tracer.start_as_current_span("llm.create_call_record") as create_span:
-                _set_traceability_attributes(
-                    create_span,
-                    job_id=job_id,
-                    chain_id=chain_id,
-                    trace_id=trace_id,
-                    project_id=project_id,
-                    organization_id=organization_id,
-                )
+            with ctx.span("llm.create_call_record") as create_span:
                 create_span.set_attribute(
                     "llm.provider", str(completion_config.provider)
                 )
                 if model_name:
                     create_span.set_attribute("llm.request.model", model_name)
                 try:
-                    llm_call_request = LLMCallRequest(
+                    _create_call_record(
+                        session,
                         query=query,
                         config=config,
                         request_metadata=request_metadata,
-                    )
-                    llm_call = create_llm_call(
-                        session,
-                        request=llm_call_request,
-                        job_id=job_id,
-                        project_id=project_id,
-                        organization_id=organization_id,
                         resolved_config=resolved_config_blob,
                         original_provider=original_provider,
-                        chain_id=chain_id,
-                    )
-                    llm_call_id = llm_call.id
-                    _set_traceability_attributes(create_span, llm_call_id=llm_call_id)
-                    logger.info(
-                        f"[execute_llm_call] Created LLM call record | "
-                        f"llm_call_id={llm_call_id}, job_id={job_id}"
+                        ctx=ctx,
                     )
                 except Exception as e:
                     create_span.record_exception(e)
@@ -939,61 +1312,17 @@ def execute_llm_call(
                     return BlockResult(
                         error=f"Failed to create LLM call record: {str(e)}"
                     )
-
-            # Upload STT input audio to S3 and overwrite llm_call.input with the URI.
-            # Failures are non-fatal: the job proceeds and the provider still gets the original input.
-            if (
-                isinstance(query.input, AudioInput)
-                and query.input.content.format in ("base64", "url")
-                and llm_call_id
-            ):
-                try:
-                    if query.input.content.format == "url":
-                        stt_bytes, dl_error = download_audio_bytes(
-                            query.input.content.value
-                        )
-                        if dl_error or not stt_bytes:
-                            raise ValueError(dl_error or "Empty audio bytes from URL")
-                        # Rewrite to base64 in-place so the provider resolve path
-                        # reuses these bytes instead of issuing a second HTTP download.
-                        query.input.content.value = base64.b64encode(stt_bytes).decode()
-                        query.input.content.format = "base64"
-                    else:
-                        stt_bytes = base64.b64decode(query.input.content.value)
-
-                    storage = get_cloud_storage(session, project_id)
-                    subfolder_path = f"orgs/{organization_id}/{project_id}/audio/stt"
-                    s3_url = upload_audio_bytes_to_s3(
-                        storage,
-                        stt_bytes,
-                        llm_call_id,
-                        query.input.content.mime_type,
-                        subfolder_path,
+                if ctx.llm_call_id:
+                    _set_traceability_attributes(
+                        create_span, llm_call_id=ctx.llm_call_id
                     )
-                    if s3_url:
-                        stt_input_record = json.dumps(
-                            {
-                                "type": "audio",
-                                "format": "uri",
-                                "mime_type": query.input.content.mime_type,
-                                "size_bytes": len(stt_bytes),
-                                "uri": s3_url,
-                            }
-                        )
-                        # overwrite with s3 uri
-                        update_llm_call_input(session, llm_call_id, stt_input_record)
-                        logger.info(
-                            f"[execute_llm_call] STT audio uploaded to S3 | llm_call_id={llm_call_id}"
-                        )
-                    else:
-                        logger.warning(
-                            f"[execute_llm_call] STT S3 upload failed | llm_call_id={llm_call_id}"
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"[execute_llm_call] STT S3 upload error, continuing: {e} | llm_call_id={llm_call_id}",
-                        exc_info=True,
+                    logger.info(
+                        f"[execute_llm_call] Created LLM call record | "
+                        f"llm_call_id={ctx.llm_call_id}, job_id={job_id}"
                     )
+
+            _upload_stt_input(session, query, ctx)
+
             # thirdparty llm_call begins, client init thru llm/registry.py
             try:
                 provider_instance = get_llm_provider(
@@ -1003,101 +1332,59 @@ def execute_llm_call(
                     organization_id=organization_id,
                 )
             except ValueError as ve:
-                return BlockResult(error=str(ve), llm_call_id=llm_call_id)
+                return BlockResult(error=str(ve), llm_call_id=ctx.llm_call_id)
 
-        conversation_id = None
-        if query.conversation and query.conversation.id:
-            conversation_id = query.conversation.id
+        conversation_id = (query.conversation and query.conversation.id) or None
 
-        operation = "chat"
         provider_name = str(completion_config.provider)
-        model_name = str(completion_config.params.get("model") or "")
         completion_type = str(completion_config.type or "")
-        # sentry emit
-        record_llm_call_started(
-            provider=provider_name,
-            model=model_name,
-            operation=operation,
-            organization_id=organization_id,
-            project_id=project_id,
-        )
-        provider_started_at = time.perf_counter()
-        response = None
-        error = None
+        ctx.metrics_started(provider=provider_name, model=model_name)
 
         ai_span_name = f"chat {model_name}" if model_name else f"chat {provider_name}"
-        with tracer.start_as_current_span(ai_span_name) as ai_span:
+        with ctx.span(ai_span_name) as ai_span:
             ai_span.set_attribute("sentry.op", "gen_ai.chat")
-            _set_traceability_attributes(
-                ai_span,
-                job_id=job_id,
-                llm_call_id=llm_call_id,
-                chain_id=chain_id,
-                trace_id=trace_id,
-                project_id=project_id,
-                organization_id=organization_id,
-            )
             if completion_type:
                 ai_span.set_attribute("completion_type", completion_type)
             set_gen_ai_request_attributes(
                 ai_span,
                 provider=provider_name,
                 model=model_name,
-                operation=operation,
+                operation=_LLM_OPERATION,
                 organization_id=organization_id,
                 project_id=project_id,
                 params=completion_config.params or {},
             )
 
             try:
-                with resolved_input_context(query.input) as resolved_input:
-                    with tracer.start_as_current_span(
-                        "llm.provider.execute"
-                    ) as provider_span:
-                        _set_traceability_attributes(
-                            provider_span,
-                            job_id=job_id,
-                            llm_call_id=llm_call_id,
-                            chain_id=chain_id,
-                            trace_id=trace_id,
-                            project_id=project_id,
-                            organization_id=organization_id,
-                        )
-                        provider_span.set_attribute("llm.provider", provider_name)
-                        provider_span.set_attribute(
-                            "llm.operation.name", "provider.execute"
-                        )
-                        if completion_type:
-                            provider_span.set_attribute(
-                                "completion_type", completion_type
-                            )
-                        if model_name:
-                            provider_span.set_attribute("llm.request.model", model_name)
-                        # real blocking network call to referenced provider
-                        response, error = _execute_provider_call(
-                            func=provider_instance.execute,
-                            completion_config=completion_config,
-                            query=query,
-                            credentials=langfuse_credentials,
-                            session_id=conversation_id,
-                            organization_id=organization_id,
-                            project_id=project_id,
-                            telemetry_span=provider_span,
-                            resolved_input=resolved_input,
-                            include_provider_raw_response=include_provider_raw_response,
-                        )
+                with (
+                    resolved_input_context(query.input) as resolved_input,
+                    ctx.span("llm.provider.execute") as provider_span,
+                ):
+                    provider_span.set_attribute("llm.provider", provider_name)
+                    provider_span.set_attribute(
+                        "llm.operation.name", "provider.execute"
+                    )
+                    if completion_type:
+                        provider_span.set_attribute("completion_type", completion_type)
+                    if model_name:
+                        provider_span.set_attribute("llm.request.model", model_name)
+                    # real blocking network call to referenced provider
+                    response, error = _execute_provider_call(
+                        func=provider_instance.execute,
+                        completion_config=completion_config,
+                        query=query,
+                        credentials=langfuse_credentials,
+                        session_id=conversation_id,
+                        organization_id=organization_id,
+                        project_id=project_id,
+                        telemetry_span=provider_span,
+                        resolved_input=resolved_input,
+                        include_provider_raw_response=include_provider_raw_response,
+                    )
             except ValueError as ve:
                 ai_span.set_status(trace.Status(trace.StatusCode.ERROR, str(ve)))
-                record_llm_call_finished(
-                    provider=provider_name,
-                    model=model_name,
-                    operation=operation,
-                    duration_ms=(time.perf_counter() - provider_started_at) * 1000,
-                    error=True,
-                    organization_id=organization_id,
-                    project_id=project_id,
-                )
-                return BlockResult(error=str(ve), llm_call_id=llm_call_id)
+                ctx.metrics_finished(provider=provider_name, model=model_name)
+                return BlockResult(error=str(ve), llm_call_id=ctx.llm_call_id)
 
             if response:
                 set_gen_ai_response_attributes(ai_span, response=response)
@@ -1106,149 +1393,42 @@ def execute_llm_call(
                     trace.Status(trace.StatusCode.ERROR, error or "Unknown error")
                 )
 
-        if response:
-            db_content = (
-                response.response.output.model_dump()
-                if response.response.output
-                else None
+        if not response:
+            ctx.metrics_finished(provider=provider_name, model=model_name)
+            error_message = error or "Unknown error occurred"
+            # ponytail: every provider failure retries, even deterministic 4xx (unbilled).
+            # Upgrade: have providers return the error category.
+            return BlockResult(
+                error=error_message, llm_call_id=ctx.llm_call_id, retryable=True
             )
 
-            tts_output = response.response.output
-            if (
-                isinstance(tts_output, AudioOutput)
-                and tts_output.content.format == "base64"
-                and llm_call_id
-            ):
-                try:
-                    with Session(engine) as s3_session:
-                        storage = get_cloud_storage(s3_session, project_id)
-                    tts_bytes = base64.b64decode(tts_output.content.value)
-                    subfolder_path = f"orgs/{organization_id}/{project_id}/audio/tts"
-                    s3_url = upload_audio_bytes_to_s3(
-                        storage,
-                        tts_bytes,
-                        llm_call_id,
-                        tts_output.content.mime_type,
-                        subfolder_path,
-                    )
-                    if s3_url:
-                        tts_output.content.uri = s3_url
-                        db_content = {
-                            "type": "audio",
-                            "content": {
-                                "format": "uri",
-                                "value": s3_url,
-                                "mime_type": tts_output.content.mime_type,
-                            },
-                        }
-                        logger.info(
-                            f"[execute_llm_call] TTS audio uploaded to S3 | llm_call_id={llm_call_id}"
-                        )
-                    else:
-                        logger.warning(
-                            f"[execute_llm_call] TTS S3 upload failed, keeping base64 | llm_call_id={llm_call_id}"
-                        )
-                except Exception as e:
-                    logger.warning(
-                        f"[execute_llm_call] TTS S3 upload error, keeping base64: {e} | llm_call_id={llm_call_id}",
-                        exc_info=True,
-                    )
-
-            with Session(engine) as session:
-                if llm_call_id:
-                    with tracer.start_as_current_span(
-                        "llm.update_call_record"
-                    ) as update_span:
-                        _set_traceability_attributes(
-                            update_span,
-                            job_id=job_id,
-                            llm_call_id=llm_call_id,
-                            chain_id=chain_id,
-                            trace_id=trace_id,
-                            project_id=project_id,
-                            organization_id=organization_id,
-                        )
-                        try:
-                            update_llm_call_response(
-                                session,
-                                llm_call_id=llm_call_id,
-                                provider_response_id=response.response.provider_response_id,
-                                content=db_content,
-                                usage=response.usage.model_dump(),
-                                conversation_id=response.response.conversation_id,
-                            )
-                        except Exception as e:
-                            update_span.record_exception(e)
-                            update_span.set_status(
-                                trace.Status(trace.StatusCode.ERROR, str(e))
-                            )
-                            logger.error(
-                                f"[execute_llm_call] Failed to update LLM call record: {e} | "
-                                f"llm_call_id={llm_call_id}",
-                                exc_info=True,
-                            )
-
-            duration_ms = (time.perf_counter() - provider_started_at) * 1000
-            record_llm_call_finished(
-                provider=provider_name,
-                model=model_name,
-                operation=operation,
-                duration_ms=duration_ms,
-                input_tokens=response.usage.input_tokens,
-                output_tokens=response.usage.output_tokens,
-                total_tokens=response.usage.total_tokens,
-                error=False,
-                organization_id=organization_id,
-                project_id=project_id,
-            )
-
-            result = BlockResult(
-                response=response,
-                llm_call_id=llm_call_id,
-                usage=response.usage,
-                metadata=request_metadata,
-            )
-
-            with tracer.start_as_current_span(
-                "llm.guardrails.output"
-            ) as out_guard_span:
-                _set_traceability_attributes(
-                    out_guard_span,
-                    job_id=job_id,
-                    llm_call_id=llm_call_id,
-                    chain_id=chain_id,
-                    trace_id=trace_id,
-                    project_id=project_id,
-                    organization_id=organization_id,
-                )
-                result, output_error = apply_output_guardrails(
-                    config_blob=config_blob,
-                    result=result,
-                    job_id=job_id,
-                    project_id=project_id,
-                    organization_id=organization_id,
-                    input_text=original_input_value,
-                )
-                if output_error:
-                    out_guard_span.set_status(
-                        trace.Status(trace.StatusCode.ERROR, output_error)
-                    )
-                    return BlockResult(error=output_error, llm_call_id=llm_call_id)
-
-            return result
-
-        duration_ms = (time.perf_counter() - provider_started_at) * 1000
-        record_llm_call_finished(
+        output = response.response.output
+        db_content = output.model_dump() if output else None
+        if (
+            isinstance(output, AudioOutput)
+            and output.content.format == "base64"
+            and ctx.llm_call_id
+        ):
+            db_content = _upload_tts_output(output, ctx) or db_content
+        _update_call_record(response, db_content, ctx)
+        ctx.metrics_finished(
             provider=provider_name,
             model=model_name,
-            operation=operation,
-            duration_ms=duration_ms,
-            error=True,
-            organization_id=organization_id,
-            project_id=project_id,
+            usage=response.usage,
         )
-        error_message = error or "Unknown error occurred"
-        return BlockResult(error=error_message, llm_call_id=llm_call_id)
+
+        return _run_output_guardrails(
+            BlockResult(
+                response=response,
+                llm_call_id=ctx.llm_call_id,
+                usage=response.usage,
+                metadata=request_metadata,
+            ),
+            config_blob=config_blob,
+            original_input_value=original_input_value,
+            include_guardrail_metadata=include_guardrail_metadata,
+            ctx=ctx,
+        )
 
     except (Timeout, SoftTimeLimitExceeded):
         raise
@@ -1257,7 +1437,7 @@ def execute_llm_call(
             f"[execute_llm_call] HTTP error: {e.detail} | job_id={job_id}",
             exc_info=True,
         )
-        return BlockResult(error=str(e.detail), llm_call_id=llm_call_id)
+        return BlockResult(error=str(e.detail), llm_call_id=ctx.llm_call_id)
     except Exception as e:
         logger.error(
             f"[execute_llm_call] Unexpected error: {e} | job_id={job_id}",
@@ -1265,7 +1445,7 @@ def execute_llm_call(
         )
         return BlockResult(
             error="Unexpected error occurred",
-            llm_call_id=llm_call_id,
+            llm_call_id=ctx.llm_call_id,
         )
 
 
@@ -1331,6 +1511,7 @@ def execute_job(
                 request_metadata=request.request_metadata,
                 langfuse_credentials=langfuse_credentials,
                 include_provider_raw_response=request.include_provider_raw_response,
+                include_guardrail_metadata=request.include_guardrail_metadata,
             )
 
             logger.info(
@@ -1460,6 +1641,7 @@ def execute_chain_job(
 
     with log_context(
         tag="llm-chain",
+        module=LogModuleEnum.LLM_CHAIN,
         lifecycle="llm.chain.execute_job",
         job_id=job_uuid,
         task_id=task_id,

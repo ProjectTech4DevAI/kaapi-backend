@@ -1,6 +1,3 @@
-import logging
-
-import sentry_sdk
 from asgi_correlation_id.middleware import CorrelationIdMiddleware
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
@@ -8,7 +5,6 @@ from fastapi.routing import APIRoute
 from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.httpx import HttpxIntegration
-from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
@@ -18,8 +14,7 @@ from app.core.config import settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logger import configure_logging
 from app.core.middleware import StripTrailingSlashMiddleware, http_request_logger
-from app.core.sentry_filters import before_send_transaction_filter
-from app.core.telemetry import instrument_app, setup_telemetry
+from app.core.telemetry import init_sentry, instrument_app, setup_telemetry
 from app.load_env import load_environment
 
 # Load environment variables
@@ -27,31 +22,18 @@ load_environment()
 configure_logging(service_name=settings.BACKEND_SERVICE_NAME)
 
 
-if settings.SENTRY_DSN:
-    sentry_sdk.init(
-        dsn=str(settings.SENTRY_DSN),
-        environment=settings.ENVIRONMENT,
-        release=settings.API_VERSION,
-        instrumenter="otel",
-        traces_sample_rate=1.0,
-        enable_logs=True,
-        before_send_transaction=before_send_transaction_filter,
-        integrations=[
-            LoggingIntegration(
-                level=logging.INFO,
-                sentry_logs_level=logging.INFO,
-            ),
-        ],
-        disabled_integrations=[
-            FastApiIntegration(),
-            StarletteIntegration(),
-            SqlalchemyIntegration(),
-            CeleryIntegration(),
-            HttpxIntegration(),
-        ],
-    )
-
-setup_telemetry(service_name=settings.BACKEND_SERVICE_NAME)
+init_sentry(
+    integrations=[],
+    disabled_integrations=[
+        FastApiIntegration(),
+        StarletteIntegration(),
+        SqlalchemyIntegration(),
+        CeleryIntegration(),
+        HttpxIntegration(),
+    ],
+)
+if settings.OTEL_ENABLED:
+    setup_telemetry(service_name=settings.BACKEND_SERVICE_NAME)
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -63,7 +45,11 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     generate_unique_id_function=custom_generate_unique_id,
-    description="**Responsible AI for the development sector**",
+    description=(
+        "**Responsible AI for the development sector**\n\n"
+        "Licensed under AGPL-3.0-or-later.\n\n"
+        "Source code: https://github.com/ProjectTech4DevAI/kaapi-backend/"
+    ),
 )
 
 
@@ -97,7 +83,8 @@ app.include_router(api_v2_router, prefix=settings.API_V2_STR)
 
 register_exception_handlers(app)
 
-instrument_app(app)
+if settings.OTEL_ENABLED:
+    instrument_app(app)
 
 
 # health check endpoint for uptime monitoring
@@ -105,4 +92,5 @@ instrument_app(app)
 async def health() -> dict[str, str | float]:
     return {
         "status": "ok",
+        "sha": settings.GIT_SHA,
     }

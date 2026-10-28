@@ -21,7 +21,7 @@ from app.tests.utils.test_data import (
 )
 
 ITERATIONS_URL = f"{settings.API_V2_STR}/evaluations/iterations"
-_ROUTE_VALIDATE = "app.api.routes.evaluations.iteration_v2.validate_callback_url"
+_ROUTE_VALIDATE = "app.api.routes.evaluations.v2.iteration.validate_callback_url"
 
 
 def _make_dataset(*, db: Session, user_api_key: TestAuthContext) -> EvaluationDataset:

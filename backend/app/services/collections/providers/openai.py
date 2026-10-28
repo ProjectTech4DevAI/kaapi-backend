@@ -47,8 +47,14 @@ class OpenAIProvider(BaseProvider):
                     if doc.file_size_kb is None:
                         doc.file_size_kb = round(tmp.tell() / 1024, 2)
                     tmp.seek(0)
+                    if "." in doc.fname:
+                        filename, extension = doc.fname.rsplit(".", 1)
+                        normalized_fname = f"{filename}.{extension.lower()}"
+                    else:
+                        normalized_fname = doc.fname
                     uploaded = self.client.files.create(
-                        file=(doc.fname, tmp), purpose="assistants"
+                        file=(normalized_fname, tmp),
+                        purpose="assistants",
                     )
             except Exception as err:
                 logger.error(

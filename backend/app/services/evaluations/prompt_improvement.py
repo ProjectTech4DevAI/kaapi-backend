@@ -8,6 +8,7 @@ persists the result as a new config_version.
 import copy
 import json
 import logging
+from typing import cast
 from uuid import UUID
 
 import anthropic
@@ -40,9 +41,17 @@ from app.models.evaluation import (
     EvaluationRun,
     PromptImprovementJobPublic,
     PromptRecommendationJobPublic,
+    TraceData,
+    TraceQuestion,
+    TraceScore,
+    TraceScoreSummary,
 )
 from app.models.job import Job, JobStatus, JobType, JobUpdate
-from app.services.llm.providers.claude import ClaudeProvider, log_anthropic_error
+from app.services.llm.providers.claude import (
+    STOP_REASON_COMPLETE,
+    ClaudeProvider,
+    log_anthropic_error,
+)
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
@@ -50,14 +59,12 @@ logger = logging.getLogger(__name__)
 # Headroom for a full prompt rewrite + JSON wrapper; too low truncates into invalid JSON.
 _LLM_MAX_TOKENS = 16384
 
-# JSON keys expected in the LLM's structured response.
 _LLM_KEY_INSTRUCTIONS = "improved_instructions"
 _LLM_KEY_RATIONALE = "rationale"
 
 # Cap the rationale so it stays a one-line summary in the commit_message.
 _RATIONALE_MAX_LENGTH = 200
 
-# Structured-output schema: guarantees the response is valid JSON with these fields.
 _OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -130,7 +137,6 @@ def validate_improve_prompt(
             detail=f"evaluation_not_completed: run status is '{run.status}', must be '{_COMPLETED_STATUS}'",
         )
     if not run.score_trace_url:
-        # Run exists but a precondition is unmet, so 422 rather than 404.
         raise HTTPException(
             status_code=422,
             detail=(
@@ -139,7 +145,6 @@ def validate_improve_prompt(
             ),
         )
     if run.config_id is None or run.config_version is None:
-        # Both FKs are nullable; without them there's no version to improve.
         raise HTTPException(
             status_code=422,
             detail="source_config_unavailable: run has no config_id/config_version reference",
@@ -402,9 +407,9 @@ def execute_prompt_improvement(
             traces = load_json_from_object_store(
                 storage=storage, url=run.score_trace_url
             )
-            if traces is None:
+            if not isinstance(traces, list):
                 raise RuntimeError(
-                    "trace_download_failed: could not retrieve trace file from storage"
+                    "trace_download_failed: could not retrieve trace list from storage"
                 )
 
             improved_instructions, rationale = _draft_improved_prompt(
@@ -480,8 +485,6 @@ def execute_prompt_improvement(
             )
             raise
         except Exception as exc:
-            # HTTPException (from re-validation) carries the clean detail; everything
-            # else falls back to str(exc).
             error_message = getattr(exc, "detail", None) or str(exc)
             logger.error(
                 f"[execute_prompt_improvement] Failed | job_id={job_id} "
@@ -532,6 +535,25 @@ def _target_config_from_params(config_params: dict) -> dict:
     }
 
 
+_UPSTREAM_ERROR_DETAIL_MAX_LENGTH = 500
+
+
+def _anthropic_error_detail(exc: Exception) -> str:
+    """Return what Anthropic actually sent back, for the operator-facing message."""
+    detail = ""
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            detail = (response.text or "").strip()
+        except Exception:  # httpx raises if the body was never read
+            detail = ""
+    if not detail:
+        detail = str(exc).strip()
+    if len(detail) > _UPSTREAM_ERROR_DETAIL_MAX_LENGTH:
+        detail = detail[:_UPSTREAM_ERROR_DETAIL_MAX_LENGTH] + "..."
+    return detail or type(exc).__name__
+
+
 def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
     """Run the Anthropic structured-output call shared by both draft variants and
     return (improved_instructions, rationale).
@@ -542,7 +564,6 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
     per-cause log lines are kept so operators can still triage the fault.
     """
     if not settings.ANTHROPIC_API_KEY:
-        # Missing platform key is a server-side misconfiguration, not an upstream fault.
         raise RuntimeError(
             "prompt_generation_failed: the platform Anthropic key "
             "(ANTHROPIC_API_KEY) is not configured"
@@ -557,6 +578,13 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
             messages=[{"role": "user", "content": user_message_text}],
             output_config={"format": {"type": "json_schema", "schema": _OUTPUT_SCHEMA}},
         )
+        # A max_tokens cut-off still parses under the schema, so stop_reason is
+        # the only signal — never persist a half-written prompt as a version.
+        if response.stop_reason != STOP_REASON_COMPLETE:
+            raise RuntimeError(
+                "prompt_generation_failed: the model stopped before finishing "
+                f"the draft (stop_reason={response.stop_reason}) — retry"
+            )
         text = next(b.text for b in response.content if b.type == "text")
         data = json.loads(text)
         return data[_LLM_KEY_INSTRUCTIONS], data[_LLM_KEY_RATIONALE]
@@ -565,51 +593,109 @@ def _call_prompt_drafting_llm(*, user_message_text: str) -> tuple[str, str]:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic authentication failed — "
-            "verify the platform API key is valid and not expired"
-        )
+            "verify the platform API key is valid and not expired | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
     except anthropic.RateLimitError as exc:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic rate limit exceeded — "
-            "wait at least 1 minute and retry"
-        )
+            "wait at least 1 minute and retry | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
     except anthropic.APITimeoutError as exc:
         # Must come before APIConnectionError — APITimeoutError is a subclass.
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: Anthropic request timed out — "
-            "retry. If persistent, contact Kaapi"
-        )
+            "retry. If persistent, contact Kaapi | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
     except anthropic.APIConnectionError as exc:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: network error reaching Anthropic — "
-            "check connectivity. If persistent, contact Kaapi"
-        )
+            "check connectivity. If persistent, contact Kaapi | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
 
     except anthropic.APIStatusError as exc:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             f"prompt_generation_failed: Anthropic returned HTTP {exc.status_code} — "
-            "retry or contact Kaapi if persistent"
-        )
+            "retry or contact Kaapi if persistent | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
+
+    # The truncation guard above already raised a precise message; without this
+    # re-raise the generic handler below flattens it.
+    except RuntimeError:
+        raise
 
     except Exception as exc:
         log_anthropic_error(exc, fn_name="_call_prompt_drafting_llm")
         raise RuntimeError(
             "prompt_generation_failed: unexpected error during prompt generation — "
-            "contact Kaapi if persistent"
+            "contact Kaapi if persistent | "
+            f"anthropic_response: {_anthropic_error_detail(exc)}"
+        ) from exc
+
+
+def _trace_score_summary(score: TraceScore) -> TraceScoreSummary:
+    return cast(
+        TraceScoreSummary,
+        {k: v for k, v in score.items() if k not in ("data_type", "verdict")},
+    )
+
+
+def _format_traces_for_brief(traces: list[TraceData]) -> list[TraceQuestion]:
+    """Group repeated attempts per question and keep only what the brief reads.
+
+    A 500-row Hindi judge run blew past Claude's 1M-token context: every repeat
+    (duplication factor) re-shipped question + ground truth, and trace_id /
+    data_type / verdict / guardrail bookkeeping rode along for nothing. Rows the
+    guardrails rewrote substitute `input_to_llm` / `output_from_llm`, since the
+    prompt under repair acts on what the LLM actually saw and produced, not on
+    the user-facing text. Not `crud.evaluations.core.group_traces_by_question_id`:
+    that is the export shape (keeps trace_ids/category, scores as parallel lists)
+    and rejects v1 traces that have no question_id.
+    """
+    grouped: dict[int | str | tuple[str, str], TraceQuestion] = {}
+    for trace in traces:
+        question = trace.get("input_to_llm") or trace.get("question", "")
+        ground_truth = trace.get("ground_truth_answer", "")
+        question_id = trace.get("question_id")
+        # v1 traces may lack question_id; the text pair is the next-best identity.
+        key = question_id if question_id is not None else (question, ground_truth)
+        entry = grouped.setdefault(
+            key,
+            {
+                "question_id": question_id,
+                "question": question,
+                "ground_truth_answer": ground_truth,
+                "attempts": [],
+            },
         )
+        entry["attempts"].append(
+            {
+                "llm_answer": trace.get("output_from_llm")
+                or trace.get("llm_answer", ""),
+                "scores": [
+                    _trace_score_summary(score) for score in trace.get("scores", [])
+                ],
+            }
+        )
+    return list(grouped.values())
 
 
 def _draft_improved_prompt(
     *,
     current_instructions: str,
     config_params: dict,
-    traces: list | dict,
+    traces: list[TraceData],
     is_judge_run: bool = False,
 ) -> tuple[str, str]:
     """Rewrite the prompt from a run's score traces.
@@ -621,9 +707,13 @@ def _draft_improved_prompt(
     """
     if is_judge_run:
         trace_description = (
-            " from an LLM-as-judge run. Each trace has the fields: `question`, "
-            "`ground_truth_answer`, `llm_answer`, and `scores`. `scores` is a list of "
-            "metric objects; each has `name`, `value`, and `comment`, where:\n"
+            " from an LLM-as-judge run. Each entry is one dataset question with the "
+            "fields: `question_id`, `question`, `ground_truth_answer`, and `attempts`. "
+            "`attempts` is a list, one per time the question was run, each with "
+            "`llm_answer` and `scores`; a wide spread of scores across a question's "
+            "attempts means the prompt yields inconsistent behaviour on it. `scores` "
+            "is a list of metric objects; each has `name`, `value`, and `comment`, "
+            "where:\n"
             f"- `name` is one of `{GROUND_TRUTH_SCORE_NAME}`, `{PROMPT_SCORE_NAME}`, "
             f"or `{KNOWLEDGE_BASE_SCORE_NAME}`.\n"
             "- `value` is the metric's score, an integer from 0 (worst) to 5 (best). Metrics that "
@@ -665,9 +755,10 @@ def _draft_improved_prompt(
         ]
     else:
         trace_description = (
-            ". Each trace has the fields: `question`, `ground_truth_answer`, "
-            "`llm_answer`, `category`, and `scores` (a list of scoring objects with "
-            "`name`, `value`, and `unscoreable`)."
+            ". Each entry is one dataset question with the fields: `question`, "
+            "`ground_truth_answer`, and `attempts`, a list, one per time the "
+            "question was run, each with `llm_answer` and `scores` (a list of "
+            "scoring objects with `name`, `value`, and `unscoreable`)."
         )
         task_steps = [
             "1. Identify the answers that performed poorly — those with low scores or "
@@ -689,11 +780,14 @@ def _draft_improved_prompt(
         f"sentence (≤ {_RATIONALE_MAX_LENGTH} characters): what you changed and why."
     )
     target_config = _target_config_from_params(config_params)
+    traces_json = json.dumps(
+        _format_traces_for_brief(traces), ensure_ascii=False, separators=(",", ":")
+    )
 
     user_message_text = (
         "You are a prompt engineer. Below is a JSON array of evaluation traces"
         f"{trace_description}\n\n"
-        f"## Evaluation traces\n```\n{json.dumps(traces)}\n```\n\n"
+        f"## Evaluation traces\n```\n{traces_json}\n```\n\n"
         f"## Current system prompt\n```\n{current_instructions}\n```\n\n"
         "## Target configuration (read-only — do NOT change any of these)\n"
         f"```\n{json.dumps(target_config)}\n```\n\n"

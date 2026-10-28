@@ -6,6 +6,7 @@ from typing import Any, Literal, Self
 
 from pydantic import (
     EmailStr,
+    Field,
     HttpUrl,
     PostgresDsn,
     computed_field,
@@ -46,6 +47,7 @@ class Settings(BaseSettings):
 
     PROJECT_NAME: str
     API_VERSION: str = "0.5.0"
+    GIT_SHA: str = "unknown"
     SENTRY_DSN: HttpUrl | None = None
     DISCORD_STATS_WEBHOOK_URL: HttpUrl | None = None
     POSTGRES_SERVER: str
@@ -157,6 +159,12 @@ class Settings(BaseSettings):
     BACKEND_SERVICE_NAME: str = "kaapi-backend"
     CRON_SERVICE_NAME: str = "kaapi-cron"
 
+    SENTRY_TRACES_SAMPLE_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
+    SENTRY_SEND_DEFAULT_PII: bool = False
+    SENTRY_ERROR_SAMPLE_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
+    SENTRY_PROFILE_SESSION_SAMPLE_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
+    SENTRY_PROFILE_LIFECYCLE: Literal["manual", "trace"] = "trace"
+
     # Threshold Request Rate per minute
     THRESHOLD_LLM_CALL_RATE: int = 15
     THRESHOLD_COLLECTIONS_RATE: int = 3
@@ -196,10 +204,8 @@ class Settings(BaseSettings):
     EVAL_FAST_STALL_THRESHOLD_MINUTES: int = 15
     PENDING_JOB_QUERY_TIMEOUT_MS: int = 1000
 
-    # AI-assisted prompt improvement settings.
-    # See docs/srd-ai-prompt-improvement.md for the full design rationale.
-    # Platform-owned Anthropic key shared by every org/project for this feature,
-    # so prompt improvement works without per-project credentials.
+    LLM_CALL_RETENTION_HOURS: int = Field(default=168, ge=1)
+
     ANTHROPIC_API_KEY: str = ""
     PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"
 
@@ -222,6 +228,10 @@ class Settings(BaseSettings):
     EVAL_ITERATION_CEILING_DELTA_THRESHOLD: float = 0.05
     # Consecutive low-delta rounds required before the loop stops as ceiling_reached.
     EVAL_ITERATION_CEILING_CONSECUTIVE_ROUNDS: int = 3
+    # Cron skips loops dispatched within this window
+    EVAL_ITERATION_DISPATCH_COOLDOWN_MINUTES: int = 10
+    # Loops stalled longer are reaped; must exceed 25 hard-cap rounds worst-case time
+    EVAL_ITERATION_STALL_THRESHOLD_HOURS: int = 48
 
     EVAL_JUDGE_MODEL: str = "gpt-5.6-luna"
 

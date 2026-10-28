@@ -16,24 +16,21 @@ from typing import Any
 import openai
 from openai import OpenAI
 from sqlmodel import Session
-from tenacity import (
-    before_sleep_log,
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_random_exponential,
-)
 
 from app.core.config import settings
-from app.crud.evaluations.response_parsing import extract_response_text
-from app.crud.evaluations.score import (
+from app.crud.evaluations.judge_prompts import (
     GROUND_TRUTH_JUDGE_PROMPT,
-    GROUND_TRUTH_SCORE_NAME,
     JUDGE_OUTPUT_INSTRUCTION,
     JUDGE_SYSTEM_PREAMBLE,
     KNOWLEDGE_BASE_JUDGE_PROMPT,
-    KNOWLEDGE_BASE_SCORE_NAME,
     PROMPT_JUDGE_PROMPT,
+)
+from app.crud.evaluations.latency import elapsed_ms, start_timer
+from app.crud.evaluations.response_parsing import extract_response_text
+from app.crud.evaluations.retry import retry_openai_call
+from app.crud.evaluations.score import (
+    GROUND_TRUTH_SCORE_NAME,
+    KNOWLEDGE_BASE_SCORE_NAME,
     PROMPT_SCORE_NAME,
 )
 from app.services.llm.mappers import map_kaapi_to_openai_params
@@ -125,28 +122,7 @@ METRIC_REGISTRY: dict[JudgeMetricEnum, JudgeMetricSpec] = {
 }
 
 
-# Per-call retry mechanism (mirrors the fast-eval Responses/Embeddings stages).
-_RETRY_MAX_ATTEMPTS = 3
-_RETRY_BASE_DELAY_SECONDS = 1.0
-_RETRY_MAX_DELAY_SECONDS = 30.0
-
-_RETRYABLE_OPENAI_ERRORS: tuple[type[Exception], ...] = (
-    openai.RateLimitError,
-    openai.APITimeoutError,
-    openai.APIConnectionError,
-    openai.InternalServerError,
-)
-
-# reraise=True so the call-site handler sees the original OpenAIError.
-_retry_judge_call = retry(
-    retry=retry_if_exception_type(_RETRYABLE_OPENAI_ERRORS),
-    wait=wait_random_exponential(
-        multiplier=_RETRY_BASE_DELAY_SECONDS, max=_RETRY_MAX_DELAY_SECONDS
-    ),
-    stop=stop_after_attempt(_RETRY_MAX_ATTEMPTS),
-    before_sleep=before_sleep_log(logger, logging.INFO),
-    reraise=True,
-)
+_retry_judge_call = retry_openai_call(logger)
 
 
 @dataclass
@@ -163,6 +139,7 @@ class JudgeResult:
 
     metrics: dict[JudgeMetricEnum, MetricScore]
     usage: dict[str, int]
+    latency_ms: float | None = None
 
 
 def _required_input_union(metrics: list[JudgeMetricSpec]) -> list[JudgeInputEnum]:
@@ -329,7 +306,9 @@ def judge_row(
     }
 
     try:
+        started = start_timer()
         response = _create_judge_response(openai_client, params)
+        latency_ms = elapsed_ms(started)
     except openai.OpenAIError as exc:
         status = getattr(exc, "status_code", None)
         # 5xx is provider-side (alert-worthy); 4xx/None is caller/Kaapi-side noise.
@@ -352,4 +331,4 @@ def judge_row(
     }
 
     metric_scores = _parse_judge_output(extract_response_text(response), applicable)
-    return JudgeResult(metrics=metric_scores, usage=usage)
+    return JudgeResult(metrics=metric_scores, usage=usage, latency_ms=latency_ms)

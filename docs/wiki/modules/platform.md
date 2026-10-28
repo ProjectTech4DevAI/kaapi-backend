@@ -11,16 +11,19 @@ All paths relative to `backend/app/`.
 | Feature flags | `api/routes/features.py` | `feature_flag` (`models/feature_flag.py`) | `core/feature_flags/`, `crud/feature_flag.py` |
 | Languages | `api/routes/languages.py` | `global.languages` (`models/language.py`) | `crud/language.py` |
 | Credentials | `api/routes/credentials.py` | `credential` (`models/credentials.py`) | `crud/credentials.py`; provider keys per org/project; envelope encryption (KMS-wrapped data key + AES-GCM), prefix-versioned ciphertexts |
-| Model config | `api/routes/model_config.py` | `model_config` (`models/model_config.py`) | `crud/model_config.py` |
+| Model config | `api/routes/model_config.py` | `model_config` (`models/model_config.py`) | `crud/model_config.py`; cost: `estimate_model_cost` (single lookup) vs `list_active_model_pricing` + `compute_cost_from_pricing` (one batched lookup — use in loops/aggregations, e.g. `services/analytics/aggregation.py`) |
 | Bucket providers | — | reuses `credential` (`google-gcp`) | `services/buckets/` — global registry + resolver (`providers/`), GCS V4 signed + bulk-signed URLs with a 24h expiry cap (`providers/gcs.py`, cap in `providers/base.py`), attachment path selection + URL resolution (`attachments.py`) |
-| Cron | `api/routes/cron.py` | — | triggers batch polling (`crud/evaluations/cron.py`) |
+| Cron | `api/routes/cron.py` | — | triggers batch polling (`crud/evaluations/cron.py`, `crud/assessment/cron.py` — the latter polls `method == RUN` assessments only; API-client BATCH runs are driven by their own Celery self-re-enqueue); `llm_call` retention redaction (`services/llm/retention.py`, see [llm-call.md](llm-call.md)) |
 | Jobs | — | `job` (`models/job.py`), `batch_job` (`models/batch_job.py`) | `crud/jobs.py`, `crud/job/`, `services/job_monitoring.py` |
 
 ## Credential contracts
 
-`core/providers.py` holds one Pydantic model per `Provider` (`OpenAICredentials`,
-`LangfuseCredentials`, `GoogleCredentials`, …) and `PROVIDER_CONFIGS` maps each
-provider to its model plus its sensitive (masked) fields. Those models are the
+`models/provider_credentials.py` holds the `Provider` enum, one Pydantic model
+per provider (`OpenAICredentials`, `LangfuseCredentials`, `GoogleCredentials`, …),
+the `ProviderCredentials` union and `ProviderConfig`. `core/providers.py` holds
+the logic: `PROVIDER_CONFIGS` maps each provider to its model plus its sensitive
+(masked) fields, and `validate_provider` / `parse_provider_credentials` /
+`mask_credential_fields` use it. Those models are the
 single source of truth:
 
 - `ProviderConfig.required_fields` is derived from the model, so a schema change
@@ -34,6 +37,9 @@ single source of truth:
   auth fields); they round-trip via `model_dump(exclude_unset=True)`. A model
   declares the fields Kaapi itself requires — `google` routes to Google AI
   Studio (`LLMProvider._registry`), so it declares `api_key` only.
+- `GoogleGcpCredentials.sa_key` is `dict[str, JsonValue]`, so a stringified
+  JSON key is rejected at create/update. Rows saved before this as a string
+  must be re-saved as an object.
 - Responses (`CredsPublic.credential`, `GET /credentials/provider/{provider}`)
   are masked, so they are typed `CredentialPayload` (`dict[str, JsonValue]`)
   rather than a provider model.

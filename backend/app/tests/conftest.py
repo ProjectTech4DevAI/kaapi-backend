@@ -78,6 +78,22 @@ def seed_baseline(
     yield
 
 
+@pytest.fixture
+def aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Dummy AWS creds for moto. setenv (not os.environ) so they unwind after the test."""
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
+    monkeypatch.setenv("AWS_SECURITY_TOKEN", "testing")
+    monkeypatch.setenv("AWS_SESSION_TOKEN", "testing")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", settings.AWS_DEFAULT_REGION)
+
+
+@pytest.fixture
+def no_retry_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tenacity binds nap.sleep at import (incl. nested decorators), so patch time.sleep."""
+    monkeypatch.setattr("tenacity.nap.time.sleep", lambda _seconds: None)
+
+
 @pytest.fixture(scope="function")
 def client(db: Session) -> Generator[TestClient, None, None]:
     app.dependency_overrides[get_db] = lambda: db

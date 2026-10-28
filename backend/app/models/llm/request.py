@@ -5,7 +5,10 @@ from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from pydantic import (
+    ConfigDict,
+    Discriminator,
     HttpUrl,
+    Tag,
     SerializerFunctionWrapHandler,
     model_serializer,
     model_validator,
@@ -81,6 +84,17 @@ class TextLLMParams(ParamSerialization, SQLModel):
         description=(
             "Model-specific reasoning summary preference. " "Use null/None to disable."
         ),
+    )
+    thinking: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Anthropic adaptive-thinking container, forwarded to the provider as-is "
+            "(e.g. {'type': 'enabled', 'budget_tokens': 4096})"
+        ),
+    )
+    thinking_level: Literal["minimal", "low", "medium", "high"] | None = Field(
+        default=None,
+        description="Google thinking level for thinking-capable Gemini models",
     )
     temperature: float | None = Field(
         default=0.1,
@@ -453,7 +467,52 @@ CompletionConfig = Annotated[
 
 
 class Validator(SQLModel):
+    """Reference to a validator config saved in the guardrails service."""
+
     validator_config_id: UUID
+    is_enabled: bool = Field(
+        default=True,
+        description="When false, the reference is neither fetched nor run.",
+    )
+
+
+class InlineValidatorTypeEnum(str, Enum):
+    """Validator types productised for tenants; mirrors GET /guardrails."""
+
+    GENDER_ASSUMPTION_BIAS = "gender_assumption_bias"
+    PII_REMOVER = "pii_remover"
+    TOPIC_RELEVANCE_LLM = "topic_relevance_llm"
+    ULI_SLUR_MATCH = "uli_slur_match"
+
+
+class InlineValidator(SQLModel):
+    """Validator spec stored directly in the config blob.
+
+    Per-type params (on_fail, languages, ban_list_id, ...) are extras validated by the
+    guardrails service, so they are allowed through untouched here.
+    """
+
+    model_config = ConfigDict(extra="allow")  # pyright: ignore[reportAssignmentType]
+
+    type: InlineValidatorTypeEnum = Field(..., description="Guardrails validator type")
+    is_enabled: bool = Field(
+        default=True,
+        description="When false, the spec is kept in the blob but not run.",
+    )
+
+
+def _guardrail_entry_tag(value: Any) -> str:
+    if isinstance(value, dict):
+        return "ref" if "validator_config_id" in value else "inline"
+    return "ref" if hasattr(value, "validator_config_id") else "inline"
+
+
+# Explicit tag: InlineValidator allows extras, so a smart union could also
+# swallow a reference dict that happens to carry a `type`.
+GuardrailEntry = Annotated[
+    Annotated[Validator, Tag("ref")] | Annotated[InlineValidator, Tag("inline")],
+    Discriminator(_guardrail_entry_tag),
+]
 
 
 class PromptTemplate(SQLModel):
@@ -489,12 +548,12 @@ class ConfigBlob(SQLModel):
         description="Prompt template with {{input}} placeholder to wrap around the user input",
     )
 
-    input_guardrails: list[Validator] | None = Field(
+    input_guardrails: list[GuardrailEntry] | None = Field(
         default=None,
         description="Guardrails applied to validate/sanitize the input before the LLM call",
     )
 
-    output_guardrails: list[Validator] | None = Field(
+    output_guardrails: list[GuardrailEntry] | None = Field(
         default=None,
         description="Guardrails applied to validate/sanitize the output after the LLM call",
     )
@@ -588,6 +647,10 @@ class LLMCallRequest(SQLModel):
     include_provider_raw_response: bool = Field(
         default=False,
         description="Whether to include the raw LLM provider response in the output",
+    )
+    include_guardrail_metadata: bool = Field(
+        default=False,
+        description="Include per-validator guardrail metadata (input/output text, pass/fail) in the response",
     )
     request_metadata: dict[str, Any] | None = Field(
         default=None,
@@ -761,6 +824,16 @@ class LlmCall(SQLModel, table=True):
             JSONB,
             nullable=True,
             comment="Configuration: {config_id, config_version} for stored config OR {config_blob} for ad-hoc config",
+        ),
+    )
+
+    metadata_: dict[str, Any] | None = Field(
+        default=None,
+        sa_column=sa.Column(
+            "metadata",
+            JSONB,
+            nullable=True,
+            comment="Future-proof extensibility catch-all (e.g. guardrail results)",
         ),
     )
 

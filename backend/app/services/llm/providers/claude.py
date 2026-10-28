@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 FILES_API_BETA = "files-api-2025-04-14"
 
+# Any other stop_reason (max_tokens, refusal) means the text is partial.
+STOP_REASON_COMPLETE = "end_turn"
+
 
 def log_anthropic_error(exc: Exception, *, fn_name: str, context: str = "") -> None:
     """Log an Anthropic `messages.create` failure at the right level/tag.

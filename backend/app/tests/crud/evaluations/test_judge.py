@@ -8,6 +8,7 @@ cannot supply. The single external boundary — the OpenAI judge completion — 
 mocked at `_create_judge_response`; parsing/prompt-composition helpers are pure.
 """
 
+import itertools
 import json
 from dataclasses import replace
 from types import SimpleNamespace
@@ -30,11 +31,13 @@ from app.crud.evaluations.judge import (
     build_judge_params,
     judge_row,
 )
-from app.crud.evaluations.score import (
+from app.crud.evaluations.judge_prompts import (
     GROUND_TRUTH_JUDGE_PROMPT,
-    GROUND_TRUTH_SCORE_NAME,
     JUDGE_SYSTEM_PREAMBLE,
     KNOWLEDGE_BASE_JUDGE_PROMPT,
+)
+from app.crud.evaluations.score import (
+    GROUND_TRUTH_SCORE_NAME,
     KNOWLEDGE_BASE_SCORE_NAME,
     PROMPT_SCORE_NAME,
 )
@@ -351,6 +354,26 @@ class TestJudgeRow:
             "output_tokens": 8,
             "total_tokens": 23,
         }
+
+    def test_returns_latency_ms(self, db: Session) -> None:
+        # Patch the module's `time`, never global perf_counter: tenacity uses it.
+        with patch(
+            "app.crud.evaluations.judge._create_judge_response",
+            return_value=_judge_response(
+                {"ground_truth": {"score": 5, "reasoning": "same meaning"}}
+            ),
+        ), patch("app.crud.evaluations.latency.time") as mock_time:
+            mock_time.perf_counter.side_effect = itertools.chain(
+                [1.0, 1.35], itertools.repeat(1.35)
+            )
+            result = judge_row(
+                openai_client=SimpleNamespace(),
+                base_params=self._base_params(db),
+                metrics=_ALL_METRICS,
+                inputs=self._gt_inputs(),
+            )
+
+        assert result.latency_ms == pytest.approx(350.0)
 
     def test_chunkless_row_judges_ground_truth_only(self, db: Session) -> None:
         captured: dict = {}

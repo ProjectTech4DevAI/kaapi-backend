@@ -146,6 +146,7 @@ backend/app/
 │   │   ├── langfuse.py                 dataset run · traces · fetch trace scores
 │   │   ├── score.py                    TypedDicts for score shapes
 │   │   ├── cost.py                     token → USD against model_config
+│   │   ├── latency.py                  avg OpenAI call latency per stage (fast only)
 │   │   ├── cron.py                     process_all_pending_evaluations (entrypoint)
 │   │   ├── cron_utils.py               shared STT/TTS poll loop + helpers
 │   │   └── dataset.py                  dataset CRUD + CSV S3 helpers
@@ -193,7 +194,7 @@ Everything below the run diverges per family.
 ```mermaid
 flowchart TD
     EDS["evaluation_dataset\n(type, name, langfuse_dataset_id,\nobject_store_url, dataset_metadata)"]
-    ER["evaluation_run\n(type, status, config_id+version,\nproviders, batch_job_id,\nembedding_batch_job_id, score, cost)"]
+    ER["evaluation_run\n(type, status, config_id+version,\nproviders, batch_job_id,\nembedding_batch_job_id, score, cost,\nlatency)"]
     EDS -->|"dataset_id"| ER
 
     ER -->|type=text| TX["scored via Langfuse traces\n(no Kaapi results table)"]
@@ -212,7 +213,8 @@ flowchart TD
   advances (`pending → processing → completed | failed`). Holds the config reference
   (text: `config_id + config_version`), `providers` (STT/TTS model list),
   `batch_job_id` + `embedding_batch_job_id`, the aggregate `score` JSONB, a
-  per-stage `cost` JSONB, and `score_trace_url` (S3 cache of per-trace scores).
+  per-stage `cost` JSONB, a per-stage `latency` JSONB (fast runs only), and
+  `score_trace_url` (S3 cache of per-trace scores).
 - **`batch_job`** — one row per provider batch submission. `config` JSONB
   carries everything needed to reconnect a batch to its run
   (`evaluation_run_id`, `stt_provider`/`tts_provider`, `gemini_audio_files`,
@@ -620,6 +622,7 @@ erDiagram
         int embedding_batch_job_id FK "text only"
         jsonb score "summary_scores (+ traces cache)"
         jsonb cost "response + embedding USD"
+        jsonb latency "fast only: avg OpenAI call ms per stage"
         string score_trace_url "S3 cache of per-trace scores"
     }
     stt_sample {
@@ -662,6 +665,14 @@ erDiagram
   (response + embedding), priced against `global.model_config` at **batch**
   rates ([crud/evaluations/cost.py](../../backend/app/crud/evaluations/cost.py));
   if cost computation fails, it is ignored and never blocks completion.
+- **Latency** (`evaluation_run.latency`, fast text runs only; NULL for batch) is
+  the average wall time of successful OpenAI calls per stage (response,
+  embedding, judge) plus a call-weighted overall `avg_latency_ms` and
+  `call_count` ([crud/evaluations/latency.py](../../backend/app/crud/evaluations/latency.py)).
+  Timed in the worker thread around the retry-wrapped call, so retries and
+  backoff of eventually-successful rows are included. Kept separate from `cost`
+  so neither failure can drop the other; like cost, a failure never blocks
+  completion.
 - **Completion notification** — transitioning a _text_ run to a terminal status
   enqueues `send_eval_completion_notification` (email to project members). STT
   and TTS runs do **not** currently emit this notification.
@@ -708,10 +719,18 @@ built for processing many requests at once). The accepted downsides:
    resolution. So an eval does **not** run the same code that production
    will run; "passes eval" does not guarantee "behaves identically in prod".
 2. **Slow feedback loop.** Batch completion happens within a window, with no
-   guaranteed timing; there's no latency signal and no quick way to iterate on a
+   guaranteed timing; batch has no per-call latency signal and no quick way to iterate on a
    prompt.
 
 ### 12.2 Fast evals (planned — design not finalised)
+
+> **Status update.** Fast mode now shares `/llm/call`'s code: it calls
+> `services/llm/jobs.py::execute_llm_call` in-process with `record_call=False`, not the HTTP
+> endpoint, so it gets the same config resolution, mappers, provider routing and guardrails
+> without touching the `high_priority` queue or writing `LlmCall` rows. The rest of this
+> section is the original design note and is stale in places; see
+> `docs/wiki/modules/evaluations.md` for what is built. (§3.4's claim that eval does not reuse
+> the mappers has been false for a while too.) Batch mode is unchanged and still bypasses it.
 
 The planned fix for the slow feedback loop in 12.1: a **"fast evals"** mode for
 _small_ golden sets that runs over the live **`/llm/call`** endpoint instead of a
@@ -721,7 +740,8 @@ how thorough the scoring is: the user must be able to _see results fast_ and
 iterate, instead of waiting out a batch window. Benefits, because it actually
 calls `/llm/call`:
 
-- a real **latency** signal (not possible with batch),
+- a real **latency** signal (not possible with batch) — shipped as
+  `evaluation_run.latency` (per-stage avg OpenAI call latency),
 - **matches production** — same code path, so failures that only happen in
   production show up during the eval, and the difference described in 12.1 goes
   away,

@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from fastapi import HTTPException
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -13,6 +14,7 @@ from app.crud.llm import save_rephrase_guardrail_call
 from app.models import Job, JobType
 from app.models.llm.request import (
     ConfigBlob,
+    InlineValidator,
     LLMCallConfig,
     LlmCall,
     NativeCompletionConfig,
@@ -20,11 +22,17 @@ from app.models.llm.request import (
     Validator,
 )
 from app.services.llm.guardrails import (
+    GuardrailsOutcome,
+    apply_guardrails,
     list_validators_config,
+    proxy_guardrails_request,
     run_guardrails_validation,
+    summarize_validator_results,
 )
 from app.tests.utils.utils import get_project
 
+
+pytestmark = pytest.mark.usefixtures("no_retry_backoff")
 
 TEST_JOB_ID = uuid.uuid4()
 TEST_TEXT = "hello world"
@@ -58,9 +66,11 @@ def test_run_guardrails_validation_success(mock_client_cls) -> None:
     assert kwargs["json"]["input"] == TEST_TEXT
     assert kwargs["json"]["validators"] == TEST_CONFIG
     assert kwargs["json"]["request_id"] == str(TEST_JOB_ID)
-    assert kwargs["json"]["project_id"] == TEST_PROJECT_ID
-    assert kwargs["json"]["organization_id"] == TEST_ORGANIZATION_ID
-    assert kwargs["params"]["suppress_pass_logs"] == "true"
+    assert "project_id" not in kwargs["json"]
+    assert "organization_id" not in kwargs["json"]
+    assert kwargs["headers"]["X-PROJECT-ID"] == str(TEST_PROJECT_ID)
+    assert kwargs["headers"]["X-ORGANIZATION-ID"] == str(TEST_ORGANIZATION_ID)
+    assert kwargs["params"]["suppress_pass_logs"] == "false"
     assert kwargs["headers"]["Authorization"].startswith("Bearer ")
     assert kwargs["headers"]["Content-Type"] == "application/json"
 
@@ -68,8 +78,9 @@ def test_run_guardrails_validation_success(mock_client_cls) -> None:
 @patch("app.services.llm.guardrails.httpx.Client")
 def test_run_guardrails_validation_http_error_bypasses(mock_client_cls) -> None:
     mock_response = MagicMock()
+    mock_response.status_code = 500
     mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-        "bad", request=None, response=None
+        "bad", request=MagicMock(), response=mock_response
     )
 
     mock_client = MagicMock()
@@ -87,6 +98,55 @@ def test_run_guardrails_validation_http_error_bypasses(mock_client_cls) -> None:
     assert result["success"] is False
     assert result["bypassed"] is True
     assert result["data"]["safe_text"] == TEST_TEXT
+
+
+@pytest.mark.parametrize("status_code", [401, 403, 422])
+@patch("app.services.llm.guardrails.httpx.Client")
+def test_run_guardrails_validation_auth_error_fails_closed(
+    mock_client_cls, status_code
+) -> None:
+    mock_response = MagicMock()
+    mock_response.status_code = status_code
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "unauthorized", request=MagicMock(), response=mock_response
+    )
+
+    mock_client = MagicMock()
+    mock_client.post.return_value = mock_response
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    result = run_guardrails_validation(
+        TEST_TEXT,
+        TEST_CONFIG,
+        TEST_JOB_ID,
+        TEST_PROJECT_ID,
+        TEST_ORGANIZATION_ID,
+    )
+
+    assert result["success"] is False
+    assert result.get("bypassed") is False
+    assert "rejected the request" in result["error"]
+
+
+@patch("app.services.llm.guardrails.httpx.Client")
+def test_list_validators_config_auth_error_raises(mock_client_cls) -> None:
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "forbidden", request=MagicMock(), response=mock_response
+    )
+
+    mock_client = MagicMock()
+    mock_client.get.return_value = mock_response
+    mock_client_cls.return_value.__enter__.return_value = mock_client
+
+    with pytest.raises(ValueError, match=r"rejected \(HTTP 403\)"):
+        list_validators_config(
+            input_validator_configs=[Validator(validator_config_id=uuid.uuid4())],
+            output_validator_configs=[],
+            organization_id=1,
+            project_id=1,
+        )
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
@@ -254,6 +314,8 @@ def test_list_validators_config_fetches_input_and_output_by_refs(
     assert second_call_kwargs["params"]["ids"] == [
         str(v.validator_config_id) for v in output_validator_configs
     ]
+    assert first_call_kwargs["headers"]["X-ORGANIZATION-ID"] == "1"
+    assert first_call_kwargs["headers"]["X-PROJECT-ID"] == "1"
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
@@ -273,7 +335,7 @@ def test_list_validators_config_empty_short_circuits_without_http(
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
-def test_list_validators_config_omits_none_query_params(mock_client_cls) -> None:
+def test_list_validators_config_omits_none_tenant(mock_client_cls) -> None:
     input_validator_configs = [Validator(validator_config_id=uuid.uuid4())]
 
     mock_response = MagicMock()
@@ -297,6 +359,8 @@ def test_list_validators_config_omits_none_query_params(mock_client_cls) -> None
     ]
     assert "organization_id" not in kwargs["params"]
     assert "project_id" not in kwargs["params"]
+    assert "X-ORGANIZATION-ID" not in kwargs["headers"]
+    assert "X-PROJECT-ID" not in kwargs["headers"]
 
 
 @patch("app.services.llm.guardrails.httpx.Client")
@@ -316,6 +380,190 @@ def test_list_validators_config_network_error_fails_open(mock_client_cls) -> Non
 
     assert input_guardrails == []
     assert output_guardrails == []
+
+
+def test_summarize_validator_results_extracts_per_validator_fields() -> None:
+    outcome = GuardrailsOutcome(
+        safe_text="My credit card is [REDACTED]",
+        error=None,
+        bypassed=False,
+        rephrase_needed=False,
+        raw={
+            "success": True,
+            "data": {
+                "safe_text": "My credit card is [REDACTED]",
+                "validator_results": [
+                    {
+                        "name": "PIIRemover",
+                        "type": "pii_remover",
+                        "stage": "input",
+                        "order": 1,
+                        "outcome": "FAIL",
+                        "error": "PII detected in the text.",
+                        "input_text": "My credit card is 4111 1111 1111 1111",
+                        "output_text": "My credit card is [REDACTED]",
+                    }
+                ],
+            },
+        },
+    )
+
+    summaries = summarize_validator_results(outcome)
+
+    assert summaries == [
+        {
+            "name": "PIIRemover",
+            "outcome": "FAIL",
+            "error": "PII detected in the text.",
+            "input_text": "My credit card is 4111 1111 1111 1111",
+            "output_text": "My credit card is [REDACTED]",
+        }
+    ]
+
+
+def test_summarize_validator_results_empty_when_raw_has_no_validator_results() -> None:
+    outcome = GuardrailsOutcome(
+        safe_text="hello",
+        error=None,
+        bypassed=True,
+        rephrase_needed=False,
+        raw={},
+    )
+
+    assert summarize_validator_results(outcome) == []
+
+
+_PASS_RESPONSE = {"success": True, "data": {"safe_text": "clean"}}
+
+
+def _ref() -> tuple[Validator, dict[str, Any]]:
+    config_id = uuid4()
+    return Validator(validator_config_id=config_id), {
+        "type": f"fetched_{config_id.hex[:8]}"
+    }
+
+
+def _apply(validators: list, output_text: str | None = None) -> GuardrailsOutcome:
+    return apply_guardrails(
+        text=TEST_TEXT,
+        validators=validators,
+        job_id=TEST_JOB_ID,
+        project_id=TEST_PROJECT_ID,
+        organization_id=TEST_ORGANIZATION_ID,
+        output_text=output_text,
+    )
+
+
+def _assert_noop(outcome: GuardrailsOutcome) -> None:
+    assert outcome.safe_text == TEST_TEXT
+    assert outcome.error is None
+    assert outcome.bypassed is False
+    assert outcome.raw == {}
+    assert outcome.applied is False
+
+
+@patch("app.services.llm.guardrails.run_guardrails_validation")
+@patch("app.services.llm.guardrails.list_validators_config")
+class TestApplyGuardrails:
+    def test_disabled_entries_are_neither_fetched_nor_posted(
+        self, mock_fetch, mock_run
+    ) -> None:
+        enabled_ref, enabled_row = _ref()
+        disabled_ref, _ = _ref()
+        disabled_ref.is_enabled = False
+        mock_fetch.return_value = ([enabled_row], [])
+        mock_run.return_value = _PASS_RESPONSE
+
+        _apply(
+            [
+                disabled_ref,
+                enabled_ref,
+                InlineValidator(type="uli_slur_match", is_enabled=False),
+            ]
+        )
+
+        fetched_ids = [
+            v.validator_config_id
+            for v in mock_fetch.call_args.kwargs["input_validator_configs"]
+        ]
+        assert fetched_ids == [enabled_ref.validator_config_id]
+        assert mock_run.call_args.args[1] == [enabled_row]
+
+    @pytest.mark.parametrize(
+        "validators",
+        [
+            [],
+            None,
+            [
+                Validator(validator_config_id=uuid4(), is_enabled=False),
+                InlineValidator(type="pii_remover", is_enabled=False),
+            ],
+        ],
+        ids=["empty", "none", "all_disabled"],
+    )
+    def test_nothing_enabled_is_noop_without_http(
+        self, mock_fetch, mock_run, validators
+    ) -> None:
+        outcome = _apply(validators)
+
+        _assert_noop(outcome)
+        mock_fetch.assert_not_called()
+        mock_run.assert_not_called()
+
+    def test_inline_only_skips_fetch_and_posts(self, mock_fetch, mock_run) -> None:
+        mock_run.return_value = _PASS_RESPONSE
+
+        outcome = _apply([InlineValidator(type="pii_remover")])
+
+        mock_fetch.assert_not_called()
+        assert mock_run.call_args.args[1] == [{"type": "pii_remover", "stage": "input"}]
+        assert outcome.safe_text == "clean"
+
+    def test_inline_spec_posted_shape(self, mock_fetch, mock_run) -> None:
+        mock_run.return_value = _PASS_RESPONSE
+
+        _apply(
+            [
+                InlineValidator(
+                    type="gender_assumption_bias",
+                    stage="output",
+                    categories=["healthcare"],
+                ),
+                InlineValidator(type="pii_remover", on_fail="exception"),
+            ]
+        )
+
+        assert mock_run.call_args.args[1] == [
+            {
+                "type": "gender_assumption_bias",
+                "stage": "input",
+                "categories": ["healthcare"],
+            },
+            {"type": "pii_remover", "on_fail": "exception", "stage": "input"},
+        ]
+
+    def test_output_path_sets_output_stage(self, mock_fetch, mock_run) -> None:
+        ref, row = _ref()
+        mock_fetch.return_value = ([], [row])
+        mock_run.return_value = _PASS_RESPONSE
+
+        _apply([ref, InlineValidator(type="pii_remover")], output_text="llm out")
+
+        assert mock_fetch.call_args.kwargs["input_validator_configs"] is None
+        assert mock_run.call_args.args[1] == [
+            row,
+            {"type": "pii_remover", "stage": "output"},
+        ]
+        assert mock_run.call_args.kwargs["output_text"] == "llm out"
+
+    def test_only_ref_missing_upstream_is_noop(self, mock_fetch, mock_run) -> None:
+        ref, _ = _ref()
+        mock_fetch.return_value = ([], [])
+
+        outcome = _apply([ref])
+
+        _assert_noop(outcome)
+        mock_run.assert_not_called()
 
 
 _SAFE_TEXT = "Please rephrase: content not allowed."
@@ -423,3 +671,165 @@ class TestSaveRephraseGuardrailCall:
                 self._call(db, job, request_metadata=metadata)
         _, kwargs = mock_create.call_args
         assert kwargs["request"].request_metadata == metadata
+
+
+class TestGuardrailsOutcomeBlocked:
+    """`blocked` separates a content verdict from a fail-closed auth error."""
+
+    VALIDATORS = [Validator(validator_config_id=uuid.uuid4())]
+
+    def _apply(self, post_result: Any) -> GuardrailsOutcome:
+        config_response = MagicMock()
+        config_response.raise_for_status.return_value = None
+        config_response.json.return_value = {
+            "success": True,
+            "data": [{"type": "uli_slur_match", "stage": "input"}],
+        }
+
+        client = MagicMock()
+        client.get.return_value = config_response
+        if isinstance(post_result, Exception):
+            client.post.side_effect = post_result
+        else:
+            post_response = MagicMock()
+            post_response.raise_for_status.return_value = None
+            post_response.json.return_value = post_result
+            client.post.return_value = post_response
+
+        with patch("app.services.llm.guardrails.httpx.Client") as client_cls:
+            client_cls.return_value.__enter__.return_value = client
+            return apply_guardrails(
+                text=TEST_TEXT,
+                validators=self.VALIDATORS,
+                job_id=TEST_JOB_ID,
+                project_id=TEST_PROJECT_ID,
+                organization_id=TEST_ORGANIZATION_ID,
+            )
+
+    @staticmethod
+    def _http_status_error(status_code: int) -> httpx.HTTPStatusError:
+        response = MagicMock()
+        response.status_code = status_code
+        return httpx.HTTPStatusError("rejected", request=MagicMock(), response=response)
+
+    def test_content_verdict_is_blocked(self) -> None:
+        outcome = self._apply({"success": False, "error": "Unsafe content detected"})
+
+        assert outcome.error == "Unsafe content detected"
+        assert outcome.blocked is True
+
+    @pytest.mark.parametrize("status_code", [401, 403, 422])
+    def test_auth_failure_is_not_blocked(self, status_code: int) -> None:
+        outcome = self._apply(self._http_status_error(status_code))
+
+        assert outcome.error == (
+            f"Guardrails service rejected the request (HTTP {status_code})"
+        )
+        assert outcome.blocked is False
+
+    def test_success_is_not_blocked(self) -> None:
+        outcome = self._apply(
+            {
+                "success": True,
+                "bypassed": False,
+                "data": {"safe_text": TEST_TEXT, "rephrase_needed": False},
+            }
+        )
+
+        assert outcome.error is None
+        assert outcome.blocked is False
+
+    def test_bypassed_is_not_blocked(self) -> None:
+        outcome = self._apply(httpx.ConnectError("guardrails unreachable"))
+
+        assert outcome.bypassed is True
+        assert outcome.blocked is False
+
+
+def _guardrails_response(code: int, body: Any = None) -> httpx.Response:
+    request = httpx.Request("GET", f"{settings.KAAPI_GUARDRAILS_URL}/x")
+    return httpx.Response(code, json=body, request=request)
+
+
+class TestGuardrailsRetry:
+    def _validate(self, *responses: httpx.Response) -> tuple[dict[str, Any], int]:
+        with patch.object(httpx.Client, "post", side_effect=responses) as post:
+            result = run_guardrails_validation(
+                TEST_TEXT,
+                TEST_CONFIG,
+                TEST_JOB_ID,
+                TEST_PROJECT_ID,
+                TEST_ORGANIZATION_ID,
+            )
+        return result, post.call_count
+
+    def test_validation_recovers_from_503(self) -> None:
+        result, calls = self._validate(
+            _guardrails_response(503), _guardrails_response(200, {"success": True})
+        )
+
+        assert result == {"success": True}
+        assert calls == 2
+
+    def test_validation_bypasses_after_exhausting_503s(self) -> None:
+        result, calls = self._validate(*[_guardrails_response(503)] * 4)
+
+        assert result["bypassed"] is True
+        assert calls == 4
+
+    def test_validation_auth_error_is_not_retried(self) -> None:
+        result, calls = self._validate(
+            _guardrails_response(401), _guardrails_response(200, {"success": True})
+        )
+
+        assert result["auth_error"] is True
+        assert calls == 1
+
+    def test_list_validators_config_retries_connect_error(self) -> None:
+        validator = {"type": "uli_slur_match", "stage": "input"}
+        outcomes = [
+            httpx.ConnectError("refused"),
+            _guardrails_response(200, {"success": True, "data": [validator]}),
+        ]
+        with patch.object(httpx.Client, "get", side_effect=outcomes):
+            input_guardrails, _ = list_validators_config(
+                input_validator_configs=[Validator(validator_config_id=uuid4())],
+                output_validator_configs=[],
+                organization_id=TEST_ORGANIZATION_ID,
+                project_id=TEST_PROJECT_ID,
+            )
+
+        assert input_guardrails == [validator]
+
+    def test_proxy_connect_failure_retries_then_502(self) -> None:
+        with patch.object(
+            httpx.Client, "request", side_effect=httpx.ConnectError("refused")
+        ) as request:
+            with pytest.raises(HTTPException) as exc:
+                proxy_guardrails_request(
+                    "POST",
+                    "/validators/configs/",
+                    organization_id=TEST_ORGANIZATION_ID,
+                    project_id=TEST_PROJECT_ID,
+                    json_body={"type": "pii_remover"},
+                )
+
+        assert exc.value.status_code == 502
+        assert request.call_count == 4
+
+    def test_proxy_upstream_5xx_is_passed_through_without_retry(self) -> None:
+        with patch.object(
+            httpx.Client,
+            "request",
+            return_value=_guardrails_response(503, {"detail": "down"}),
+        ) as request:
+            status, body = proxy_guardrails_request(
+                "GET",
+                "/validators/configs/",
+                organization_id=TEST_ORGANIZATION_ID,
+                project_id=TEST_PROJECT_ID,
+            )
+
+        assert status == 503
+        assert body == {"detail": "down"}
+        assert request.call_count == 1

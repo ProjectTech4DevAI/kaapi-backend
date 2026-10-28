@@ -1,6 +1,8 @@
 from enum import StrEnum
 from typing import Literal, Union
 
+from sqlalchemy import text
+
 
 class Provider(StrEnum):
     OPENAI = "openai"
@@ -175,8 +177,8 @@ def normalize_bcp47_language(value: str) -> str:
     return value
 
 
-DEFAULT_STT_MODEL = "gemini-2.5-pro"
-DEFAULT_TTS_MODEL = "gemini-3.1-flash-tts-preview"
+DEFAULT_STT_MODEL = "gemini-3.8-flash"
+DEFAULT_TTS_MODEL = "gemini-3.8-flash-tts"
 DEFAULT_TTS_VOICE = "Kore"
 DEFAULT_RAG_MODEL = "gpt-4o"
 
@@ -197,23 +199,26 @@ DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS = 16384
 DEFAULT_SARVAM_STT_MODEL = "saaras:v3"
 DEFAULT_SARVAM_TTS_MODEL = "bulbul:v3"
 DEFAULT_ELEVENLABS_STT_MODEL = "scribe_v2"
-DEFAULT_ELEVENLABS_TTS_MODEL = "eleven_v3"
+DEFAULT_ELEVENLABS_TTS_MODEL = "eleven_v4"
 
-# BCP-47 to language tag -> Gemini ISO 639-1 code (Indic + English)
+# Kaapi BCP-47 tag -> Gemini TTS language. Full locales, not bare ISO codes:
+# en-IN keeps the Indian accent where "en" does not. Unlisted tags fall back
+# to auto-detect.
 BCP47_LOCALE_TO_GEMINI_LANG: dict[str, str] = {
-    "en-IN": "en",
-    "hi-IN": "hi",
-    "bn-IN": "bn",
-    "ta-IN": "ta",
-    "te-IN": "te",
-    "mr-IN": "mr",
-    "gu-IN": "gu",
-    "kn-IN": "kn",
-    "ml-IN": "ml",
-    "pa-IN": "pa",
-    "od-IN": "or",
-    # "as-IN": "as", //not supported by Gemini
-    "sd-IN": "sd",
+    "en-IN": "en-IN",
+    "hi-IN": "hi-IN",
+    "bn-IN": "bn-IN",
+    "ta-IN": "ta-IN",
+    "te-IN": "te-IN",
+    "mr-IN": "mr-IN",
+    "gu-IN": "gu-IN",
+    "kn-IN": "kn-IN",
+    "ml-IN": "ml-IN",
+    "pa-IN": "pa-IN",
+    # Kaapi uses the non-standard "od-IN" for Odia; the real tag is "or-IN".
+    "od-IN": "or-IN",
+    # "as-IN": not supported by Gemini
+    "sd-IN": "sd-IN",
 }
 
 # BCP-47 language tag → ElevenLabs ISO 639-1 code (Indic + English)
@@ -241,3 +246,31 @@ ELEVENLABS_VOICE_TO_ID: dict[str, str] = {
     "Callum": "N2lVS1w4EtoT3dr4eOWO",
     "Liam": "TX3LPaxmHKxFdv7VOQHJ",
 }
+
+
+class LlmAudioKindEnum(StrEnum):
+    STT = "stt"
+    TTS = "tts"
+
+
+REDACTION_PLACEHOLDER = "[redacted]"
+
+REDACT_LLM_CALL_RECORDS_SQL = text(
+    """
+    UPDATE llm_call
+    SET input = :redaction_placeholder,
+        content = CASE
+            WHEN jsonb_typeof(content) = 'object'
+            THEN jsonb_set(content, '{content,value}', to_jsonb(CAST(:redaction_placeholder AS text)), false)
+            ELSE content
+        END
+    WHERE updated_at <= :retention_cutoff
+      AND (
+        input <> :redaction_placeholder
+        OR (
+            jsonb_typeof(content) = 'object'
+            AND content #>> '{content,value}' <> :redaction_placeholder
+        )
+      )
+    """
+)

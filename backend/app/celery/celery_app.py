@@ -2,18 +2,17 @@ import logging
 
 from celery import Celery
 from celery.signals import (
-    worker_init,
+    setup_logging,
     task_failure,
     task_postrun,
     task_prerun,
-    setup_logging,
+    worker_init,
     worker_process_init,
 )
 from kombu import Exchange, Queue
 
 from app.core.config import settings
 from app.core.logger import configure_logging
-from app.core.sentry_filters import before_send_transaction_filter
 
 logger = logging.getLogger(__name__)
 _telemetry_initialized = False
@@ -35,35 +34,25 @@ def _initialize_worker_observability() -> None:
         import sentry_sdk
         from sentry_sdk.integrations.celery import CeleryIntegration
         from sentry_sdk.integrations.httpx import HttpxIntegration
-        from sentry_sdk.integrations.logging import LoggingIntegration
         from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
-        sentry_sdk.init(
-            dsn=str(settings.SENTRY_DSN),
-            environment=settings.ENVIRONMENT,
-            release=settings.API_VERSION,
-            instrumenter="otel",
-            traces_sample_rate=1.0,
-            enable_logs=True,
-            before_send_transaction=before_send_transaction_filter,
+        from app.core.telemetry import init_sentry
+
+        init_sentry(
             integrations=[
-                LoggingIntegration(
-                    level=logging.INFO,
-                    sentry_logs_level=logging.INFO,
-                ),
-                CeleryIntegration(
-                    propagate_traces=False,
-                    monitor_beat_tasks=False,
-                ),
+                CeleryIntegration(propagate_traces=True, monitor_beat_tasks=False)
             ],
-            disabled_integrations=[
-                SqlalchemyIntegration(),
-                HttpxIntegration(),
-            ],
+            disabled_integrations=[SqlalchemyIntegration(), HttpxIntegration()],
         )
+
+        @task_prerun.connect(weak=False)
+        def _tag_sentry_task(task: "celery.Task", **_: object) -> None:  # type: ignore[name-defined]
+            """Tag the task's Sentry scope with its name so Issues can be filtered by task."""
+            sentry_sdk.set_tag("celery.task_name", task.name)
+
         _sentry_initialized = True
 
-    if not _telemetry_initialized:
+    if settings.OTEL_ENABLED and not _telemetry_initialized:
         from app.core.telemetry import flush_telemetry, setup_telemetry
 
         setup_telemetry(service_name="kaapi-celery")
@@ -86,8 +75,9 @@ def log_pool_status(task: "celery.Task", **_: object) -> None:  # type: ignore[n
     If checked_out equals pool size right when a task starts, connections
     are being held across tasks (likely across LLM API calls) and leaking.
     """
-    from app.core.db import engine
     from sqlalchemy.pool import QueuePool
+
+    from app.core.db import engine
 
     pool = engine.pool
     if isinstance(pool, QueuePool):
@@ -104,8 +94,9 @@ def log_pool_status_post(task: "celery.Task", **_: object) -> None:  # type: ign
     Compare with task_prerun log — if checked_out is the same or higher after
     the task, connections were not returned and are leaking.
     """
-    from app.core.db import engine
     from sqlalchemy.pool import QueuePool
+
+    from app.core.db import engine
 
     pool = engine.pool
     if isinstance(pool, QueuePool):
@@ -124,8 +115,9 @@ def log_pool_status_failure(
     Failures are the most likely path for sessions to leak — exceptions can
     bypass session cleanup if not guarded by a context manager.
     """
-    from app.core.db import engine
     from sqlalchemy.pool import QueuePool
+
+    from app.core.db import engine
 
     pool = engine.pool
     if isinstance(pool, QueuePool):
@@ -167,6 +159,9 @@ celery_app = Celery(
 )
 
 # Define exchanges and queues with priority
+DEFAULT_QUEUE = "default"
+EVALUATIONS_QUEUE = "evaluations"
+
 default_exchange = Exchange("default", type="direct")
 
 # Celery configuration using environment variables
@@ -174,13 +169,21 @@ celery_app.conf.update(
     # Queue configuration with priority support
     task_queues=(
         Queue(
-            "default",
+            DEFAULT_QUEUE,
             exchange=default_exchange,
-            routing_key="default",
+            routing_key=DEFAULT_QUEUE,
+            queue_arguments={"x-max-priority": 10},
+        ),
+        # Routing key must differ per queue on the shared direct exchange, or
+        # messages fan out to both.
+        Queue(
+            EVALUATIONS_QUEUE,
+            exchange=default_exchange,
+            routing_key=EVALUATIONS_QUEUE,
             queue_arguments={"x-max-priority": 10},
         ),
     ),
-    task_default_queue="default",
+    task_default_queue=DEFAULT_QUEUE,
     # Enable priority support
     task_inherit_parent_priority=True,
     worker_prefetch_multiplier=settings.CELERY_WORKER_PREFETCH_MULTIPLIER,

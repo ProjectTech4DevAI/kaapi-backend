@@ -1,4 +1,4 @@
-"""Assemble an AssessmentBatchResult for the BATCH API-client path.
+"""Assemble the BATCH API-client result, for the webhook and the poll endpoint.
 
 One result unit per input row. Gate-failed rows carry ``assessment=null`` plus
 their pre-filter verdicts; gate-passed rows carry the assessment call's parsed
@@ -17,21 +17,23 @@ from app.crud.assessment import api
 from app.models.assessment import (
     Assessment,
     AssessmentBatchResult,
+    AssessmentConfigRef,
     AssessmentCounts,
+    AssessmentDetailResponse,
     AssessmentOutput,
     AssessmentResult,
-    BatchInput,
+    AssessmentResultRow,
+    AssessmentRun,
+    AssessmentSubmission,
+    AssessmentSummary,
     BatchRunState,
     ParsedResult,
     PreFilter,
     PreFilterVerdict,
+    Submission,
     Verdict,
 )
-from app.services.assessment.api.batch import (
-    ApiStage,
-    build_rows,
-    parse_batch_results,
-)
+from app.services.assessment.api.batch import ApiStage, parse_batch_results
 from app.services.assessment.utils.parsing import parse_stored_results
 
 logger = logging.getLogger(__name__)
@@ -86,25 +88,31 @@ def _load_assessment_outputs(
         return {}, "Assessment output could not be read from storage."
 
 
-def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatchResult:
+def build_result(
+    *,
+    session: Session,
+    assessment: Assessment,
+    execution: AssessmentRun | None = None,
+) -> AssessmentBatchResult:
     """Build the per-row result from stored verdicts (bag) + assessment output (store).
 
     Status lives on the response envelope (sourced from the parent assessment), so this
-    result body carries only the rows and their tallies.
+    result body carries only the rows and their tallies. Pass ``execution`` when the
+    caller already holds it, so a poll does not re-query it.
     """
-    executions = api.list_executions(session=session, assessment_id=assessment.id)
-    bag = cast(BatchRunState, (executions[0].execution or {}) if executions else {})
+    if execution is None:
+        executions = api.list_executions(session=session, assessment_id=assessment.id)
+        execution = executions[0] if executions else None
+    bag = cast(BatchRunState, (execution.execution or {}) if execution else {})
 
-    batch_input = (
-        BatchInput.model_validate(assessment.input) if assessment.input else None
-    )
-    input_columns = bag.get("input_schema") or {}
-    rows, _, _ = build_rows(batch_input, input_columns) if batch_input else ([], [], [])
-    total_items = len(rows)
+    # Off the execution, not re-derived: the terminal path must not fetch rows to count them.
+    total_items = execution.total_items if execution else 0
 
     gate_passed = bag.get("gate_passed") or [True] * total_items
     verdicts = bag.get("verdicts") or {}
     outputs, load_error = _load_assessment_outputs(session, bag, assessment.project_id)
+    # Rows the provider rejected are absent from the output dump; the bag kept their error.
+    row_errors = (bag.get("stage_errors") or {}).get(ApiStage.ASSESSMENT.value, {})
 
     tr_verdicts = verdicts.get(ApiStage.TOPIC_RELEVANCE.value, {})
 
@@ -120,6 +128,8 @@ def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatch
                 out = outputs[idx]
                 assessment_output = _parse_assessment(out)
                 error = out.get("error")
+            elif str(idx) in row_errors:
+                error = row_errors[str(idx)]
             elif load_error:
                 error = load_error
 
@@ -147,5 +157,98 @@ def build_result(*, session: Session, assessment: Assessment) -> AssessmentBatch
     return AssessmentBatchResult(
         total_items=total_items,
         counts=counts,
+        items=items,
+    )
+
+
+def _submission_rows(session: Session, assessment: Assessment) -> list[Submission]:
+    """The rows the run was submitted with; empty when they cannot be read.
+
+    A storage blip must degrade the poll to rows without input columns, never fail it.
+    """
+    from app.services.assessment.api.submission_store import (
+        SubmissionUnavailableError,
+        open_submission_rows,
+    )
+
+    try:
+        with open_submission_rows(session=session, assessment=assessment) as stream:
+            return list(stream)
+    except (SubmissionUnavailableError, ValueError) as exc:
+        logger.warning(
+            "[_submission_rows] Submission rows unavailable | assessment_id=%s | %s",
+            assessment.id,
+            exc,
+        )
+        return []
+
+
+def build_summary(
+    assessment: Assessment,
+    execution: AssessmentRun | None,
+    submission_name: str | None = None,
+) -> AssessmentSummary:
+    """List row for one assessment. Reads only columns and the exec bag, never storage."""
+    bag = cast(BatchRunState, (execution.execution or {}) if execution else {})
+    config = (
+        AssessmentConfigRef(id=execution.config_id, version=execution.config_version)
+        if execution
+        else None
+    )
+    return AssessmentSummary(
+        assessment_id=assessment.id,
+        method=assessment.method,
+        status=assessment.status,
+        experiment_name=assessment.experiment_name,
+        submission_id=assessment.submission_id,
+        submission_name=submission_name,
+        config=config,
+        total_items=execution.total_items if execution else 0,
+        stages=[
+            str(step["stage"]) for step in bag.get("pipeline", []) if step.get("stage")
+        ],
+        stage=bag.get("stage"),
+        stage_status=bag.get("stage_status"),
+        error=execution.error_message if execution else None,
+        inserted_at=assessment.inserted_at,
+        updated_at=assessment.updated_at,
+    )
+
+
+def build_detail(
+    *, session: Session, assessment: Assessment, include_input: bool = False
+) -> AssessmentDetailResponse:
+    """Poll payload: run status plus every row produced so far.
+
+    ``include_input`` echoes the submitted columns; it costs a storage read, so a tight
+    poll loop leaves it off.
+    """
+    executions = api.list_executions(session=session, assessment_id=assessment.id)
+    execution = executions[0] if executions else None
+    submission = (
+        session.get(AssessmentSubmission, assessment.submission_id)
+        if assessment.submission_id
+        else None
+    )
+
+    result = build_result(session=session, assessment=assessment, execution=execution)
+    rows = _submission_rows(session, assessment) if include_input else []
+
+    items = [
+        AssessmentResultRow(
+            row_index=idx,
+            input=rows[idx] if idx < len(rows) else None,
+            output=item.output,
+            error=item.error,
+        )
+        for idx, item in enumerate(result.items)
+    ]
+
+    summary = build_summary(
+        assessment, execution, submission.name if submission else None
+    )
+    return AssessmentDetailResponse(
+        **summary.model_dump(),
+        counts=result.counts,
         items=items,
     )

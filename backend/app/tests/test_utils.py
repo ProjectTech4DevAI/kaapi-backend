@@ -396,9 +396,7 @@ class TestSendCallbackWithSigning:
     @patch("requests.Session")
     def test_includes_signature_headers(self, mock_session_cls, mock_validate) -> None:
         mock_session = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.return_value = None
-        mock_session.post.return_value = mock_resp
+        mock_session.post.return_value = MagicMock(status_code=200)
         mock_session_cls.return_value.__enter__.return_value = mock_session
 
         result = send_callback(
@@ -417,6 +415,37 @@ class TestSendCallbackWithSigning:
         mock_validate.side_effect = ValueError("private IP")
         result = send_callback("https://internal/hook", {"x": 1})
         assert result is False
+
+
+@pytest.mark.usefixtures("no_retry_backoff")
+class TestSendCallbackLogging:
+    _payload = {
+        "success": True,
+        "data": {"output": "model answer for the user"},
+        "error": None,
+        "metadata": {"job_id": "j1", "request_metadata": {"ref": "abc"}},
+    }
+
+    @patch("app.utils.validate_callback_url")
+    @patch("requests.Session")
+    def test_failure_logs_status_and_payload_without_user_data(
+        self, mock_session_cls, mock_validate, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mock_session = MagicMock()
+        mock_session.post.return_value = MagicMock(status_code=502)
+        mock_session_cls.return_value.__enter__.return_value = mock_session
+
+        with caplog.at_level("ERROR", logger="app.utils"):
+            assert not send_callback("https://api.example.com/hook", self._payload)
+
+        line = next(
+            r.getMessage()
+            for r in caplog.records
+            if "Callback failed" in r.getMessage()
+        )
+        assert "status=502" in line
+        assert "'job_id': 'j1'" in line
+        assert "model answer for the user" not in line
 
 
 class TestGenerateEvalCompletionEmail:
