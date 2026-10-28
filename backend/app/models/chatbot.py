@@ -27,6 +27,11 @@ class ChatbotCompletionStatusEnum(StrEnum):
     ABANDONED = "abandoned"
 
 
+class ChatbotAgentTypeEnum(StrEnum):
+    ONBOARDING = "onboarding"
+    RAG = "rag"
+
+
 _SESSION_STATUS_PG_ENUM = ENUM(
     ChatbotSessionStatusEnum,
     name="chatbotsessionstatusenum",
@@ -36,6 +41,12 @@ _SESSION_STATUS_PG_ENUM = ENUM(
 _COMPLETION_STATUS_PG_ENUM = ENUM(
     ChatbotCompletionStatusEnum,
     name="chatbotcompletionstatusenum",
+    values_callable=lambda enum_cls: [member.value for member in enum_cls],
+    create_type=False,
+)
+_AGENT_TYPE_PG_ENUM = ENUM(
+    ChatbotAgentTypeEnum,
+    name="chatbotagenttypeenum",
     values_callable=lambda enum_cls: [member.value for member in enum_cls],
     create_type=False,
 )
@@ -117,6 +128,15 @@ class ChatbotSession(SQLModel, table=True):
         sa_column_kwargs={
             "comment": "Admin-authored flow prompt captured at session creation"
         },
+    )
+    agent_type: ChatbotAgentTypeEnum = Field(
+        default=ChatbotAgentTypeEnum.ONBOARDING,
+        sa_column=Column(
+            _AGENT_TYPE_PG_ENUM,
+            nullable=False,
+            server_default=ChatbotAgentTypeEnum.ONBOARDING.value,
+            comment="Agent that runs each turn: onboarding (collects the fields the system_prompt asks for) or rag (answers questions from the config's knowledge bases)",
+        ),
     )
     status: ChatbotSessionStatusEnum = Field(
         default=ChatbotSessionStatusEnum.ACTIVE,
@@ -236,6 +256,10 @@ class CreateChatbotSessionRequest(SQLModel):
         min_length=1,
         description="Admin-authored flow prompt (goal, fields to collect, rules); stored for the session's lifetime.",
     )
+    agent_type: ChatbotAgentTypeEnum = Field(
+        default=ChatbotAgentTypeEnum.ONBOARDING,
+        description="Agent that runs the session: `onboarding` collects the fields `system_prompt` asks for; `rag` answers questions from the config's `knowledge_base_ids` (the project needs OpenAI credentials).",
+    )
 
 
 class CreateChatbotSessionResponse(SQLModel):
@@ -249,6 +273,7 @@ class ChatbotSessionSummary(SQLModel):
     contact_ref: str
     chatbot_ref: str
     system_prompt: str
+    agent_type: ChatbotAgentTypeEnum
     status: ChatbotSessionStatusEnum
     completion_status: ChatbotCompletionStatusEnum
     collected_fields: dict[str, Any]

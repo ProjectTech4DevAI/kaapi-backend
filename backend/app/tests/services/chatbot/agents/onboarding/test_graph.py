@@ -53,10 +53,8 @@ class TestRunChatbotTurn:
             model_settings=_model_settings(),
         )
 
-        assert result.transcript == [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "assistant", "content": "Hi! What's your name?"},
-        ]
+        assert result.reply == "Hi! What's your name?"
+        assert result.sources == []
         # Anthropic rejects a conversation that doesn't open with a user turn.
         sent = chat_model.calls[0]
         assert isinstance(sent[0], SystemMessage)
@@ -81,12 +79,7 @@ class TestRunChatbotTurn:
             model_settings=_model_settings(),
         )
 
-        assert result.transcript == [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "assistant", "content": "Hi! What's your name?"},
-            {"role": "user", "content": "Asha"},
-            {"role": "assistant", "content": "Nice to meet you, Asha."},
-        ]
+        assert result.reply == "Nice to meet you, Asha."
         sent_contents = [m.content for m in chat_model.calls[0]]
         assert "stale prompt from the previous call" not in sent_contents
 
@@ -215,13 +208,8 @@ class TestHistorySummarization:
             "bot 3",
             "user 4",
         ]
-        # Summarization only trims the model's view; the caller keeps the full transcript.
-        assert result.transcript == [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            *history,
-            {"role": "user", "content": "user 4"},
-            {"role": "assistant", "content": "Got it."},
-        ]
+        # The reply is the turn's answer, never the summary text.
+        assert result.reply == "Got it."
 
     @pytest.mark.asyncio
     async def test_long_history_within_budget_is_sent_whole(

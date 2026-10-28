@@ -5,35 +5,46 @@ from uuid import uuid4
 
 import anthropic
 import httpx
+import openai
 import pytest
 from sqlmodel import Session
 
+from app.crud import CollectionCrud
 from app.crud.chatbot import (
     list_chatbot_session_messages,
     update_chatbot_session_progress,
 )
 from app.crud.config import ConfigVersionCrud
 from app.models import (
+    ChatbotAgentTypeEnum,
     ChatbotCompletionStatusEnum,
     ChatbotMessageRoleEnum,
     ChatbotSession,
     Config,
     Project,
 )
+from app.services.chatbot import config as config_service
 from app.services.chatbot import session as session_service
 from app.services.chatbot.agents.onboarding.types import FieldExtraction
 from app.services.chatbot.session import process_chatbot_session_message
 from app.tests.utils.chatbot import (
     DEFAULT_SYSTEM_PROMPT,
+    FakeOpenAIClient,
+    FakeVectorStores,
     ScriptedChatModel,
     add_test_chatbot_messages,
     create_test_chatbot_session,
     extracted_fields,
     patch_chat_model,
+    search_hit,
+    tool_call_reply,
 )
+from app.tests.utils.collection import get_vector_store_collection
 from app.tests.utils.test_data import (
     build_anthropic_text_config_blob,
     create_test_config,
+    create_test_credential,
+    create_test_project,
 )
 
 WEBHOOK_URL = "https://hooks.example.com/chatbot"
@@ -130,10 +141,12 @@ class TestProcessChatbotSessionMessage:
                     "data": {
                         "session_id": str(chatbot_session.id),
                         "chatbot_ref": chatbot_session.chatbot_ref,
+                        "agent_type": "onboarding",
                         "reply": "Hi! What's your name?",
                         "status": "active",
                         "completion_status": "in_progress",
                         "collected_fields": {},
+                        "sources": [],
                     },
                 },
                 None,
@@ -404,10 +417,12 @@ class TestSessionFieldProgress:
                 "data": {
                     "session_id": str(chatbot_session.id),
                     "chatbot_ref": chatbot_session.chatbot_ref,
+                    "agent_type": "onboarding",
                     "reply": "Thanks, all set!",
                     "status": "active",
                     "completion_status": "complete",
                     "collected_fields": {"name": "Asha", "city": "Pune"},
+                    "sources": [],
                 },
             }
         ]
@@ -487,3 +502,158 @@ class TestSessionFieldProgress:
         [payload] = callbacks.payloads
         assert payload["success"] is True
         assert payload["data"]["completion_status"] == "complete"
+
+
+RAG_GOAL = "Answer questions about school fees from the documents."
+_OPENAI_REQUEST = httpx.Request("POST", "https://api.openai.com/v1/vector_stores")
+
+
+@pytest.fixture
+def vector_stores(monkeypatch: pytest.MonkeyPatch) -> FakeVectorStores:
+    stores = FakeVectorStores()
+    real_get_client = config_service.get_knowledge_base_client
+
+    def _get_client(**kwargs: Any) -> FakeOpenAIClient:
+        # The real lookup still enforces the project's OpenAI credentials; only the
+        # network-facing client is swapped.
+        real_get_client(**kwargs)
+        return FakeOpenAIClient(vector_stores=stores)
+
+    monkeypatch.setattr(config_service, "get_knowledge_base_client", _get_client)
+    return stores
+
+
+def _rag_session(db: Session, project: Project) -> tuple[ChatbotSession, str]:
+    collection = get_vector_store_collection(db, project)
+    rag_config = create_test_config(
+        db,
+        project_id=project.id,
+        config_blob=build_anthropic_text_config_blob(
+            knowledge_base_ids=[collection.knowledge_base_id]
+        ),
+    )
+    chatbot_session = create_test_chatbot_session(
+        db,
+        config=rag_config,
+        system_prompt=RAG_GOAL,
+        agent_type=ChatbotAgentTypeEnum.RAG,
+    )
+    add_test_chatbot_messages(
+        db, chatbot_session, [(ChatbotMessageRoleEnum.USER, "What is the tuition?")]
+    )
+    return chatbot_session, collection.knowledge_base_id
+
+
+class TestRagSessionTurn:
+    def test_answer_with_sources_is_stored_and_posted(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _credentials, project = create_test_credential(db)
+        chatbot_session, knowledge_base_id = _rag_session(db, project)
+        vector_stores.hits[knowledge_base_id] = [
+            search_hit(
+                file_id="file-fees",
+                filename="fees.pdf",
+                score=0.9,
+                texts=("Tuition is 100 per term.",),
+            )
+        ]
+        chat_model = ScriptedChatModel(
+            replies=[tool_call_reply("tuition fee"), "Tuition is 100 per term."]
+        )
+        patch_chat_model(monkeypatch, chat_model)
+
+        _process(chatbot_session, db)
+
+        assert callbacks.payloads == [
+            {
+                "success": True,
+                "data": {
+                    "session_id": str(chatbot_session.id),
+                    "chatbot_ref": chatbot_session.chatbot_ref,
+                    "agent_type": "rag",
+                    "reply": "Tuition is 100 per term.",
+                    "status": "active",
+                    "completion_status": "in_progress",
+                    "collected_fields": {},
+                    "sources": [{"file_id": "file-fees", "filename": "fees.pdf"}],
+                },
+            }
+        ]
+        assert _transcript(db, chatbot_session) == [
+            ("user", "What is the tuition?"),
+            ("assistant", "Tuition is 100 per term."),
+        ]
+        assert vector_stores.calls[0]["vector_store_id"] == knowledge_base_id
+
+    def test_missing_openai_credentials_post_failure_without_calling_model(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        chatbot_session, _kb_id = _rag_session(db, create_test_project(db))
+        chat_model = ScriptedChatModel(replies=["should never be used"])
+        patch_chat_model(monkeypatch, chat_model)
+
+        _process(chatbot_session, db)
+
+        assert chat_model.calls == []
+        assert vector_stores.calls == []
+        [payload] = callbacks.payloads
+        assert payload["success"] is False
+        assert "OpenAI credentials" in payload["error"]
+        assert payload["data"] == {"session_id": str(chatbot_session.id)}
+        assert _transcript(db, chatbot_session) == [("user", "What is the tuition?")]
+
+    def test_knowledge_base_deleted_after_create_posts_failure(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _credentials, project = create_test_credential(db)
+        chatbot_session, knowledge_base_id = _rag_session(db, project)
+        crud = CollectionCrud(db, project.id)
+        [collection] = crud.read_all()
+        crud.delete_by_id(collection.id)
+        chat_model = ScriptedChatModel(replies=["should never be used"])
+        patch_chat_model(monkeypatch, chat_model)
+
+        _process(chatbot_session, db)
+
+        assert chat_model.calls == []
+        [payload] = callbacks.payloads
+        assert payload["success"] is False
+        assert knowledge_base_id in payload["error"]
+
+    def test_search_failure_posts_failure_and_stores_no_reply(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _credentials, project = create_test_credential(db)
+        chatbot_session, _kb_id = _rag_session(db, project)
+        vector_stores.error = openai.APIConnectionError(request=_OPENAI_REQUEST)
+        chat_model = ScriptedChatModel(
+            replies=[tool_call_reply("tuition fee"), "should never be used"]
+        )
+        patch_chat_model(monkeypatch, chat_model)
+
+        _process(chatbot_session, db)
+
+        [payload] = callbacks.payloads
+        assert payload["success"] is False
+        assert "(code: APIConnectionError)" in payload["error"]
+        assert "knowledge base search" in payload["error"]
+        assert payload["data"] == {"session_id": str(chatbot_session.id)}
+        assert _transcript(db, chatbot_session) == [("user", "What is the tuition?")]
+        assert len(chat_model.calls) == 1

@@ -2,6 +2,7 @@ import asyncio
 from uuid import UUID
 
 from fastapi import HTTPException
+from openai import OpenAI
 from sqlmodel import Session
 
 from app.core.db import engine
@@ -12,12 +13,16 @@ from app.crud.chatbot import (
     update_chatbot_session_progress,
 )
 from app.models import (
+    ChatbotAgentTypeEnum,
     ChatbotMessageRoleEnum,
     ChatbotSessionMessage,
     ChatbotSessionStatusEnum,
 )
-from app.services.chatbot.agents.onboarding.graph import run_chatbot_turn
-from app.services.chatbot.config import resolve_chatbot_model_settings
+from app.services.chatbot.agents.registry import run_agent_turn
+from app.services.chatbot.config import (
+    prepare_rag_search_client,
+    resolve_chatbot_model_settings,
+)
 from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
 from app.services.chatbot.types import ChatbotMessageDict
 from app.services.chatbot.utils import ChatbotModelSettings
@@ -42,17 +47,10 @@ def _split_pending_turn(
     if not history:
         return history, None
     if history[-1]["role"] != ChatbotMessageRoleEnum.USER:
-        # No pending user turn; run_chatbot_turn rejects this with ChatbotInputError.
+        # No pending user turn; the agent runner rejects this with ChatbotInputError.
         return history, None
     pending = history.pop()
     return history, pending["content"]
-
-
-def _extract_reply(transcript: list[ChatbotMessageDict]) -> str:
-    for entry in reversed(transcript):
-        if entry["role"] == ChatbotMessageRoleEnum.ASSISTANT:
-            return entry["content"]
-    raise ChatbotInputError("[KAAPI] Chat model returned no assistant reply.")
 
 
 def _send_failure_webhook(
@@ -110,7 +108,9 @@ def process_chatbot_session_message(
         system_prompt = chatbot_session.system_prompt
         chatbot_ref = chatbot_session.chatbot_ref
         session_status = chatbot_session.status.value
+        agent_type = chatbot_session.agent_type
         collected_fields = dict(chatbot_session.collected_fields)
+        openai_client: OpenAI | None = None
 
         try:
             model_settings: ChatbotModelSettings = resolve_chatbot_model_settings(
@@ -121,6 +121,13 @@ def process_chatbot_session_message(
                 max_tokens=None,
                 history_token_limit=None,
             )
+            if agent_type == ChatbotAgentTypeEnum.RAG:
+                openai_client = prepare_rag_search_client(
+                    session=session,
+                    organization_id=organization_id,
+                    project_id=project_id,
+                    model_settings=model_settings,
+                )
         except HTTPException as e:
             _send_failure_webhook(
                 session_id=session_id,
@@ -142,15 +149,16 @@ def process_chatbot_session_message(
 
     try:
         turn_result = asyncio.run(
-            run_chatbot_turn(
+            run_agent_turn(
+                agent_type=agent_type,
                 system_prompt=system_prompt,
                 history=history,
                 user_message=user_message,
                 model_settings=model_settings,
                 collected_fields=collected_fields,
+                openai_client=openai_client,
             )
         )
-        reply = _extract_reply(turn_result.transcript)
     except (ChatbotInputError, ChatbotProviderError) as e:
         _send_failure_webhook(
             session_id=session_id,
@@ -160,6 +168,7 @@ def process_chatbot_session_message(
         )
         return
 
+    reply = turn_result.reply
     completion_status = turn_result.completion_status
     with Session(engine) as session:
         create_chatbot_session_message(
@@ -179,10 +188,12 @@ def process_chatbot_session_message(
         data={
             "session_id": str(session_id),
             "chatbot_ref": chatbot_ref,
+            "agent_type": agent_type.value,
             "reply": reply,
             "status": session_status,
             "completion_status": completion_status.value,
             "collected_fields": turn_result.collected_fields,
+            "sources": turn_result.sources,
         }
     )
     send_callback(webhook_url, envelope.model_dump(exclude_none=True), webhook_secret)

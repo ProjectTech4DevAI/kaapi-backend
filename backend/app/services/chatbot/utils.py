@@ -27,6 +27,10 @@ class ChatbotModelSettings:
     reasoning_effort: AnthropicEffort | None = None
     thinking: dict[str, Any] = field(default_factory=default_thinking)
     history_token_limit: int = DEFAULT_HISTORY_TOKEN_LIMIT
+    instructions: str | None = None
+    # OpenAI vector store ids (Collection.knowledge_base_id); only the rag agent reads them.
+    knowledge_base_ids: tuple[str, ...] = ()
+    max_num_results: int | None = None
 
 
 def get_chat_model(model_settings: ChatbotModelSettings) -> ChatAnthropic:

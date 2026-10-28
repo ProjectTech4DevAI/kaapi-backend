@@ -9,19 +9,25 @@ from sqlmodel import Session, select
 
 from app.api.routes.chatbot import session as session_routes
 from app.core.config import settings
+from app.crud import CollectionCrud
 from app.crud.chatbot import (
     get_chatbot_session,
     list_chatbot_session_messages,
     update_chatbot_session_progress,
 )
+from app.crud.credentials import remove_provider_credential
 from app.models import (
     DEFAULT_CHATBOT_NAME,
+    ChatbotAgentTypeEnum,
     ChatbotCompletionStatusEnum,
     ChatbotMessageRoleEnum,
     ChatbotSession,
     ChatbotSessionStatusEnum,
     Config,
+    Project,
+    ProviderType,
 )
+from app.models.llm.constants import Provider
 from app.services.chatbot import chatbot_ref as chatbot_ref_module
 from app.services.chatbot.chatbot_ref import (
     CHATBOT_REF_PREFIX,
@@ -36,6 +42,7 @@ from app.tests.utils.chatbot import (
     add_test_chatbot_messages,
     create_test_chatbot_session,
 )
+from app.tests.utils.collection import get_vector_store_collection
 from app.tests.utils.test_data import (
     build_anthropic_text_config_blob,
     create_test_config,
@@ -219,6 +226,204 @@ class TestCreateChatbotSession:
 
         assert resp.status_code == 422
         assert "only supports configs" in resp.json()["error"]
+
+
+def _rag_config(db: Session, project_id: int, knowledge_base_ids: list[str]) -> Config:
+    return create_test_config(
+        db,
+        project_id=project_id,
+        config_blob=build_anthropic_text_config_blob(
+            knowledge_base_ids=knowledge_base_ids
+        ),
+    )
+
+
+def _project_collection_id(db: Session, auth: TestAuthContext) -> str:
+    project = db.get(Project, auth.project_id)
+    assert project is not None
+    return get_vector_store_collection(db, project).knowledge_base_id
+
+
+def _deleted_collection_id(db: Session, auth: TestAuthContext) -> str:
+    project = db.get(Project, auth.project_id)
+    assert project is not None
+    collection = get_vector_store_collection(db, project)
+    CollectionCrud(db, project.id).delete_by_id(collection.id)
+    return collection.knowledge_base_id
+
+
+def _non_openai_collection_id(db: Session, auth: TestAuthContext) -> str:
+    project = db.get(Project, auth.project_id)
+    assert project is not None
+    return get_vector_store_collection(
+        db, project, provider=ProviderType.google_aistudio
+    ).knowledge_base_id
+
+
+class TestCreateRagChatbotSession:
+    def _create(
+        self,
+        client: TestClient,
+        headers: dict[str, str],
+        config: Config,
+        contact_ref: str,
+        **extra: Any,
+    ) -> Any:
+        return client.post(
+            SESSIONS_URL,
+            headers=headers,
+            json={
+                "config_id": str(config.id),
+                "contact_ref": contact_ref,
+                "system_prompt": "Answer questions about fees from the documents.",
+                **extra,
+            },
+        )
+
+    def test_rag_session_is_stored_and_reported_by_get(
+        self,
+        client: TestClient,
+        db: Session,
+        headers: dict[str, str],
+        user_api_key: TestAuthContext,
+    ) -> None:
+        config = _rag_config(
+            db, user_api_key.project_id, [_project_collection_id(db, user_api_key)]
+        )
+        contact_ref = f"contact-{random_lower_string()}"
+
+        resp = self._create(client, headers, config, contact_ref, agent_type="rag")
+
+        assert resp.status_code == 201
+        [stored] = _sessions_for_contact(db, contact_ref)
+        assert stored.agent_type == ChatbotAgentTypeEnum.RAG
+        latest = client.get(
+            SESSIONS_URL, headers=headers, params={"contact_ref": contact_ref}
+        )
+        assert latest.status_code == 200
+        assert latest.json()["data"]["agent_type"] == "rag"
+
+    def test_omitted_agent_type_creates_onboarding_session(
+        self,
+        client: TestClient,
+        db: Session,
+        headers: dict[str, str],
+        anthropic_config: Config,
+    ) -> None:
+        contact_ref = f"contact-{random_lower_string()}"
+
+        resp = self._create(client, headers, anthropic_config, contact_ref)
+
+        assert resp.status_code == 201
+        [stored] = _sessions_for_contact(db, contact_ref)
+        assert stored.agent_type == ChatbotAgentTypeEnum.ONBOARDING
+
+    def test_onboarding_ignores_missing_knowledge_bases(
+        self,
+        client: TestClient,
+        db: Session,
+        headers: dict[str, str],
+        user_api_key: TestAuthContext,
+    ) -> None:
+        config = _rag_config(db, user_api_key.project_id, ["vs_not_a_collection"])
+
+        resp = self._create(
+            client,
+            headers,
+            config,
+            f"contact-{random_lower_string()}",
+            agent_type="onboarding",
+        )
+
+        assert resp.status_code == 201
+
+    def test_unknown_agent_type_returns_422(
+        self,
+        client: TestClient,
+        headers: dict[str, str],
+        anthropic_config: Config,
+    ) -> None:
+        resp = self._create(
+            client,
+            headers,
+            anthropic_config,
+            f"contact-{random_lower_string()}",
+            agent_type="faq",
+        )
+
+        assert resp.status_code == 422
+
+    def test_config_without_knowledge_bases_returns_422(
+        self,
+        client: TestClient,
+        db: Session,
+        headers: dict[str, str],
+        anthropic_config: Config,
+    ) -> None:
+        contact_ref = f"contact-{random_lower_string()}"
+
+        resp = self._create(
+            client, headers, anthropic_config, contact_ref, agent_type="rag"
+        )
+
+        assert resp.status_code == 422
+        assert "non-empty completion.params.knowledge_base_ids" in resp.json()["error"]
+        assert _sessions_for_contact(db, contact_ref) == []
+
+    @pytest.mark.parametrize(
+        "seed_knowledge_base_id",
+        [
+            lambda _db, _auth: "vs_does_not_exist",
+            _deleted_collection_id,
+            _non_openai_collection_id,
+        ],
+        ids=["unknown", "deleted", "non-openai"],
+    )
+    def test_unusable_knowledge_base_returns_422_naming_it(
+        self,
+        client: TestClient,
+        db: Session,
+        headers: dict[str, str],
+        user_api_key: TestAuthContext,
+        seed_knowledge_base_id: Any,
+    ) -> None:
+        valid_id = _project_collection_id(db, user_api_key)
+        bad_id = seed_knowledge_base_id(db, user_api_key)
+        config = _rag_config(db, user_api_key.project_id, [valid_id, bad_id])
+        contact_ref = f"contact-{random_lower_string()}"
+
+        resp = self._create(client, headers, config, contact_ref, agent_type="rag")
+
+        assert resp.status_code == 422
+        error = resp.json()["error"]
+        assert f"collections: {bad_id};" in error
+        assert valid_id not in error
+        assert _sessions_for_contact(db, contact_ref) == []
+
+    def test_project_without_openai_credentials_returns_422(
+        self,
+        client: TestClient,
+        db: Session,
+        headers: dict[str, str],
+        user_api_key: TestAuthContext,
+    ) -> None:
+        config = _rag_config(
+            db, user_api_key.project_id, [_project_collection_id(db, user_api_key)]
+        )
+        # Rolled back with the test transaction, so the seeded credential returns.
+        remove_provider_credential(
+            db,
+            org_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            provider=Provider.OPENAI.value,
+        )
+        contact_ref = f"contact-{random_lower_string()}"
+
+        resp = self._create(client, headers, config, contact_ref, agent_type="rag")
+
+        assert resp.status_code == 422
+        assert "OpenAI credentials" in resp.json()["error"]
+        assert _sessions_for_contact(db, contact_ref) == []
 
 
 class TestCreateChatbotSessionChatbotRef:
@@ -444,6 +649,7 @@ class TestGetLatestChatbotSession:
         assert body["contact_ref"] == contact_ref
         assert body["chatbot_ref"] == chatbot_ref
         assert body["system_prompt"] == "Collect the student's name and grade."
+        assert body["agent_type"] == "onboarding"
         assert body["status"] == "active"
         assert body["completion_status"] == "in_progress"
         assert body["collected_fields"] == {}

@@ -17,6 +17,7 @@ from app.crud.chatbot import (
 from app.models import (
     CHATBOT_REF_MAX_LENGTH,
     CONTACT_REF_MAX_LENGTH,
+    ChatbotAgentTypeEnum,
     ChatbotMessageRoleEnum,
     ChatbotSessionStatusEnum,
     ChatbotSessionSummary,
@@ -26,7 +27,10 @@ from app.models import (
     SendChatbotSessionMessageResponse,
 )
 from app.services.chatbot.chatbot_ref import generate_chatbot_ref
-from app.services.chatbot.config import resolve_chatbot_model_settings
+from app.services.chatbot.config import (
+    prepare_rag_search_client,
+    resolve_chatbot_model_settings,
+)
 from app.services.chatbot.exceptions import (
     ChatbotInputError,
     ChatbotRefGenerationError,
@@ -51,9 +55,10 @@ def start_chatbot_session(
     session: SessionDep,
     auth_context: AuthContextDep,
 ) -> APIResponse[CreateChatbotSessionResponse]:
+    organization_id = auth_context.organization_.id
     project_id = auth_context.project_.id
     try:
-        resolve_chatbot_model_settings(
+        model_settings = resolve_chatbot_model_settings(
             session=session,
             project_id=project_id,
             config_id=request.config_id,
@@ -61,6 +66,14 @@ def start_chatbot_session(
             max_tokens=None,
             history_token_limit=None,
         )
+        # Fail at create rather than on the first turn's webhook.
+        if request.agent_type == ChatbotAgentTypeEnum.RAG:
+            prepare_rag_search_client(
+                session=session,
+                organization_id=organization_id,
+                project_id=project_id,
+                model_settings=model_settings,
+            )
     except ChatbotInputError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
@@ -74,7 +87,7 @@ def start_chatbot_session(
     try:
         chatbot_session = create_chatbot_session(
             session,
-            organization_id=auth_context.organization_.id,
+            organization_id=organization_id,
             project_id=project_id,
             name=request.name,
             contact_ref=request.contact_ref,
@@ -82,6 +95,7 @@ def start_chatbot_session(
             config_id=request.config_id,
             config_version=request.config_version,
             system_prompt=request.system_prompt,
+            agent_type=request.agent_type,
         )
     except ChatbotSessionConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -138,6 +152,7 @@ def read_latest_chatbot_session(
             contact_ref=chatbot_session.contact_ref,
             chatbot_ref=chatbot_session.chatbot_ref,
             system_prompt=chatbot_session.system_prompt,
+            agent_type=chatbot_session.agent_type,
             status=chatbot_session.status,
             completion_status=chatbot_session.completion_status,
             collected_fields=chatbot_session.collected_fields,

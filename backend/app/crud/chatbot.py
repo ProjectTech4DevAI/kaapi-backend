@@ -9,6 +9,7 @@ from sqlmodel import Session, col, select
 from app.core.util import is_constraint_violation, now
 from app.models import (
     ACTIVE_CHATBOT_SESSION_UNIQUE_INDEX,
+    ChatbotAgentTypeEnum,
     ChatbotCompletionStatusEnum,
     ChatbotMessageRoleEnum,
     ChatbotSession,
@@ -76,6 +77,7 @@ def create_chatbot_session(
     config_id: UUID,
     config_version: int | None,
     system_prompt: str,
+    agent_type: ChatbotAgentTypeEnum = ChatbotAgentTypeEnum.ONBOARDING,
 ) -> ChatbotSession:
     """Insert a new active session, superseding the contact's active ones for the same chatbot."""
     timestamp = now()
@@ -96,6 +98,7 @@ def create_chatbot_session(
         config_id=config_id,
         config_version=config_version,
         system_prompt=system_prompt,
+        agent_type=agent_type,
         inserted_at=timestamp,
         updated_at=timestamp,
     )

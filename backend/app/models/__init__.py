@@ -40,6 +40,7 @@ from .chatbot import (
     CHATBOT_REF_MAX_LENGTH,
     CONTACT_REF_MAX_LENGTH,
     DEFAULT_CHATBOT_NAME,
+    ChatbotAgentTypeEnum,
     ChatbotCompletionStatusEnum,
     ChatbotMessageRoleEnum,
     ChatbotSession,
