@@ -135,15 +135,7 @@ class CollectionJobCrud:
             )
             if existing is None:
                 raise
-            logger.info(
-                "[CollectionJobCrud.create_or_get_in_flight] Duplicate in-flight create | "
-                f"{{'project_id': '{self.project_id}', 'job_id': '{existing.id}'}}"
-            )
             return existing, False
 
         self.session.refresh(job)
-        logger.info(
-            "[CollectionJobCrud.create_or_get_in_flight] Collection job created | "
-            f"{{'collection_job_id': '{job.id}'}}"
-        )
         return job, True
