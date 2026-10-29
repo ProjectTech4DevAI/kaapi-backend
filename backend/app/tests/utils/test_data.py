@@ -1,3 +1,5 @@
+from typing import Any
+
 from sqlmodel import Session
 
 from app.models.provider_credentials import Provider
@@ -55,21 +57,20 @@ def create_test_organization(db: Session) -> Organization:
     return create_organization(session=db, org_create=org_in)
 
 
-def create_test_project(db: Session) -> Project:
+def create_test_project(db: Session, organization_id: int | None = None) -> Project:
     """
-    Creates and returns a test project under a newly created test organization.
-
-    Persists both the organization and the project to the database.
-
+    Creates and returns a test project under `organization_id`, or under a newly
+    created test organization when omitted.
     """
-    org = create_test_organization(db)
+    if organization_id is None:
+        organization_id = create_test_organization(db).id
     name = f"TestProject-{random_lower_string()}"
     project_description = "This is a test project description."
     project_in = ProjectCreate(
         name=name,
         description=project_description,
         is_active=True,
-        organization_id=org.id,
+        organization_id=organization_id,
     )
     return create_project(session=db, project_create=project_in)
 
@@ -327,6 +328,17 @@ def create_test_config(
     config, version = config_crud.create_or_raise(config_create)
 
     return config
+
+
+def build_anthropic_text_config_blob(**params: Any) -> ConfigBlob:
+    """Kaapi-format Anthropic text config — the only shape the chatbot accepts."""
+    return ConfigBlob(
+        completion=build_kaapi_completion_config(
+            provider="anthropic",
+            type="text",
+            params={"model": "claude-sonnet-4-6", **params},
+        )
+    )
 
 
 def create_test_version(

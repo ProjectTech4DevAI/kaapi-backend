@@ -4,12 +4,21 @@ from datetime import datetime, timezone
 from fastapi import HTTPException
 
 from openai import OpenAI
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
 
 
 def now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def is_constraint_violation(error: IntegrityError, constraint_name: str) -> bool:
+    """True only when *error* was raised by the named constraint or index."""
+    violated = getattr(getattr(error.orig, "diag", None), "constraint_name", None)
+    if violated:
+        return violated == constraint_name
+    return constraint_name in str(error.orig or error)
 
 
 def raise_from_unknown(error: Exception, status_code=500):
