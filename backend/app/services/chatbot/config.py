@@ -1,4 +1,3 @@
-import logging
 from dataclasses import replace
 from typing import Any, get_args
 from uuid import UUID
@@ -20,8 +19,6 @@ from app.services.chatbot.utils import (
     ChatbotModelSettings,
     default_thinking,
 )
-
-logger = logging.getLogger(__name__)
 
 _ANTHROPIC_EFFORT_LEVELS: tuple[AnthropicEffort, ...] = get_args(AnthropicEffort)
 THINKING_TYPE_ENABLED = "enabled"

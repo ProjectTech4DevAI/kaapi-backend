@@ -1,4 +1,3 @@
-import logging
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -28,8 +27,6 @@ from app.services.chatbot.exceptions import (
     ChatbotSessionConflictError,
 )
 
-logger = logging.getLogger(__name__)
-
 
 def create_chatbot(
     session: Session, *, organization_id: int, project_id: int, name: str
@@ -45,9 +42,6 @@ def create_chatbot(
     session.add(chatbot)
     session.commit()
     session.refresh(chatbot)
-    logger.info(
-        f"[create_chatbot] Chatbot created | chatbot_id: {chatbot.id}, project_id: {project_id}"
-    )
     return chatbot
 
 
@@ -108,17 +102,13 @@ def update_chatbot(
 def delete_chatbot(session: Session, *, chatbot: Chatbot) -> Chatbot:
     """Soft-delete the chatbot and deactivate its active sessions in the same transaction."""
     timestamp = now()
-    deactivated_count = _deactivate_active_chatbot_sessions(
+    _deactivate_active_chatbot_sessions(
         session, chatbot_id=chatbot.id, contact_ref=None, timestamp=timestamp
     )
     chatbot.sqlmodel_update({"deleted_at": timestamp, "updated_at": timestamp})
     session.add(chatbot)
     session.commit()
     session.refresh(chatbot)
-    logger.info(
-        f"[delete_chatbot] Chatbot soft-deleted | chatbot_id: {chatbot.id}, "
-        f"deactivated_sessions: {deactivated_count}"
-    )
     return chatbot
 
 
@@ -189,10 +179,6 @@ def create_chatbot_flow_version(
             raise
         raise ChatbotFlowConflictError(CONCURRENT_FLOW_CONFLICT_MESSAGE) from e
     session.refresh(flow_version)
-    logger.info(
-        f"[create_chatbot_flow_version] Flow version created | chatbot_id: {chatbot_id}, "
-        f"version: {version}, is_live: {is_live}"
-    )
     return flow_version
 
 
@@ -242,10 +228,6 @@ def publish_chatbot_flow_version(
             raise
         raise ChatbotFlowConflictError(CONCURRENT_FLOW_CONFLICT_MESSAGE) from e
     session.refresh(flow_version)
-    logger.info(
-        f"[publish_chatbot_flow_version] Flow published | chatbot_id: {flow_version.chatbot_id}, "
-        f"version: {flow_version.version}"
-    )
     return flow_version
 
 
@@ -323,10 +305,6 @@ def create_chatbot_session(
             raise
         raise ChatbotSessionConflictError(CONCURRENT_SESSION_CONFLICT_MESSAGE) from e
     session.refresh(chatbot_session)
-    logger.info(
-        f"[create_chatbot_session] Session created | session_id: {chatbot_session.id}, "
-        f"chatbot_id: {chatbot_id}"
-    )
     return chatbot_session
 
 
