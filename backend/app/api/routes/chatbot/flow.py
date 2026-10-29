@@ -1,17 +1,12 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.api.routes.chatbot.errors import CHATBOT_SERVICE_ERRORS, to_http_exception
 from app.models import ChatbotFlowUpdate, ChatbotFlowVersionPublic
-from app.services.chatbot.exceptions import (
-    ChatbotFlowConflictError,
-    ChatbotFlowNotFoundError,
-    ChatbotFlowValidationError,
-    ChatbotNotFoundError,
-)
 from app.services.chatbot.flow import (
     build_chatbot_flow_version_public,
     get_chatbot_flow,
@@ -49,8 +44,8 @@ def get_chatbot_flow_route(
             project_id=auth_context.project_.id,
             version=version,
         )
-    except (ChatbotNotFoundError, ChatbotFlowNotFoundError) as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    except CHATBOT_SERVICE_ERRORS as e:
+        raise to_http_exception(e) from e
     return APIResponse.success_response(build_chatbot_flow_version_public(flow_version))
 
 
@@ -74,12 +69,8 @@ def save_chatbot_flow_route(
             project_id=auth_context.project_.id,
             flow=request,
         )
-    except ChatbotNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ChatbotFlowConflictError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except ChatbotFlowValidationError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    except CHATBOT_SERVICE_ERRORS as e:
+        raise to_http_exception(e) from e
     return APIResponse.success_response(build_chatbot_flow_version_public(flow_version))
 
 
@@ -101,10 +92,6 @@ def publish_chatbot_flow_route(
             organization_id=auth_context.organization_.id,
             project_id=auth_context.project_.id,
         )
-    except ChatbotNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except ChatbotFlowConflictError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except ChatbotFlowValidationError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    except CHATBOT_SERVICE_ERRORS as e:
+        raise to_http_exception(e) from e
     return APIResponse.success_response(build_chatbot_flow_version_public(flow_version))

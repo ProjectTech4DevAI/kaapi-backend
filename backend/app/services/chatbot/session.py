@@ -9,7 +9,6 @@ from app.core.db import engine
 from app.crud.chatbot import (
     create_chatbot_session,
     create_chatbot_session_message,
-    get_chatbot,
     get_chatbot_flow_version_by_id,
     get_chatbot_session,
     get_latest_chatbot_session,
@@ -32,12 +31,11 @@ from app.services.chatbot.config import resolve_chatbot_model_settings
 from app.services.chatbot.exceptions import (
     ChatbotFlowConflictError,
     ChatbotInputError,
-    ChatbotNotFoundError,
     ChatbotProviderError,
 )
 from app.services.chatbot.flow import (
-    CHATBOT_NOT_FOUND_MESSAGE,
     find_flow_node,
+    get_chatbot_or_raise,
     parse_flow_edges,
     parse_flow_nodes,
     resolve_entry_node,
@@ -68,14 +66,12 @@ def start_chatbot_session(
     contact_ref: str,
 ) -> tuple[ChatbotSession, ChatbotFlowVersion]:
     """Create a session pinned to the live flow version and its entry node."""
-    chatbot = get_chatbot(
-        session,
+    get_chatbot_or_raise(
+        session=session,
         chatbot_id=chatbot_id,
         organization_id=organization_id,
         project_id=project_id,
     )
-    if chatbot is None:
-        raise ChatbotNotFoundError(CHATBOT_NOT_FOUND_MESSAGE)
 
     live_version = get_live_chatbot_flow_version(session, chatbot_id=chatbot_id)
     if live_version is None:
@@ -277,20 +273,13 @@ def process_chatbot_session_message(
                 max_tokens=None,
                 history_token_limit=None,
             )
-        except HTTPException as e:
+        except (HTTPException, ChatbotInputError) as e:
+            error = str(e.detail) if isinstance(e, HTTPException) else str(e)
             _send_failure_webhook(
                 session_id=session_id,
                 webhook_url=webhook_url,
                 webhook_secret=webhook_secret,
-                error=str(e.detail),
-            )
-            return
-        except ChatbotInputError as e:
-            _send_failure_webhook(
-                session_id=session_id,
-                webhook_url=webhook_url,
-                webhook_secret=webhook_secret,
-                error=str(e),
+                error=error,
             )
             return
 

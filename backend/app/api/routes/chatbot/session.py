@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.api.routes.chatbot.errors import CHATBOT_SERVICE_ERRORS, to_http_exception
 from app.celery.utils import start_chatbot_session_message
 from app.crud.chatbot import (
     create_chatbot_session_message,
@@ -21,12 +22,6 @@ from app.models import (
     CreateChatbotSessionResponse,
     SendChatbotSessionMessageRequest,
     SendChatbotSessionMessageResponse,
-)
-from app.services.chatbot.exceptions import (
-    ChatbotFlowConflictError,
-    ChatbotFlowValidationError,
-    ChatbotNotFoundError,
-    ChatbotSessionConflictError,
 )
 from app.services.chatbot.session import (
     get_latest_chatbot_session_summary,
@@ -160,12 +155,8 @@ def create_chatbot_session_route(
             project_id=auth_context.project_.id,
             contact_ref=request.contact_ref,
         )
-    except ChatbotNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except (ChatbotFlowConflictError, ChatbotSessionConflictError) as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except ChatbotFlowValidationError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    except CHATBOT_SERVICE_ERRORS as e:
+        raise to_http_exception(e) from e
     return APIResponse.success_response(
         CreateChatbotSessionResponse(
             session_id=chatbot_session.id,

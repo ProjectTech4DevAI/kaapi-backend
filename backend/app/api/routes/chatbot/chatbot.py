@@ -1,19 +1,19 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
+from app.api.routes.chatbot.errors import CHATBOT_SERVICE_ERRORS, to_http_exception
 from app.crud.chatbot import (
     create_chatbot,
     delete_chatbot,
-    get_chatbot,
     list_chatbots,
     update_chatbot,
 )
 from app.models import Chatbot, ChatbotCreate, ChatbotPublic, ChatbotUpdate, Message
-from app.services.chatbot.flow import CHATBOT_NOT_FOUND_MESSAGE
+from app.services.chatbot.flow import get_chatbot_or_raise
 from app.utils import APIResponse, load_description
 
 CHATBOT_DELETED_MESSAGE = "Chatbot deleted successfully"
@@ -24,15 +24,15 @@ router = APIRouter()
 def _get_chatbot_or_404(
     session: SessionDep, auth_context: AuthContextDep, chatbot_id: UUID
 ) -> Chatbot:
-    chatbot = get_chatbot(
-        session,
-        chatbot_id=chatbot_id,
-        organization_id=auth_context.organization_.id,
-        project_id=auth_context.project_.id,
-    )
-    if chatbot is None:
-        raise HTTPException(status_code=404, detail=CHATBOT_NOT_FOUND_MESSAGE)
-    return chatbot
+    try:
+        return get_chatbot_or_raise(
+            session=session,
+            chatbot_id=chatbot_id,
+            organization_id=auth_context.organization_.id,
+            project_id=auth_context.project_.id,
+        )
+    except CHATBOT_SERVICE_ERRORS as e:
+        raise to_http_exception(e) from e
 
 
 @router.post(

@@ -287,14 +287,15 @@ def validate_flow_for_publish(
     return pinned_nodes
 
 
-def _get_chatbot_or_raise(
+def get_chatbot_or_raise(
     *,
     session: Session,
     chatbot_id: UUID,
     organization_id: int,
     project_id: int,
-    for_update: bool,
+    for_update: bool = False,
 ) -> Chatbot:
+    """The non-deleted chatbot in the project, else ChatbotNotFoundError; `for_update` row-locks it."""
     chatbot = get_chatbot(
         session,
         chatbot_id=chatbot_id,
@@ -321,7 +322,7 @@ def get_chatbot_flow(
     version: int | None,
 ) -> ChatbotFlowVersion:
     """The requested version, else the draft if one exists, else the live version."""
-    _get_chatbot_or_raise(
+    get_chatbot_or_raise(
         session=session,
         chatbot_id=chatbot_id,
         organization_id=organization_id,
@@ -357,7 +358,7 @@ def save_chatbot_flow_draft(
     draft, or start a new draft when the highest version is live (live versions are immutable).
     """
     # The row lock serializes draft saves and publishes of the same chatbot.
-    chatbot = _get_chatbot_or_raise(
+    chatbot = get_chatbot_or_raise(
         session=session,
         chatbot_id=chatbot_id,
         organization_id=organization_id,
@@ -410,7 +411,7 @@ def publish_chatbot_flow(
     organization_id: int,
     project_id: int,
 ) -> ChatbotFlowVersion:
-    chatbot = _get_chatbot_or_raise(
+    chatbot = get_chatbot_or_raise(
         session=session,
         chatbot_id=chatbot_id,
         organization_id=organization_id,
