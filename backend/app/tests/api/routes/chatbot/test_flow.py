@@ -7,7 +7,8 @@ from fastapi.testclient import TestClient
 from httpx import Response
 from sqlmodel import Session
 
-from app.models import Chatbot, Config, Project
+from app.models import Chatbot, Config
+from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.chatbot import (
     ONBOARDING_NODE_ID,
     UNKNOWN_CHATBOT_ID,
@@ -33,14 +34,14 @@ OUTPUT_NODE_ID = "output-1"
 
 @pytest.fixture
 def save(
-    client: TestClient, headers: dict[str, str], chatbot: Chatbot
+    client: TestClient, user_api_key_header: dict[str, str], chatbot: Chatbot
 ) -> Callable[..., Response]:
     def _save(
         nodes: list[dict[str, Any]], edges: list[dict[str, Any]] | None = None
     ) -> Response:
         return client.put(
             flow_url(chatbot.id),
-            headers=headers,
+            headers=user_api_key_header,
             json={"nodes": nodes, "edges": edges or []},
         )
 
@@ -49,9 +50,9 @@ def save(
 
 @pytest.fixture
 def publish(
-    client: TestClient, headers: dict[str, str], chatbot: Chatbot
+    client: TestClient, user_api_key_header: dict[str, str], chatbot: Chatbot
 ) -> Callable[[], Response]:
-    return lambda: client.post(publish_url(chatbot.id), headers=headers)
+    return lambda: client.post(publish_url(chatbot.id), headers=user_api_key_header)
 
 
 @pytest.fixture
@@ -98,7 +99,7 @@ class TestSaveChatbotFlow:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         config: Config,
         chatbot: Chatbot,
         save: Callable[..., Response],
@@ -110,18 +111,21 @@ class TestSaveChatbotFlow:
         assert error.startswith(INVALID_FLOW_PREFIX)
         assert f"node '{ONBOARDING_NODE_ID}' is missing data.prompt" in error
         assert list_stored_flow_versions(db, chatbot) == []
-        assert client.get(flow_url(chatbot.id), headers=headers).status_code == 404
+        assert (
+            client.get(flow_url(chatbot.id), headers=user_api_key_header).status_code
+            == 404
+        )
 
     def test_session_can_start_right_after_first_save(
         self,
         client: TestClient,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         chatbot: Chatbot,
         live_v1: dict[str, Any],
     ) -> None:
         resp = client.post(
             sessions_url(chatbot.id),
-            headers=headers,
+            headers=user_api_key_header,
             json={"contact_ref": random_contact_ref()},
         )
 
@@ -176,7 +180,7 @@ class TestSaveChatbotFlow:
     def test_react_flow_keys_and_extra_ui_keys_round_trip(
         self,
         client: TestClient,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         config: Config,
         chatbot: Chatbot,
         save: Callable[..., Response],
@@ -195,7 +199,7 @@ class TestSaveChatbotFlow:
         }
 
         save([build_flow_node(INPUT_NODE_ID, "input"), onboarding], [edge])
-        resp = client.get(flow_url(chatbot.id), headers=headers)
+        resp = client.get(flow_url(chatbot.id), headers=user_api_key_header)
 
         body = resp.json()["data"]
         assert (body["version"], body["is_live"]) == (2, False)
@@ -258,10 +262,12 @@ class TestSaveChatbotFlow:
         assert resp.json()["data"]["is_live"] is False
 
     def test_unknown_chatbot_returns_404(
-        self, client: TestClient, headers: dict[str, str]
+        self, client: TestClient, user_api_key_header: dict[str, str]
     ) -> None:
         resp = client.put(
-            flow_url(UNKNOWN_CHATBOT_ID), headers=headers, json={"nodes": []}
+            flow_url(UNKNOWN_CHATBOT_ID),
+            headers=user_api_key_header,
+            json={"nodes": []},
         )
 
         assert resp.status_code == 404
@@ -270,12 +276,12 @@ class TestSaveChatbotFlow:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         foreign_chatbot: Chatbot,
     ) -> None:
         resp = client.put(
             flow_url(foreign_chatbot.id),
-            headers=headers,
+            headers=user_api_key_header,
             json={"nodes": [build_flow_node(INPUT_NODE_ID, "input")]},
         )
 
@@ -285,9 +291,9 @@ class TestSaveChatbotFlow:
 
 class TestGetChatbotFlow:
     def test_no_versions_returns_404(
-        self, client: TestClient, headers: dict[str, str], chatbot: Chatbot
+        self, client: TestClient, user_api_key_header: dict[str, str], chatbot: Chatbot
     ) -> None:
-        resp = client.get(flow_url(chatbot.id), headers=headers)
+        resp = client.get(flow_url(chatbot.id), headers=user_api_key_header)
 
         assert resp.status_code == 404
         assert resp.json()["error"] == "Chatbot has no flow yet; save a flow first"
@@ -296,7 +302,7 @@ class TestGetChatbotFlow:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         config: Config,
         chatbot: Chatbot,
     ) -> None:
@@ -307,7 +313,7 @@ class TestGetChatbotFlow:
             is_live=True,
         )
 
-        resp = client.get(flow_url(chatbot.id), headers=headers)
+        resp = client.get(flow_url(chatbot.id), headers=user_api_key_header)
 
         assert resp.status_code == 200
         assert resp.json()["data"]["id"] == str(live.id)
@@ -317,7 +323,7 @@ class TestGetChatbotFlow:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         config: Config,
         chatbot: Chatbot,
     ) -> None:
@@ -325,7 +331,7 @@ class TestGetChatbotFlow:
         create_test_flow_version(db, chatbot=chatbot, nodes=nodes, is_live=True)
         draft = create_test_flow_version(db, chatbot=chatbot, nodes=nodes)
 
-        resp = client.get(flow_url(chatbot.id), headers=headers)
+        resp = client.get(flow_url(chatbot.id), headers=user_api_key_header)
 
         assert resp.json()["data"]["id"] == str(draft.id)
         assert resp.json()["data"]["version"] == 2
@@ -335,7 +341,7 @@ class TestGetChatbotFlow:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         config: Config,
         chatbot: Chatbot,
     ) -> None:
@@ -343,7 +349,9 @@ class TestGetChatbotFlow:
         first = create_test_flow_version(db, chatbot=chatbot, nodes=nodes, is_live=True)
         create_test_flow_version(db, chatbot=chatbot, nodes=nodes)
 
-        resp = client.get(flow_url(chatbot.id), headers=headers, params={"version": 1})
+        resp = client.get(
+            flow_url(chatbot.id), headers=user_api_key_header, params={"version": 1}
+        )
 
         assert resp.status_code == 200
         assert resp.json()["data"]["id"] == str(first.id)
@@ -352,7 +360,7 @@ class TestGetChatbotFlow:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         config: Config,
         chatbot: Chatbot,
     ) -> None:
@@ -360,7 +368,9 @@ class TestGetChatbotFlow:
             db, chatbot=chatbot, nodes=[build_onboarding_node(config_id=config.id)]
         )
 
-        resp = client.get(flow_url(chatbot.id), headers=headers, params={"version": 7})
+        resp = client.get(
+            flow_url(chatbot.id), headers=user_api_key_header, params={"version": 7}
+        )
 
         assert resp.status_code == 404
         assert resp.json()["error"] == "Flow version 7 not found for this chatbot"
@@ -369,14 +379,14 @@ class TestGetChatbotFlow:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         foreign_chatbot: Chatbot,
     ) -> None:
         create_test_flow_version(
             db, chatbot=foreign_chatbot, nodes=[build_flow_node(INPUT_NODE_ID, "input")]
         )
 
-        resp = client.get(flow_url(foreign_chatbot.id), headers=headers)
+        resp = client.get(flow_url(foreign_chatbot.id), headers=user_api_key_header)
 
         assert resp.status_code == 404
         assert resp.json()["error"] == "Chatbot not found"
@@ -490,9 +500,9 @@ class TestPublishChatbotFlow:
         assert resp.json()["error"] == NO_DRAFT_MESSAGE
 
     def test_unknown_chatbot_returns_404(
-        self, client: TestClient, headers: dict[str, str]
+        self, client: TestClient, user_api_key_header: dict[str, str]
     ) -> None:
-        resp = client.post(publish_url(UNKNOWN_CHATBOT_ID), headers=headers)
+        resp = client.post(publish_url(UNKNOWN_CHATBOT_ID), headers=user_api_key_header)
 
         assert resp.status_code == 404
 
@@ -725,14 +735,14 @@ class TestPublishChatbotFlowValidation:
     def test_non_anthropic_config_returns_422(
         self,
         db: Session,
-        project: Project,
+        user_api_key: TestAuthContext,
         chatbot: Chatbot,
         save: Callable[..., Response],
         publish: Callable[[], Response],
         live_v1: dict[str, Any],
     ) -> None:
         openai_config = create_test_config(
-            db, project_id=project.id, use_kaapi_schema=True
+            db, project_id=user_api_key.project_id, use_kaapi_schema=True
         )
         save([build_onboarding_node(config_id=openai_config.id)])
 

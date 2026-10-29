@@ -44,7 +44,7 @@ def test_chatbot_routes_return_403_when_flag_disabled(
     client: TestClient,
     db: Session,
     user_api_key: TestAuthContext,
-    headers: dict[str, str],
+    user_api_key_header: dict[str, str],
     method: str,
     path: str,
     kwargs: dict,
@@ -54,7 +54,7 @@ def test_chatbot_routes_return_403_when_flag_disabled(
     resp = client.request(
         method,
         f"{CHATBOTS_URL}{path}",
-        headers=headers,
+        headers=user_api_key_header,
         **kwargs,
     )
 

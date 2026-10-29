@@ -9,7 +9,6 @@ from app.models import (
     ChatbotCompletionStatusEnum,
     ChatbotSession,
     ChatbotSessionStatusEnum,
-    Project,
 )
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.chatbot import (
@@ -27,10 +26,12 @@ class TestCreateChatbot:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         user_api_key: TestAuthContext,
     ) -> None:
-        resp = client.post(CHATBOTS_URL, headers=headers, json={"name": "Onboarding"})
+        resp = client.post(
+            CHATBOTS_URL, headers=user_api_key_header, json={"name": "Onboarding"}
+        )
 
         assert resp.status_code == 201
         body = resp.json()["data"]
@@ -48,9 +49,12 @@ class TestCreateChatbot:
         ids=["missing", "empty", "too-long"],
     )
     def test_invalid_name_returns_422(
-        self, client: TestClient, headers: dict[str, str], payload: dict[str, str]
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        payload: dict[str, str],
     ) -> None:
-        resp = client.post(CHATBOTS_URL, headers=headers, json=payload)
+        resp = client.post(CHATBOTS_URL, headers=user_api_key_header, json=payload)
 
         assert resp.status_code == 422
 
@@ -60,17 +64,20 @@ class TestListChatbots:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
-        project: Project,
+        user_api_key_header: dict[str, str],
+        user_api_key: TestAuthContext,
         chatbot: Chatbot,
         foreign_chatbot: Chatbot,
     ) -> None:
-        deleted = create_test_chatbot(db, project=project)
+        deleted = create_test_chatbot(db, project=user_api_key.project)
         assert (
-            client.delete(chatbot_url(deleted.id), headers=headers).status_code == 200
+            client.delete(
+                chatbot_url(deleted.id), headers=user_api_key_header
+            ).status_code
+            == 200
         )
 
-        resp = client.get(CHATBOTS_URL, headers=headers)
+        resp = client.get(CHATBOTS_URL, headers=user_api_key_header)
 
         assert resp.status_code == 200
         ids = {item["id"] for item in resp.json()["data"]}
@@ -82,17 +89,19 @@ class TestListChatbots:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
-        project: Project,
+        user_api_key_header: dict[str, str],
+        user_api_key: TestAuthContext,
     ) -> None:
         # The seeded project may already own chatbots, so page through a known head.
-        create_test_chatbot(db, project=project)
-        middle = create_test_chatbot(db, project=project)
-        newest = create_test_chatbot(db, project=project)
+        create_test_chatbot(db, project=user_api_key.project)
+        middle = create_test_chatbot(db, project=user_api_key.project)
+        newest = create_test_chatbot(db, project=user_api_key.project)
 
-        first = client.get(CHATBOTS_URL, headers=headers, params={"limit": 1})
+        first = client.get(
+            CHATBOTS_URL, headers=user_api_key_header, params={"limit": 1}
+        )
         second = client.get(
-            CHATBOTS_URL, headers=headers, params={"skip": 1, "limit": 1}
+            CHATBOTS_URL, headers=user_api_key_header, params={"skip": 1, "limit": 1}
         )
 
         assert [c["id"] for c in first.json()["data"]] == [str(newest.id)]
@@ -101,9 +110,9 @@ class TestListChatbots:
 
 class TestGetChatbot:
     def test_returns_chatbot(
-        self, client: TestClient, headers: dict[str, str], chatbot: Chatbot
+        self, client: TestClient, user_api_key_header: dict[str, str], chatbot: Chatbot
     ) -> None:
-        resp = client.get(chatbot_url(chatbot.id), headers=headers)
+        resp = client.get(chatbot_url(chatbot.id), headers=user_api_key_header)
 
         assert resp.status_code == 200
         body = resp.json()["data"]
@@ -111,17 +120,20 @@ class TestGetChatbot:
         assert body["name"] == chatbot.name
 
     def test_unknown_returns_404(
-        self, client: TestClient, headers: dict[str, str]
+        self, client: TestClient, user_api_key_header: dict[str, str]
     ) -> None:
-        resp = client.get(chatbot_url(UNKNOWN_CHATBOT_ID), headers=headers)
+        resp = client.get(chatbot_url(UNKNOWN_CHATBOT_ID), headers=user_api_key_header)
 
         assert resp.status_code == 404
         assert resp.json()["error"] == "Chatbot not found"
 
     def test_other_projects_chatbot_returns_404(
-        self, client: TestClient, headers: dict[str, str], foreign_chatbot: Chatbot
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        foreign_chatbot: Chatbot,
     ) -> None:
-        resp = client.get(chatbot_url(foreign_chatbot.id), headers=headers)
+        resp = client.get(chatbot_url(foreign_chatbot.id), headers=user_api_key_header)
 
         assert resp.status_code == 404
 
@@ -131,11 +143,13 @@ class TestUpdateChatbot:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         chatbot: Chatbot,
     ) -> None:
         resp = client.patch(
-            chatbot_url(chatbot.id), headers=headers, json={"name": "Renamed"}
+            chatbot_url(chatbot.id),
+            headers=user_api_key_header,
+            json={"name": "Renamed"},
         )
 
         assert resp.status_code == 200
@@ -149,13 +163,15 @@ class TestUpdateChatbot:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         foreign_chatbot: Chatbot,
     ) -> None:
         original_name = foreign_chatbot.name
 
         resp = client.patch(
-            chatbot_url(foreign_chatbot.id), headers=headers, json={"name": "Hijack"}
+            chatbot_url(foreign_chatbot.id),
+            headers=user_api_key_header,
+            json={"name": "Hijack"},
         )
 
         assert resp.status_code == 404
@@ -170,10 +186,10 @@ class TestDeleteChatbot:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         chatbot: Chatbot,
     ) -> None:
-        resp = client.delete(chatbot_url(chatbot.id), headers=headers)
+        resp = client.delete(chatbot_url(chatbot.id), headers=user_api_key_header)
 
         assert resp.status_code == 200
         assert resp.json()["data"] == {"message": "Chatbot deleted successfully"}
@@ -181,27 +197,33 @@ class TestDeleteChatbot:
         stored = db.get(Chatbot, chatbot.id)
         assert stored is not None
         assert stored.deleted_at is not None
-        assert client.get(chatbot_url(chatbot.id), headers=headers).status_code == 404
+        assert (
+            client.get(chatbot_url(chatbot.id), headers=user_api_key_header).status_code
+            == 404
+        )
         assert (
             client.patch(
-                chatbot_url(chatbot.id), headers=headers, json={"name": "x"}
+                chatbot_url(chatbot.id), headers=user_api_key_header, json={"name": "x"}
             ).status_code
             == 404
         )
         assert (
-            client.delete(chatbot_url(chatbot.id), headers=headers).status_code == 404
+            client.delete(
+                chatbot_url(chatbot.id), headers=user_api_key_header
+            ).status_code
+            == 404
         )
 
     def test_deactivates_active_sessions_and_hides_them_from_latest(
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         live_chatbot: Chatbot,
     ) -> None:
         chatbot_session = create_test_chatbot_session(db, chatbot=live_chatbot)
 
-        resp = client.delete(chatbot_url(live_chatbot.id), headers=headers)
+        resp = client.delete(chatbot_url(live_chatbot.id), headers=user_api_key_header)
 
         assert resp.status_code == 200
         db.expire_all()
@@ -211,7 +233,7 @@ class TestDeleteChatbot:
         assert stored.completion_status == ChatbotCompletionStatusEnum.ABANDONED
         latest = client.get(
             LATEST_SESSION_URL,
-            headers=headers,
+            headers=user_api_key_header,
             params={"contact_ref": chatbot_session.contact_ref},
         )
         assert latest.status_code == 404
@@ -220,10 +242,12 @@ class TestDeleteChatbot:
         self,
         client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        user_api_key_header: dict[str, str],
         foreign_chatbot: Chatbot,
     ) -> None:
-        resp = client.delete(chatbot_url(foreign_chatbot.id), headers=headers)
+        resp = client.delete(
+            chatbot_url(foreign_chatbot.id), headers=user_api_key_header
+        )
 
         assert resp.status_code == 404
         db.expire_all()

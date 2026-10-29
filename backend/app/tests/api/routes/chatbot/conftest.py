@@ -7,7 +7,7 @@ from app.crud.feature_flag import (
     get_feature_flag,
     update_feature_flag,
 )
-from app.models import Chatbot, Config, Project
+from app.models import Chatbot, Config
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.chatbot import (
     create_test_anthropic_config,
@@ -35,24 +35,14 @@ def chatbot_feature_enabled(db: Session, user_api_key: TestAuthContext) -> None:
 
 
 @pytest.fixture
-def headers(user_api_key: TestAuthContext) -> dict[str, str]:
-    return {"X-API-KEY": user_api_key.key}
+def config(db: Session, user_api_key: TestAuthContext) -> Config:
+    return create_test_anthropic_config(db, project_id=user_api_key.project_id)
 
 
 @pytest.fixture
-def project(user_api_key: TestAuthContext) -> Project:
-    return user_api_key.project
-
-
-@pytest.fixture
-def config(db: Session, project: Project) -> Config:
-    return create_test_anthropic_config(db, project_id=project.id)
-
-
-@pytest.fixture
-def chatbot(db: Session, project: Project) -> Chatbot:
+def chatbot(db: Session, user_api_key: TestAuthContext) -> Chatbot:
     """A chatbot in the caller's project with no flow saved yet."""
-    return create_test_chatbot(db, project=project)
+    return create_test_chatbot(db, project=user_api_key.project)
 
 
 @pytest.fixture

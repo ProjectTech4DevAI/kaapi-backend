@@ -152,21 +152,23 @@ def patch_chat_model(
 
 
 def create_test_anthropic_config(
-    db: Session, *, project_id: int | None = None
+    db: Session, *, project_id: int | None = None, **params: Any
 ) -> Config:
     return create_test_config(
-        db, project_id=project_id, config_blob=build_anthropic_text_config_blob()
+        db,
+        project_id=project_id,
+        config_blob=build_anthropic_text_config_blob(**params),
     )
 
 
 def add_test_config_version(
-    db: Session, config: Config, *, model: str = NEWER_CONFIG_MODEL
+    db: Session, config: Config, *, model: str = NEWER_CONFIG_MODEL, **params: Any
 ) -> None:
     create_test_version(
         db,
         config_id=config.id,
         project_id=config.project_id,
-        config_blob=build_anthropic_text_config_blob(model=model),
+        config_blob=build_anthropic_text_config_blob(model=model, **params),
     )
 
 

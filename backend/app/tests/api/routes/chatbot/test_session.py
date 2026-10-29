@@ -66,32 +66,36 @@ def chatbot_session(db: Session, live_chatbot: Chatbot) -> ChatbotSession:
 
 @pytest.fixture
 def create_session(
-    client: TestClient, headers: dict[str, str]
+    client: TestClient, user_api_key_header: dict[str, str]
 ) -> Callable[[UUID, dict[str, Any]], Response]:
     return lambda chatbot_id, payload: client.post(
-        sessions_url(chatbot_id), headers=headers, json=payload
+        sessions_url(chatbot_id), headers=user_api_key_header, json=payload
     )
 
 
 @pytest.fixture
-def get_latest(client: TestClient, headers: dict[str, str]) -> Callable[..., Response]:
+def get_latest(
+    client: TestClient, user_api_key_header: dict[str, str]
+) -> Callable[..., Response]:
     def _get_latest(contact_ref: str, chatbot_id: UUID | None = None) -> Response:
         params = {"contact_ref": contact_ref}
         if chatbot_id is not None:
             params["chatbot_id"] = str(chatbot_id)
-        return client.get(LATEST_SESSION_URL, headers=headers, params=params)
+        return client.get(
+            LATEST_SESSION_URL, headers=user_api_key_header, params=params
+        )
 
     return _get_latest
 
 
 @pytest.fixture
 def send_message(
-    client: TestClient, headers: dict[str, str]
+    client: TestClient, user_api_key_header: dict[str, str]
 ) -> Callable[..., Response]:
     def _send_message(session_id: UUID, **body: str) -> Response:
         return client.post(
             message_url(session_id),
-            headers=headers,
+            headers=user_api_key_header,
             json={"webhook_url": WEBHOOK_URL, **body},
         )
 
@@ -444,9 +448,9 @@ class TestGetLatestChatbotSession:
         assert resp.status_code == 404
 
     def test_missing_contact_ref_returns_422(
-        self, client: TestClient, headers: dict[str, str]
+        self, client: TestClient, user_api_key_header: dict[str, str]
     ) -> None:
-        resp = client.get(LATEST_SESSION_URL, headers=headers)
+        resp = client.get(LATEST_SESSION_URL, headers=user_api_key_header)
 
         assert resp.status_code == 422
 

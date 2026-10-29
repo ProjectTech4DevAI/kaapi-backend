@@ -15,10 +15,6 @@ from app.tests.utils.chatbot import (
     build_onboarding_node,
     create_test_anthropic_config,
 )
-from app.tests.utils.test_data import (
-    build_anthropic_text_config_blob,
-    create_test_config,
-)
 
 CONFIG_ID = UUID("00000000-0000-0000-0000-00000000c0f1")
 
@@ -200,11 +196,8 @@ class TestValidateFlowForPublish:
     def test_config_error_is_reported_per_node_without_nested_kaapi_tag(
         self, db: Session
     ) -> None:
-        bad_thinking_config = create_test_config(
-            db,
-            config_blob=build_anthropic_text_config_blob(
-                thinking={"type": "enabled", "budget_tokens": 999_999}
-            ),
+        bad_thinking_config = create_test_anthropic_config(
+            db, thinking={"type": "enabled", "budget_tokens": 999_999}
         )
 
         with pytest.raises(ChatbotFlowValidationError) as exc_info:

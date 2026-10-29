@@ -14,12 +14,7 @@ from app.tests.utils.chatbot import (
     add_test_config_version,
     create_test_anthropic_config,
 )
-from app.tests.utils.test_data import (
-    build_anthropic_text_config_blob,
-    create_test_config,
-    create_test_project,
-    create_test_version,
-)
+from app.tests.utils.test_data import create_test_config, create_test_project
 
 
 def _resolve(
@@ -53,18 +48,13 @@ def _overwrite_latest_blob(db: Session, config: Config, blob: dict[str, Any]) ->
 
 class TestResolveChatbotModelSettings:
     def test_latest_version_with_server_defaults(self, db: Session) -> None:
-        config = create_test_config(
-            db, config_blob=build_anthropic_text_config_blob(model="claude-sonnet-4-6")
-        )
-        create_test_version(
+        config = create_test_anthropic_config(db, model="claude-sonnet-4-6")
+        add_test_config_version(
             db,
-            config_id=config.id,
-            project_id=config.project_id,
-            config_blob=build_anthropic_text_config_blob(
-                model="claude-opus-5-5",
-                effort="high",
-                thinking={"type": "adaptive", "display": "summarized"},
-            ),
+            config,
+            model="claude-opus-5-5",
+            effort="high",
+            thinking={"type": "adaptive", "display": "summarized"},
         )
 
         model_settings = _resolve(db, config)
@@ -81,9 +71,7 @@ class TestResolveChatbotModelSettings:
         self, db: Session
     ) -> None:
         thinking = {"type": "enabled", "budget_tokens": 2048}
-        config = create_test_config(
-            db, config_blob=build_anthropic_text_config_blob(thinking=thinking)
-        )
+        config = create_test_anthropic_config(db, thinking=thinking)
 
         model_settings = _resolve(db, config, max_tokens=4096)
 
@@ -102,17 +90,13 @@ class TestResolveChatbotModelSettings:
     def test_enabled_thinking_budget_not_below_max_tokens_rejected(
         self, db: Session, thinking: dict[str, Any]
     ) -> None:
-        config = create_test_config(
-            db, config_blob=build_anthropic_text_config_blob(thinking=thinking)
-        )
+        config = create_test_anthropic_config(db, thinking=thinking)
 
         with pytest.raises(ChatbotInputError, match="budget_tokens"):
             _resolve(db, config)
 
     def test_explicit_version_and_request_overrides(self, db: Session) -> None:
-        config = create_test_config(
-            db, config_blob=build_anthropic_text_config_blob(model="claude-sonnet-4-6")
-        )
+        config = create_test_anthropic_config(db, model="claude-sonnet-4-6")
         add_test_config_version(db, config)
 
         model_settings = _resolve(
@@ -208,9 +192,7 @@ class TestResolveChatbotModelSettings:
 
     @pytest.mark.parametrize("effort", ["none", "minimal"])
     def test_non_anthropic_effort_rejected(self, db: Session, effort: str) -> None:
-        config = create_test_config(
-            db, config_blob=build_anthropic_text_config_blob(effort=effort)
-        )
+        config = create_test_anthropic_config(db, effort=effort)
 
         with pytest.raises(ChatbotInputError, match=f"'{effort}' is not an Anthropic"):
             _resolve(db, config)
