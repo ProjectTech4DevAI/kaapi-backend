@@ -10,6 +10,10 @@ from app.models import Config
 from app.services.chatbot.config import resolve_chatbot_model_settings
 from app.services.chatbot.exceptions import ChatbotInputError
 from app.services.chatbot.utils import ChatbotModelSettings
+from app.tests.utils.chatbot import (
+    add_test_config_version,
+    create_test_anthropic_config,
+)
 from app.tests.utils.test_data import (
     build_anthropic_text_config_blob,
     create_test_config,
@@ -109,12 +113,7 @@ class TestResolveChatbotModelSettings:
         config = create_test_config(
             db, config_blob=build_anthropic_text_config_blob(model="claude-sonnet-4-6")
         )
-        create_test_version(
-            db,
-            config_id=config.id,
-            project_id=config.project_id,
-            config_blob=build_anthropic_text_config_blob(model="claude-opus-5-5"),
-        )
+        add_test_config_version(db, config)
 
         model_settings = _resolve(
             db, config, config_version=1, max_tokens=256, history_token_limit=900
@@ -127,7 +126,7 @@ class TestResolveChatbotModelSettings:
         assert model_settings.thinking == {"type": "adaptive"}
 
     def test_unknown_version_raises_404(self, db: Session) -> None:
-        config = create_test_config(db, config_blob=build_anthropic_text_config_blob())
+        config = create_test_anthropic_config(db)
 
         with pytest.raises(HTTPException) as exc_info:
             _resolve(db, config, config_version=99)
@@ -135,7 +134,7 @@ class TestResolveChatbotModelSettings:
         assert exc_info.value.status_code == 404
 
     def test_config_from_other_project_raises_404(self, db: Session) -> None:
-        config = create_test_config(db, config_blob=build_anthropic_text_config_blob())
+        config = create_test_anthropic_config(db)
         other_project = create_test_project(db)
 
         with pytest.raises(HTTPException) as exc_info:
@@ -166,7 +165,7 @@ class TestResolveChatbotModelSettings:
         assert exc_info.value.status_code == 404
 
     def test_no_live_versions_raises_404(self, db: Session) -> None:
-        config = create_test_config(db, config_blob=build_anthropic_text_config_blob())
+        config = create_test_anthropic_config(db)
         ConfigVersionCrud(
             session=db, project_id=config.project_id, config_id=config.id
         ).delete_or_raise(1)
@@ -190,14 +189,14 @@ class TestResolveChatbotModelSettings:
             _resolve(db, config)
 
     def test_invalid_stored_blob_rejected(self, db: Session) -> None:
-        config = create_test_config(db, config_blob=build_anthropic_text_config_blob())
+        config = create_test_anthropic_config(db)
         _overwrite_latest_blob(db, config, {"completion": {"provider": "anthropic"}})
 
         with pytest.raises(ChatbotInputError, match="blob is invalid"):
             _resolve(db, config)
 
     def test_missing_model_rejected(self, db: Session) -> None:
-        config = create_test_config(db, config_blob=build_anthropic_text_config_blob())
+        config = create_test_anthropic_config(db)
         _overwrite_latest_blob(
             db,
             config,

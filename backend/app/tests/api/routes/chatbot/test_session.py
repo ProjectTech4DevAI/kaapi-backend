@@ -1,94 +1,101 @@
-import re
 import socket
+from collections.abc import Callable
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, select
+from httpx import Response
+from sqlmodel import Session
 
 from app.api.routes.chatbot import session as session_routes
-from app.core.config import settings
 from app.crud.chatbot import (
-    get_chatbot_session,
+    delete_chatbot,
     list_chatbot_session_messages,
     update_chatbot_session_progress,
 )
 from app.models import (
-    DEFAULT_CHATBOT_NAME,
+    Chatbot,
     ChatbotCompletionStatusEnum,
     ChatbotMessageRoleEnum,
     ChatbotSession,
     ChatbotSessionStatusEnum,
     Config,
 )
-from app.services.chatbot import chatbot_ref as chatbot_ref_module
-from app.services.chatbot.chatbot_ref import (
-    CHATBOT_REF_PREFIX,
-    CHATBOT_REF_SUFFIX_LENGTH,
-)
+from app.services.chatbot import session as session_service
 from app.services.chatbot.exceptions import (
     CONCURRENT_SESSION_CONFLICT_MESSAGE,
     ChatbotSessionConflictError,
 )
+from app.services.chatbot.session import NO_LIVE_FLOW_MESSAGE
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.chatbot import (
+    DEFAULT_SYSTEM_PROMPT,
+    LATEST_SESSION_URL,
+    ONBOARDING_NODE_ID,
+    UNKNOWN_CHATBOT_ID,
+    WEBHOOK_URL,
     add_test_chatbot_messages,
+    build_flow_edge,
+    build_flow_node,
+    build_onboarding_node,
     create_test_chatbot_session,
+    create_test_flow_version,
+    create_test_live_chatbot,
+    list_stored_sessions_for_contact,
+    message_url,
+    random_contact_ref,
+    sessions_url,
 )
-from app.tests.utils.test_data import (
-    build_anthropic_text_config_blob,
-    create_test_config,
-)
-from app.tests.utils.utils import random_lower_string
 
-SESSIONS_URL = f"{settings.API_V1_STR}/chatbot/sessions"
-WEBHOOK_URL = "https://hooks.example.com/chatbot"
 PUBLIC_IP = "93.184.216.34"
-SYSTEM_PROMPT = "Collect the user's name and city."
-
-
-def _message_url(session_id: Any) -> str:
-    return f"{SESSIONS_URL}/{session_id}/message"
-
-
-def _sessions_for_contact(db: Session, contact_ref: str) -> list[ChatbotSession]:
-    db.expire_all()
-    return list(
-        db.exec(
-            select(ChatbotSession).where(ChatbotSession.contact_ref == contact_ref)
-        ).all()
-    )
 
 
 def _supersede(db: Session, chatbot_session: ChatbotSession) -> ChatbotSession:
-    config = db.get(Config, chatbot_session.config_id)
-    assert config is not None
+    chatbot = db.get(Chatbot, chatbot_session.chatbot_id)
+    assert chatbot is not None
     return create_test_chatbot_session(
-        db,
-        config=config,
-        contact_ref=chatbot_session.contact_ref,
-        chatbot_ref=chatbot_session.chatbot_ref,
+        db, chatbot=chatbot, contact_ref=chatbot_session.contact_ref
     )
 
 
 @pytest.fixture
-def headers(user_api_key: TestAuthContext) -> dict[str, str]:
-    return {"X-API-KEY": user_api_key.key}
+def chatbot_session(db: Session, live_chatbot: Chatbot) -> ChatbotSession:
+    return create_test_chatbot_session(db, chatbot=live_chatbot)
 
 
 @pytest.fixture
-def anthropic_config(db: Session, user_api_key: TestAuthContext) -> Config:
-    return create_test_config(
-        db,
-        project_id=user_api_key.project_id,
-        config_blob=build_anthropic_text_config_blob(),
+def create_session(
+    client: TestClient, headers: dict[str, str]
+) -> Callable[[UUID, dict[str, Any]], Response]:
+    return lambda chatbot_id, payload: client.post(
+        sessions_url(chatbot_id), headers=headers, json=payload
     )
 
 
 @pytest.fixture
-def chatbot_session(db: Session, anthropic_config: Config) -> ChatbotSession:
-    return create_test_chatbot_session(db, config=anthropic_config)
+def get_latest(client: TestClient, headers: dict[str, str]) -> Callable[..., Response]:
+    def _get_latest(contact_ref: str, chatbot_id: UUID | None = None) -> Response:
+        params = {"contact_ref": contact_ref}
+        if chatbot_id is not None:
+            params["chatbot_id"] = str(chatbot_id)
+        return client.get(LATEST_SESSION_URL, headers=headers, params=params)
+
+    return _get_latest
+
+
+@pytest.fixture
+def send_message(
+    client: TestClient, headers: dict[str, str]
+) -> Callable[..., Response]:
+    def _send_message(session_id: UUID, **body: str) -> Response:
+        return client.post(
+            message_url(session_id),
+            headers=headers,
+            json={"webhook_url": WEBHOOK_URL, **body},
+        )
+
+    return _send_message
 
 
 @pytest.fixture
@@ -112,269 +119,147 @@ def enqueued(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
 
 class TestCreateChatbotSession:
-    def test_creates_session_in_callers_project(
+    def test_creates_session_pinned_to_live_flow_and_entry_node(
         self,
-        client: TestClient,
         db: Session,
-        headers: dict[str, str],
-        user_api_key: TestAuthContext,
-        anthropic_config: Config,
-    ) -> None:
-        contact_ref = f"contact-{random_lower_string()}"
-
-        resp = client.post(
-            SESSIONS_URL,
-            headers=headers,
-            json={
-                "name": "Onboarding Bot",
-                "config_id": str(anthropic_config.id),
-                "config_version": 1,
-                "contact_ref": contact_ref,
-                "chatbot_ref": "chatbot-onboarding",
-                "system_prompt": SYSTEM_PROMPT,
-            },
-        )
-
-        assert resp.status_code == 201
-        session_id = resp.json()["data"]["session_id"]
-        stored = get_chatbot_session(
-            db,
-            session_id=session_id,
-            organization_id=user_api_key.organization_id,
-            project_id=user_api_key.project_id,
-        )
-        assert stored is not None
-        assert stored.name == "Onboarding Bot"
-        assert stored.contact_ref == contact_ref
-        assert stored.config_id == anthropic_config.id
-        assert stored.config_version == 1
-        assert stored.system_prompt == SYSTEM_PROMPT
-
-    def test_omitted_name_uses_default(
-        self,
-        client: TestClient,
-        db: Session,
-        headers: dict[str, str],
-        user_api_key: TestAuthContext,
-        anthropic_config: Config,
-    ) -> None:
-        resp = client.post(
-            SESSIONS_URL,
-            headers=headers,
-            json={
-                "config_id": str(anthropic_config.id),
-                "contact_ref": f"contact-{random_lower_string()}",
-                "chatbot_ref": f"chatbot-{random_lower_string()}",
-                "system_prompt": SYSTEM_PROMPT,
-            },
-        )
-
-        assert resp.status_code == 201
-        stored = get_chatbot_session(
-            db,
-            session_id=resp.json()["data"]["session_id"],
-            organization_id=user_api_key.organization_id,
-            project_id=user_api_key.project_id,
-        )
-        assert stored is not None
-        assert stored.name == DEFAULT_CHATBOT_NAME
-
-    def test_unknown_config_returns_404(
-        self, client: TestClient, headers: dict[str, str]
-    ) -> None:
-        resp = client.post(
-            SESSIONS_URL,
-            headers=headers,
-            json={
-                "config_id": str(uuid4()),
-                "contact_ref": "contact-1",
-                "chatbot_ref": "chatbot-1",
-                "system_prompt": SYSTEM_PROMPT,
-            },
-        )
-
-        assert resp.status_code == 404
-
-    def test_non_anthropic_config_returns_422(
-        self,
-        client: TestClient,
-        db: Session,
-        headers: dict[str, str],
-        user_api_key: TestAuthContext,
-    ) -> None:
-        openai_config = create_test_config(
-            db, project_id=user_api_key.project_id, use_kaapi_schema=True
-        )
-
-        resp = client.post(
-            SESSIONS_URL,
-            headers=headers,
-            json={
-                "config_id": str(openai_config.id),
-                "contact_ref": "contact-1",
-                "chatbot_ref": "chatbot-1",
-                "system_prompt": SYSTEM_PROMPT,
-            },
-        )
-
-        assert resp.status_code == 422
-        assert "only supports configs" in resp.json()["error"]
-
-
-class TestCreateChatbotSessionChatbotRef:
-    def _create(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
         config: Config,
-        contact_ref: str,
-        **extra: Any,
-    ) -> Any:
-        return client.post(
-            SESSIONS_URL,
-            headers=headers,
-            json={
-                "config_id": str(config.id),
-                "contact_ref": contact_ref,
-                "system_prompt": SYSTEM_PROMPT,
-                **extra,
-            },
-        )
-
-    def test_omitted_chatbot_ref_is_generated_and_stored(
-        self,
-        client: TestClient,
-        db: Session,
-        headers: dict[str, str],
-        anthropic_config: Config,
+        chatbot: Chatbot,
+        create_session: Callable[[UUID, dict[str, Any]], Response],
     ) -> None:
-        contact_ref = f"contact-{random_lower_string()}"
+        live = create_test_flow_version(
+            db,
+            chatbot=chatbot,
+            nodes=[
+                build_flow_node("start", "input"),
+                build_onboarding_node(config_id=config.id),
+            ],
+            edges=[build_flow_edge("e1", "start", ONBOARDING_NODE_ID)],
+            is_live=True,
+        )
+        # A newer unpublished draft must not be picked up.
+        create_test_flow_version(
+            db, chatbot=chatbot, nodes=[build_onboarding_node(config_id=config.id)]
+        )
+        contact_ref = random_contact_ref()
 
-        resp = self._create(client, headers, anthropic_config, contact_ref)
+        resp = create_session(chatbot.id, {"contact_ref": contact_ref})
 
         assert resp.status_code == 201
         body = resp.json()["data"]
-        pattern = (
-            rf"{re.escape(CHATBOT_REF_PREFIX)}[0-9a-f]{{{CHATBOT_REF_SUFFIX_LENGTH}}}"
-        )
-        assert re.fullmatch(pattern, body["chatbot_ref"])
-        [stored] = _sessions_for_contact(db, contact_ref)
+        assert body["chatbot_id"] == str(chatbot.id)
+        assert body["flow_version"] == 1
+        assert body["active_node_id"] == ONBOARDING_NODE_ID
+        [stored] = list_stored_sessions_for_contact(db, contact_ref)
         assert str(stored.id) == body["session_id"]
-        assert stored.chatbot_ref == body["chatbot_ref"]
+        assert stored.flow_version_id == live.id
+        assert stored.active_node_id == ONBOARDING_NODE_ID
+        assert stored.status == ChatbotSessionStatusEnum.ACTIVE
+        assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS
 
-    def test_provided_chatbot_ref_is_used_as_is(
+    def test_new_session_for_same_contact_supersedes_previous(
         self,
-        client: TestClient,
         db: Session,
-        headers: dict[str, str],
-        anthropic_config: Config,
+        live_chatbot: Chatbot,
+        create_session: Callable[[UUID, dict[str, Any]], Response],
+        get_latest: Callable[..., Response],
     ) -> None:
-        contact_ref = f"contact-{random_lower_string()}"
-        chatbot_ref = f"Glific Flow {random_lower_string()}"
+        contact_ref = random_contact_ref()
+        payload = {"contact_ref": contact_ref}
+        first = create_session(live_chatbot.id, payload)
 
-        resp = self._create(
-            client, headers, anthropic_config, contact_ref, chatbot_ref=chatbot_ref
-        )
+        resp = create_session(live_chatbot.id, payload)
 
         assert resp.status_code == 201
-        assert resp.json()["data"]["chatbot_ref"] == chatbot_ref
-        [stored] = _sessions_for_contact(db, contact_ref)
-        assert stored.chatbot_ref == chatbot_ref
-
-    def test_reusing_returned_ref_supersedes_previous_session(
-        self,
-        client: TestClient,
-        db: Session,
-        headers: dict[str, str],
-        anthropic_config: Config,
-    ) -> None:
-        contact_ref = f"contact-{random_lower_string()}"
-        first = self._create(client, headers, anthropic_config, contact_ref).json()[
-            "data"
-        ]
-
-        resp = self._create(
-            client,
-            headers,
-            anthropic_config,
-            contact_ref,
-            chatbot_ref=first["chatbot_ref"],
-        )
-
-        assert resp.status_code == 201
-        second = resp.json()["data"]
-        assert second["chatbot_ref"] == first["chatbot_ref"]
-        assert second["session_id"] != first["session_id"]
-        latest = client.get(
-            SESSIONS_URL,
-            headers=headers,
-            params={"contact_ref": contact_ref, "chatbot_ref": first["chatbot_ref"]},
-        ).json()["data"]
-        assert latest["session_id"] == second["session_id"]
-        assert latest["status"] == "active"
-        assert latest["completion_status"] == "in_progress"
+        first_id = first.json()["data"]["session_id"]
+        second_id = resp.json()["data"]["session_id"]
+        assert second_id != first_id
+        latest = get_latest(contact_ref, live_chatbot.id).json()["data"]
+        assert latest["session_id"] == second_id
         statuses = {
             str(s.id): (s.status, s.completion_status)
-            for s in _sessions_for_contact(db, contact_ref)
+            for s in list_stored_sessions_for_contact(db, contact_ref)
         }
         assert statuses == {
-            first["session_id"]: (
+            first_id: (
                 ChatbotSessionStatusEnum.INACTIVE,
                 ChatbotCompletionStatusEnum.ABANDONED,
             ),
-            second["session_id"]: (
+            second_id: (
                 ChatbotSessionStatusEnum.ACTIVE,
                 ChatbotCompletionStatusEnum.IN_PROGRESS,
             ),
         }
 
-    @pytest.mark.parametrize("chatbot_ref", ["", "x" * 256], ids=["empty", "too-long"])
-    def test_invalid_chatbot_ref_returns_422(
+    def test_chatbot_without_live_flow_returns_409(
         self,
-        client: TestClient,
         db: Session,
-        headers: dict[str, str],
-        anthropic_config: Config,
-        chatbot_ref: str,
+        config: Config,
+        chatbot: Chatbot,
+        create_session: Callable[[UUID, dict[str, Any]], Response],
     ) -> None:
-        contact_ref = f"contact-{random_lower_string()}"
-
-        resp = self._create(
-            client, headers, anthropic_config, contact_ref, chatbot_ref=chatbot_ref
+        create_test_flow_version(
+            db, chatbot=chatbot, nodes=[build_onboarding_node(config_id=config.id)]
         )
+        contact_ref = random_contact_ref()
+
+        resp = create_session(chatbot.id, {"contact_ref": contact_ref})
+
+        assert resp.status_code == 409
+        assert resp.json()["error"] == NO_LIVE_FLOW_MESSAGE
+        assert list_stored_sessions_for_contact(db, contact_ref) == []
+
+    def test_unknown_chatbot_returns_404(
+        self, create_session: Callable[[UUID, dict[str, Any]], Response]
+    ) -> None:
+        resp = create_session(UNKNOWN_CHATBOT_ID, {"contact_ref": "contact-1"})
+
+        assert resp.status_code == 404
+        assert resp.json()["error"] == "Chatbot not found"
+
+    def test_other_projects_chatbot_returns_404(
+        self,
+        db: Session,
+        foreign_live_chatbot: Chatbot,
+        create_session: Callable[[UUID, dict[str, Any]], Response],
+    ) -> None:
+        contact_ref = random_contact_ref()
+
+        resp = create_session(foreign_live_chatbot.id, {"contact_ref": contact_ref})
+
+        assert resp.status_code == 404
+        assert list_stored_sessions_for_contact(db, contact_ref) == []
+
+    def test_deleted_chatbot_returns_404(
+        self,
+        db: Session,
+        live_chatbot: Chatbot,
+        create_session: Callable[[UUID, dict[str, Any]], Response],
+    ) -> None:
+        delete_chatbot(db, chatbot=live_chatbot)
+
+        resp = create_session(live_chatbot.id, {"contact_ref": "c-1"})
+
+        assert resp.status_code == 404
+
+    @pytest.mark.parametrize(
+        "payload",
+        [{}, {"contact_ref": ""}, {"contact_ref": "x" * 501}],
+        ids=["missing", "empty", "too-long"],
+    )
+    def test_invalid_contact_ref_returns_422(
+        self,
+        live_chatbot: Chatbot,
+        create_session: Callable[[UUID, dict[str, Any]], Response],
+        payload: dict[str, str],
+    ) -> None:
+        resp = create_session(live_chatbot.id, payload)
 
         assert resp.status_code == 422
-        assert _sessions_for_contact(db, contact_ref) == []
-
-    def test_ref_generation_exhausted_returns_503_and_creates_nothing(
-        self,
-        client: TestClient,
-        db: Session,
-        headers: dict[str, str],
-        anthropic_config: Config,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        create_test_chatbot_session(
-            db, config=anthropic_config, chatbot_ref="LLMResponseWithPrompt-abcde"
-        )
-        # Randomness is the boundary: every draw collides with the ref above.
-        monkeypatch.setattr(
-            chatbot_ref_module.secrets, "randbelow", lambda _bound: 0xABCDE
-        )
-        contact_ref = f"contact-{random_lower_string()}"
-
-        resp = self._create(client, headers, anthropic_config, contact_ref)
-
-        assert resp.status_code == 503
-        assert "ChatbotRefGenerationError" in resp.json()["error"]
-        assert _sessions_for_contact(db, contact_ref) == []
 
     def test_concurrent_create_conflict_returns_409(
         self,
-        client: TestClient,
-        db: Session,
-        headers: dict[str, str],
-        anthropic_config: Config,
+        live_chatbot: Chatbot,
+        create_session: Callable[[UUID, dict[str, Any]], Response],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # The real unique-index race is covered in the CRUD tests; there the
@@ -382,80 +267,58 @@ class TestCreateChatbotSessionChatbotRef:
         def lose_race(*_args: Any, **_kwargs: Any) -> ChatbotSession:
             raise ChatbotSessionConflictError(CONCURRENT_SESSION_CONFLICT_MESSAGE)
 
-        monkeypatch.setattr(session_routes, "create_chatbot_session", lose_race)
+        monkeypatch.setattr(session_service, "create_chatbot_session", lose_race)
 
-        resp = self._create(
-            client,
-            headers,
-            anthropic_config,
-            f"contact-{random_lower_string()}",
-            chatbot_ref=f"chatbot-{random_lower_string()}",
-        )
+        resp = create_session(live_chatbot.id, {"contact_ref": random_contact_ref()})
 
         assert resp.status_code == 409
         assert resp.json()["error"] == CONCURRENT_SESSION_CONFLICT_MESSAGE
 
 
 class TestGetLatestChatbotSession:
-    def test_returns_contacts_newest_session_in_callers_project(
+    def test_returns_contacts_newest_session_with_chatbot_and_node_details(
         self,
-        client: TestClient,
         db: Session,
-        headers: dict[str, str],
-        anthropic_config: Config,
+        config: Config,
+        foreign_live_chatbot: Chatbot,
+        get_latest: Callable[..., Response],
     ) -> None:
-        contact_ref = f"contact-{random_lower_string()}"
-        chatbot_ref = f"chatbot-{random_lower_string()}"
-        create_test_chatbot_session(
+        chatbot, _ = create_test_live_chatbot(
             db,
-            config=anthropic_config,
-            contact_ref=contact_ref,
-            chatbot_ref=chatbot_ref,
-        )
-        newer = create_test_chatbot_session(
-            db,
-            config=anthropic_config,
+            config=config,
             name="Onboarding Bot",
-            contact_ref=contact_ref,
-            chatbot_ref=chatbot_ref,
-            config_version=1,
-            system_prompt="Collect the student's name and grade.",
+            prompt="Collect the student's name and grade.",
         )
+        contact_ref = random_contact_ref()
+        create_test_chatbot_session(db, chatbot=chatbot, contact_ref=contact_ref)
+        newer = create_test_chatbot_session(
+            db, chatbot=chatbot, contact_ref=contact_ref
+        )
+        create_test_chatbot_session(db, chatbot=chatbot)
         create_test_chatbot_session(
-            db, config=anthropic_config, chatbot_ref=chatbot_ref
-        )
-        foreign_config = create_test_config(
-            db, config_blob=build_anthropic_text_config_blob()
-        )
-        create_test_chatbot_session(
-            db, config=foreign_config, contact_ref=contact_ref, chatbot_ref=chatbot_ref
+            db, chatbot=foreign_live_chatbot, contact_ref=contact_ref
         )
 
-        resp = client.get(
-            SESSIONS_URL,
-            headers=headers,
-            params={"contact_ref": contact_ref, "chatbot_ref": chatbot_ref},
-        )
+        resp = get_latest(contact_ref, chatbot.id)
 
         assert resp.status_code == 200
         body = resp.json()["data"]
         assert body["session_id"] == str(newer.id)
-        assert body["name"] == "Onboarding Bot"
+        assert body["chatbot_id"] == str(chatbot.id)
+        assert body["chatbot_name"] == "Onboarding Bot"
+        assert body["flow_version"] == 1
+        assert body["active_node_id"] == ONBOARDING_NODE_ID
+        assert body["prompt"] == "Collect the student's name and grade."
         assert body["contact_ref"] == contact_ref
-        assert body["chatbot_ref"] == chatbot_ref
-        assert body["system_prompt"] == "Collect the student's name and grade."
         assert body["status"] == "active"
         assert body["completion_status"] == "in_progress"
         assert body["collected_fields"] == {}
-        assert body["config_id"] == str(anthropic_config.id)
-        assert body["config_version"] == 1
 
     def test_reports_stored_field_progress(
         self,
-        client: TestClient,
         db: Session,
-        headers: dict[str, str],
         chatbot_session: ChatbotSession,
+        get_latest: Callable[..., Response],
     ) -> None:
         update_chatbot_session_progress(
             db,
@@ -464,14 +327,7 @@ class TestGetLatestChatbotSession:
             completion_status=ChatbotCompletionStatusEnum.COMPLETE,
         )
 
-        resp = client.get(
-            SESSIONS_URL,
-            headers=headers,
-            params={
-                "contact_ref": chatbot_session.contact_ref,
-                "chatbot_ref": chatbot_session.chatbot_ref,
-            },
-        )
+        resp = get_latest(chatbot_session.contact_ref, chatbot_session.chatbot_id)
 
         assert resp.status_code == 200
         body = resp.json()["data"]
@@ -479,108 +335,138 @@ class TestGetLatestChatbotSession:
         assert body["completion_status"] == "complete"
         assert body["collected_fields"] == {"name": "Asha", "city": "Pune"}
 
-    def test_unknown_contact_returns_404(
-        self, client: TestClient, headers: dict[str, str]
+    def test_prompt_comes_from_the_sessions_pinned_flow(
+        self,
+        db: Session,
+        config: Config,
+        live_chatbot: Chatbot,
+        chatbot_session: ChatbotSession,
+        get_latest: Callable[..., Response],
     ) -> None:
-        resp = client.get(
-            SESSIONS_URL,
-            headers=headers,
-            params={
-                "contact_ref": f"contact-{random_lower_string()}",
-                "chatbot_ref": f"chatbot-{random_lower_string()}",
-            },
+        create_test_flow_version(
+            db,
+            chatbot=live_chatbot,
+            nodes=[
+                build_onboarding_node(config_id=config.id, prompt="A newer prompt.")
+            ],
+            is_live=True,
         )
+
+        resp = get_latest(chatbot_session.contact_ref)
+
+        body = resp.json()["data"]
+        assert body["flow_version"] == 1
+        assert body["prompt"] == DEFAULT_SYSTEM_PROMPT
+
+    def test_prompt_is_null_when_active_node_is_not_in_flow(
+        self,
+        db: Session,
+        live_chatbot: Chatbot,
+        get_latest: Callable[..., Response],
+    ) -> None:
+        chatbot_session = create_test_chatbot_session(
+            db, chatbot=live_chatbot, active_node_id="ghost"
+        )
+
+        resp = get_latest(chatbot_session.contact_ref)
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["active_node_id"] == "ghost"
+        assert resp.json()["data"]["prompt"] is None
+
+    def test_omitted_chatbot_id_returns_newest_session_across_chatbots(
+        self,
+        db: Session,
+        config: Config,
+        chatbot_session: ChatbotSession,
+        get_latest: Callable[..., Response],
+    ) -> None:
+        other_chatbot, _ = create_test_live_chatbot(db, config=config)
+        newest = create_test_chatbot_session(
+            db, chatbot=other_chatbot, contact_ref=chatbot_session.contact_ref
+        )
+
+        resp = get_latest(chatbot_session.contact_ref)
+
+        assert resp.status_code == 200
+        body = resp.json()["data"]
+        assert body["session_id"] == str(newest.id)
+        assert body["chatbot_id"] == str(other_chatbot.id)
+
+    def test_deleted_chatbots_sessions_are_excluded(
+        self,
+        db: Session,
+        config: Config,
+        chatbot_session: ChatbotSession,
+        get_latest: Callable[..., Response],
+    ) -> None:
+        deleted_chatbot, _ = create_test_live_chatbot(db, config=config)
+        create_test_chatbot_session(
+            db, chatbot=deleted_chatbot, contact_ref=chatbot_session.contact_ref
+        )
+        delete_chatbot(db, chatbot=deleted_chatbot)
+
+        across = get_latest(chatbot_session.contact_ref)
+        scoped = get_latest(chatbot_session.contact_ref, deleted_chatbot.id)
+
+        assert across.json()["data"]["session_id"] == str(chatbot_session.id)
+        assert scoped.status_code == 404
+
+    def test_unknown_contact_returns_404(
+        self, live_chatbot: Chatbot, get_latest: Callable[..., Response]
+    ) -> None:
+        resp = get_latest(random_contact_ref(), live_chatbot.id)
+
+        assert resp.status_code == 404
+        assert (
+            resp.json()["error"]
+            == "No chatbot session found for this contact_ref and chatbot_id"
+        )
+
+    def test_omitted_chatbot_id_unknown_contact_returns_404(
+        self, get_latest: Callable[..., Response]
+    ) -> None:
+        resp = get_latest(random_contact_ref())
+
+        assert resp.status_code == 404
+        assert resp.json()["error"] == "No chatbot session found for this contact_ref"
+
+    def test_other_projects_session_returns_404(
+        self,
+        db: Session,
+        foreign_live_chatbot: Chatbot,
+        get_latest: Callable[..., Response],
+    ) -> None:
+        foreign_session = create_test_chatbot_session(db, chatbot=foreign_live_chatbot)
+
+        resp = get_latest(foreign_session.contact_ref)
 
         assert resp.status_code == 404
 
     def test_missing_contact_ref_returns_422(
         self, client: TestClient, headers: dict[str, str]
     ) -> None:
-        resp = client.get(SESSIONS_URL, headers=headers)
+        resp = client.get(LATEST_SESSION_URL, headers=headers)
 
         assert resp.status_code == 422
-
-    def test_omitted_chatbot_ref_returns_contacts_newest_session_across_chatbots(
-        self,
-        client: TestClient,
-        db: Session,
-        headers: dict[str, str],
-        anthropic_config: Config,
-    ) -> None:
-        contact_ref = f"contact-{random_lower_string()}"
-        create_test_chatbot_session(
-            db,
-            config=anthropic_config,
-            contact_ref=contact_ref,
-            chatbot_ref=f"chatbot-{random_lower_string()}",
-        )
-        newest = create_test_chatbot_session(
-            db,
-            config=anthropic_config,
-            contact_ref=contact_ref,
-            chatbot_ref=f"chatbot-{random_lower_string()}",
-        )
-
-        resp = client.get(
-            SESSIONS_URL, headers=headers, params={"contact_ref": contact_ref}
-        )
-
-        assert resp.status_code == 200
-        body = resp.json()["data"]
-        assert body["session_id"] == str(newest.id)
-        assert body["chatbot_ref"] == newest.chatbot_ref
-
-    def test_omitted_chatbot_ref_unknown_contact_returns_404(
-        self, client: TestClient, headers: dict[str, str]
-    ) -> None:
-        resp = client.get(
-            SESSIONS_URL,
-            headers=headers,
-            params={"contact_ref": f"contact-{random_lower_string()}"},
-        )
-
-        assert resp.status_code == 404
-        assert resp.json()["error"] == "No chatbot session found for this contact_ref"
-
-    def test_unknown_chatbot_ref_for_known_contact_returns_404(
-        self,
-        client: TestClient,
-        headers: dict[str, str],
-        chatbot_session: ChatbotSession,
-    ) -> None:
-        resp = client.get(
-            SESSIONS_URL,
-            headers=headers,
-            params={
-                "contact_ref": chatbot_session.contact_ref,
-                "chatbot_ref": f"chatbot-{random_lower_string()}",
-            },
-        )
-
-        assert resp.status_code == 404
 
 
 class TestSendChatbotSessionMessage:
     def test_stores_user_message_and_queues_turn(
         self,
-        client: TestClient,
         db: Session,
-        headers: dict[str, str],
         user_api_key: TestAuthContext,
         chatbot_session: ChatbotSession,
+        send_message: Callable[..., Response],
         enqueued: list[dict[str, Any]],
     ) -> None:
-        resp = client.post(
-            _message_url(chatbot_session.id),
-            headers=headers,
-            json={"message": "Asha", "webhook_url": WEBHOOK_URL},
-        )
+        resp = send_message(chatbot_session.id, message="Asha")
 
         assert resp.status_code == 202
         assert resp.json()["data"] == {"status": "queued"}
         stored = list_chatbot_session_messages(db, session_id=chatbot_session.id)
-        assert [(m.role, m.content) for m in stored] == [
-            (ChatbotMessageRoleEnum.USER, "Asha")
+        assert [(m.role, m.content, m.node_id) for m in stored] == [
+            (ChatbotMessageRoleEnum.USER, "Asha", ONBOARDING_NODE_ID)
         ]
         [job] = enqueued
         assert job["session_id"] == str(chatbot_session.id)
@@ -590,17 +476,12 @@ class TestSendChatbotSessionMessage:
 
     def test_omitted_message_on_first_call_queues_greeting(
         self,
-        client: TestClient,
         db: Session,
-        headers: dict[str, str],
         chatbot_session: ChatbotSession,
+        send_message: Callable[..., Response],
         enqueued: list[dict[str, Any]],
     ) -> None:
-        resp = client.post(
-            _message_url(chatbot_session.id),
-            headers=headers,
-            json={"webhook_url": WEBHOOK_URL},
-        )
+        resp = send_message(chatbot_session.id)
 
         assert resp.status_code == 202
         assert list_chatbot_session_messages(db, session_id=chatbot_session.id) == []
@@ -608,10 +489,9 @@ class TestSendChatbotSessionMessage:
 
     def test_omitted_message_after_session_started_returns_422(
         self,
-        client: TestClient,
         db: Session,
-        headers: dict[str, str],
         chatbot_session: ChatbotSession,
+        send_message: Callable[..., Response],
         enqueued: list[dict[str, Any]],
     ) -> None:
         add_test_chatbot_messages(
@@ -620,11 +500,7 @@ class TestSendChatbotSessionMessage:
             [(ChatbotMessageRoleEnum.ASSISTANT, "Hi! What's your name?")],
         )
 
-        resp = client.post(
-            _message_url(chatbot_session.id),
-            headers=headers,
-            json={"webhook_url": WEBHOOK_URL},
-        )
+        resp = send_message(chatbot_session.id)
 
         assert resp.status_code == 422
         assert "`message` is required" in resp.json()["error"]
@@ -632,36 +508,24 @@ class TestSendChatbotSessionMessage:
 
     def test_unknown_session_returns_404(
         self,
-        client: TestClient,
-        headers: dict[str, str],
+        send_message: Callable[..., Response],
         enqueued: list[dict[str, Any]],
     ) -> None:
-        resp = client.post(
-            _message_url(uuid4()),
-            headers=headers,
-            json={"message": "Asha", "webhook_url": WEBHOOK_URL},
-        )
+        resp = send_message(uuid4(), message="Asha")
 
         assert resp.status_code == 404
         assert enqueued == []
 
     def test_session_in_other_project_returns_404(
         self,
-        client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        foreign_live_chatbot: Chatbot,
+        send_message: Callable[..., Response],
         enqueued: list[dict[str, Any]],
     ) -> None:
-        foreign_config = create_test_config(
-            db, config_blob=build_anthropic_text_config_blob()
-        )
-        foreign_session = create_test_chatbot_session(db, config=foreign_config)
+        foreign_session = create_test_chatbot_session(db, chatbot=foreign_live_chatbot)
 
-        resp = client.post(
-            _message_url(foreign_session.id),
-            headers=headers,
-            json={"message": "Asha", "webhook_url": WEBHOOK_URL},
-        )
+        resp = send_message(foreign_session.id, message="Asha")
 
         assert resp.status_code == 404
         assert list_chatbot_session_messages(db, session_id=foreign_session.id) == []
@@ -669,16 +533,15 @@ class TestSendChatbotSessionMessage:
 
     def test_non_https_webhook_url_returns_422(
         self,
-        client: TestClient,
         db: Session,
-        headers: dict[str, str],
         chatbot_session: ChatbotSession,
+        send_message: Callable[..., Response],
         enqueued: list[dict[str, Any]],
     ) -> None:
-        resp = client.post(
-            _message_url(chatbot_session.id),
-            headers=headers,
-            json={"message": "Asha", "webhook_url": "http://hooks.example.com/chatbot"},
+        resp = send_message(
+            chatbot_session.id,
+            message="Asha",
+            webhook_url="http://hooks.example.com/chatbot",
         )
 
         assert resp.status_code == 422
@@ -693,20 +556,15 @@ class TestSendChatbotSessionMessage:
     )
     def test_inactive_session_returns_409_and_stores_nothing(
         self,
-        client: TestClient,
         db: Session,
-        headers: dict[str, str],
         chatbot_session: ChatbotSession,
+        send_message: Callable[..., Response],
         enqueued: list[dict[str, Any]],
         payload: dict[str, str],
     ) -> None:
         _supersede(db, chatbot_session)
 
-        resp = client.post(
-            _message_url(chatbot_session.id),
-            headers=headers,
-            json={**payload, "webhook_url": WEBHOOK_URL},
-        )
+        resp = send_message(chatbot_session.id, **payload)
 
         assert resp.status_code == 409
         assert (
@@ -717,22 +575,31 @@ class TestSendChatbotSessionMessage:
 
     def test_inactive_session_in_other_project_returns_404(
         self,
-        client: TestClient,
         db: Session,
-        headers: dict[str, str],
+        foreign_live_chatbot: Chatbot,
+        send_message: Callable[..., Response],
         enqueued: list[dict[str, Any]],
     ) -> None:
-        foreign_config = create_test_config(
-            db, config_blob=build_anthropic_text_config_blob()
-        )
-        foreign_session = create_test_chatbot_session(db, config=foreign_config)
+        foreign_session = create_test_chatbot_session(db, chatbot=foreign_live_chatbot)
         _supersede(db, foreign_session)
 
-        resp = client.post(
-            _message_url(foreign_session.id),
-            headers=headers,
-            json={"message": "Asha", "webhook_url": WEBHOOK_URL},
-        )
+        resp = send_message(foreign_session.id, message="Asha")
 
         assert resp.status_code == 404
+        assert enqueued == []
+
+    def test_session_of_deleted_chatbot_returns_409(
+        self,
+        db: Session,
+        live_chatbot: Chatbot,
+        chatbot_session: ChatbotSession,
+        send_message: Callable[..., Response],
+        enqueued: list[dict[str, Any]],
+    ) -> None:
+        delete_chatbot(db, chatbot=live_chatbot)
+
+        resp = send_message(chatbot_session.id, message="Asha")
+
+        assert resp.status_code == 409
+        assert list_chatbot_session_messages(db, session_id=chatbot_session.id) == []
         assert enqueued == []

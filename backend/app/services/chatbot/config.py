@@ -22,9 +22,10 @@ _ANTHROPIC_EFFORT_LEVELS: tuple[AnthropicEffort, ...] = get_args(AnthropicEffort
 THINKING_TYPE_ENABLED = "enabled"
 
 
-def _get_config_version(
+def get_chatbot_config_version(
     *, session: Session, project_id: int, config_id: UUID, config_version: int | None
 ) -> ConfigVersion:
+    """The requested version, or the latest live one when `config_version` is None."""
     version_crud = ConfigVersionCrud(
         session=session, config_id=config_id, project_id=project_id
     )
@@ -74,13 +75,23 @@ def resolve_chatbot_model_settings(
     history_token_limit: int | None,
 ) -> ChatbotModelSettings:
     """Turn a saved config (+ request overrides) into chat-model settings."""
-    version_row = _get_config_version(
+    version_row = get_chatbot_config_version(
         session=session,
         project_id=project_id,
         config_id=config_id,
         config_version=config_version,
     )
+    return build_chatbot_model_settings(
+        version_row, max_tokens=max_tokens, history_token_limit=history_token_limit
+    )
 
+
+def build_chatbot_model_settings(
+    version_row: ConfigVersion,
+    *,
+    max_tokens: int | None,
+    history_token_limit: int | None,
+) -> ChatbotModelSettings:
     try:
         blob = ConfigBlob.model_validate(version_row.config_blob)
     except ValidationError as e:

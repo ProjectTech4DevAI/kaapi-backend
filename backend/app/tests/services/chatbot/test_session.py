@@ -4,7 +4,6 @@ from typing import Any
 from uuid import uuid4
 
 import anthropic
-import httpx
 import pytest
 from sqlmodel import Session
 
@@ -14,6 +13,7 @@ from app.crud.chatbot import (
 )
 from app.crud.config import ConfigVersionCrud
 from app.models import (
+    Chatbot,
     ChatbotCompletionStatusEnum,
     ChatbotMessageRoleEnum,
     ChatbotSession,
@@ -21,22 +21,32 @@ from app.models import (
     Project,
 )
 from app.services.chatbot import session as session_service
+from app.services.chatbot.agents.onboarding import graph as onboarding_graph
 from app.services.chatbot.agents.onboarding.types import FieldExtraction
-from app.services.chatbot.session import process_chatbot_session_message
+from app.services.chatbot.session import (
+    SUPERSEDED_SESSION_ERROR,
+    process_chatbot_session_message,
+)
+from app.services.chatbot.utils import ChatbotModelSettings
 from app.tests.utils.chatbot import (
+    ANTHROPIC_REQUEST,
     DEFAULT_SYSTEM_PROMPT,
+    ONBOARDING_NODE_ID,
+    WEBHOOK_URL,
     ScriptedChatModel,
     add_test_chatbot_messages,
+    add_test_config_version,
+    build_onboarding_node,
+    create_test_chatbot,
     create_test_chatbot_session,
+    create_test_flow_version,
+    create_test_live_chatbot,
     extracted_fields,
     patch_chat_model,
 )
-from app.tests.utils.test_data import (
-    build_anthropic_text_config_blob,
-    create_test_config,
-)
+from app.tests.utils.test_data import create_test_config
 
-WEBHOOK_URL = "https://hooks.example.com/chatbot"
+ChatTurns = list[tuple[ChatbotMessageRoleEnum, str]]
 
 
 class _NonClosingSession:
@@ -82,12 +92,22 @@ def callbacks(
 
 
 @pytest.fixture
-def config(db: Session) -> Config:
-    return create_test_config(db, config_blob=build_anthropic_text_config_blob())
+def chatbot(db: Session, config: Config) -> Chatbot:
+    return create_test_live_chatbot(db, config=config)[0]
+
+
+@pytest.fixture
+def unused_chat_model(monkeypatch: pytest.MonkeyPatch) -> ScriptedChatModel:
+    """A patched model for turns that must fail or skip before any LLM call."""
+    return patch_chat_model(
+        monkeypatch, ScriptedChatModel(replies=["should never be used"])
+    )
 
 
 def _process(chatbot_session: ChatbotSession, db: Session) -> None:
-    project = db.get(Project, chatbot_session.project_id)
+    chatbot = db.get(Chatbot, chatbot_session.chatbot_id)
+    assert chatbot is not None
+    project = db.get(Project, chatbot.project_id)
     assert project is not None
     process_chatbot_session_message(
         session_id=chatbot_session.id,
@@ -104,18 +124,68 @@ def _transcript(db: Session, chatbot_session: ChatbotSession) -> list[tuple[str,
     ]
 
 
+def _session_with_turns(
+    db: Session, chatbot: Chatbot, turns: ChatTurns
+) -> ChatbotSession:
+    chatbot_session = create_test_chatbot_session(db, chatbot=chatbot)
+    add_test_chatbot_messages(db, chatbot_session, turns)
+    return chatbot_session
+
+
+def _success_webhook(
+    chatbot_session: ChatbotSession,
+    chatbot: Chatbot,
+    *,
+    reply: str,
+    completion_status: str = "in_progress",
+    collected_fields: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "success": True,
+        "data": {
+            "session_id": str(chatbot_session.id),
+            "chatbot_id": str(chatbot.id),
+            "node_id": ONBOARDING_NODE_ID,
+            "reply": reply,
+            "status": "active",
+            "completion_status": completion_status,
+            "collected_fields": collected_fields or {},
+        },
+    }
+
+
+def _failure_webhook(chatbot_session: ChatbotSession, error: str) -> dict[str, Any]:
+    return {
+        "success": False,
+        "error": error,
+        "data": {"session_id": str(chatbot_session.id)},
+    }
+
+
+def _assert_single_failure_webhook(
+    callbacks: CallbackRecorder,
+    chatbot_session: ChatbotSession,
+    *error_fragments: str,
+) -> None:
+    [payload] = callbacks.payloads
+    assert payload["success"] is False
+    for fragment in error_fragments:
+        assert fragment in payload["error"]
+    assert payload["data"] == {"session_id": str(chatbot_session.id)}
+
+
 class TestProcessChatbotSessionMessage:
     def test_first_call_stores_greeting_and_posts_success_webhook(
         self,
         db: Session,
-        config: Config,
+        chatbot: Chatbot,
         callbacks: CallbackRecorder,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         patch_chat_model(
             monkeypatch, ScriptedChatModel(replies=["Hi! What's your name?"])
         )
-        chatbot_session = create_test_chatbot_session(db, config=config)
+        chatbot_session = create_test_chatbot_session(db, chatbot=chatbot)
 
         _process(chatbot_session, db)
 
@@ -125,17 +195,9 @@ class TestProcessChatbotSessionMessage:
         assert callbacks.calls == [
             (
                 WEBHOOK_URL,
-                {
-                    "success": True,
-                    "data": {
-                        "session_id": str(chatbot_session.id),
-                        "chatbot_ref": chatbot_session.chatbot_ref,
-                        "reply": "Hi! What's your name?",
-                        "status": "active",
-                        "completion_status": "in_progress",
-                        "collected_fields": {},
-                    },
-                },
+                _success_webhook(
+                    chatbot_session, chatbot, reply="Hi! What's your name?"
+                ),
                 None,
             )
         ]
@@ -143,16 +205,16 @@ class TestProcessChatbotSessionMessage:
     def test_pending_user_message_is_answered_with_prior_history(
         self,
         db: Session,
-        config: Config,
+        chatbot: Chatbot,
         callbacks: CallbackRecorder,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        chat_model = ScriptedChatModel(replies=["Nice, which city?"])
-        patch_chat_model(monkeypatch, chat_model)
-        chatbot_session = create_test_chatbot_session(db, config=config)
-        add_test_chatbot_messages(
+        chat_model = patch_chat_model(
+            monkeypatch, ScriptedChatModel(replies=["Nice, which city?"])
+        )
+        chatbot_session = _session_with_turns(
             db,
-            chatbot_session,
+            chatbot,
             [
                 (ChatbotMessageRoleEnum.ASSISTANT, "Hi! What's your name?"),
                 (ChatbotMessageRoleEnum.USER, "Asha"),
@@ -177,16 +239,16 @@ class TestProcessChatbotSessionMessage:
     def test_stored_system_rows_are_not_sent_as_history(
         self,
         db: Session,
-        config: Config,
+        chatbot: Chatbot,
         callbacks: CallbackRecorder,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        chat_model = ScriptedChatModel(replies=["Which city?"])
-        patch_chat_model(monkeypatch, chat_model)
-        chatbot_session = create_test_chatbot_session(db, config=config)
-        add_test_chatbot_messages(
+        chat_model = patch_chat_model(
+            monkeypatch, ScriptedChatModel(replies=["Which city?"])
+        )
+        chatbot_session = _session_with_turns(
             db,
-            chatbot_session,
+            chatbot,
             [
                 (ChatbotMessageRoleEnum.SYSTEM, "stale stored prompt"),
                 (ChatbotMessageRoleEnum.USER, "I'm Asha"),
@@ -203,16 +265,13 @@ class TestProcessChatbotSessionMessage:
     def test_already_answered_turn_is_skipped(
         self,
         db: Session,
-        config: Config,
+        chatbot: Chatbot,
         callbacks: CallbackRecorder,
-        monkeypatch: pytest.MonkeyPatch,
+        unused_chat_model: ScriptedChatModel,
     ) -> None:
-        chat_model = ScriptedChatModel(replies=["should never be used"])
-        patch_chat_model(monkeypatch, chat_model)
-        chatbot_session = create_test_chatbot_session(db, config=config)
-        add_test_chatbot_messages(
+        chatbot_session = _session_with_turns(
             db,
-            chatbot_session,
+            chatbot,
             [
                 (ChatbotMessageRoleEnum.USER, "Asha"),
                 (ChatbotMessageRoleEnum.ASSISTANT, "Which city?"),
@@ -221,7 +280,7 @@ class TestProcessChatbotSessionMessage:
 
         _process(chatbot_session, db)
 
-        assert chat_model.calls == []
+        assert unused_chat_model.calls == []
         assert callbacks.calls == []
         assert _transcript(db, chatbot_session) == [
             ("user", "Asha"),
@@ -231,13 +290,11 @@ class TestProcessChatbotSessionMessage:
     def test_unknown_session_does_nothing(
         self,
         db: Session,
-        config: Config,
+        chatbot: Chatbot,
         callbacks: CallbackRecorder,
-        monkeypatch: pytest.MonkeyPatch,
+        unused_chat_model: ScriptedChatModel,
     ) -> None:
-        chat_model = ScriptedChatModel(replies=["should never be used"])
-        patch_chat_model(monkeypatch, chat_model)
-        project = db.get(Project, config.project_id)
+        project = db.get(Project, chatbot.project_id)
         assert project is not None
 
         process_chatbot_session_message(
@@ -247,98 +304,115 @@ class TestProcessChatbotSessionMessage:
             webhook_url=WEBHOOK_URL,
         )
 
-        assert chat_model.calls == []
+        assert unused_chat_model.calls == []
         assert callbacks.calls == []
 
     def test_deleted_config_version_posts_failure_webhook(
         self,
         db: Session,
         config: Config,
+        chatbot: Chatbot,
         callbacks: CallbackRecorder,
-        monkeypatch: pytest.MonkeyPatch,
+        unused_chat_model: ScriptedChatModel,
     ) -> None:
-        chat_model = ScriptedChatModel(replies=["should never be used"])
-        patch_chat_model(monkeypatch, chat_model)
-        chatbot_session = create_test_chatbot_session(db, config=config)
+        chatbot_session = create_test_chatbot_session(db, chatbot=chatbot)
         ConfigVersionCrud(
             session=db, project_id=config.project_id, config_id=config.id
         ).delete_or_raise(1)
 
         _process(chatbot_session, db)
 
-        assert chat_model.calls == []
+        assert unused_chat_model.calls == []
         assert _transcript(db, chatbot_session) == []
         assert callbacks.calls == [
             (
                 WEBHOOK_URL,
-                {
-                    "success": False,
-                    "error": f"No version found for config '{config.id}'",
-                    "data": {"session_id": str(chatbot_session.id)},
-                },
+                _failure_webhook(
+                    chatbot_session,
+                    f"Version with number '1' not found for config '{config.id}'",
+                ),
                 None,
             )
         ]
+
+    def test_turn_runs_the_pinned_version_after_a_newer_one_is_saved(
+        self,
+        db: Session,
+        config: Config,
+        chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        chat_model = ScriptedChatModel(replies=["Hi! What's your name?"])
+        used_models: list[str] = []
+
+        def _get_chat_model(model_settings: ChatbotModelSettings) -> ScriptedChatModel:
+            used_models.append(model_settings.model)
+            return chat_model
+
+        monkeypatch.setattr(onboarding_graph, "get_chat_model", _get_chat_model)
+        chatbot_session = create_test_chatbot_session(db, chatbot=chatbot)
+        add_test_config_version(db, config)
+
+        _process(chatbot_session, db)
+
+        assert used_models == ["claude-sonnet-4-6"]
+        assert callbacks.calls[0][1]["success"] is True
 
     def test_non_anthropic_config_posts_failure_webhook(
         self,
         db: Session,
         callbacks: CallbackRecorder,
-        monkeypatch: pytest.MonkeyPatch,
+        unused_chat_model: ScriptedChatModel,
     ) -> None:
-        chat_model = ScriptedChatModel(replies=["should never be used"])
-        patch_chat_model(monkeypatch, chat_model)
         openai_config = create_test_config(db, use_kaapi_schema=True)
-        chatbot_session = create_test_chatbot_session(db, config=openai_config)
+        # Publish would reject this config; the worker must still guard against it.
+        openai_chatbot, _ = create_test_live_chatbot(db, config=openai_config)
+        chatbot_session = create_test_chatbot_session(db, chatbot=openai_chatbot)
 
         _process(chatbot_session, db)
 
-        assert chat_model.calls == []
-        [payload] = callbacks.payloads
-        assert payload["success"] is False
-        assert "only supports configs" in payload["error"]
-        assert payload["data"] == {"session_id": str(chatbot_session.id)}
+        assert unused_chat_model.calls == []
+        _assert_single_failure_webhook(
+            callbacks, chatbot_session, "only supports configs"
+        )
 
     def test_provider_error_posts_failure_webhook_and_stores_nothing(
         self,
         db: Session,
-        config: Config,
+        chatbot: Chatbot,
         callbacks: CallbackRecorder,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
         patch_chat_model(
             monkeypatch,
-            ScriptedChatModel(error=anthropic.APITimeoutError(request=request)),
+            ScriptedChatModel(
+                error=anthropic.APITimeoutError(request=ANTHROPIC_REQUEST)
+            ),
         )
-        chatbot_session = create_test_chatbot_session(db, config=config)
-        add_test_chatbot_messages(
-            db, chatbot_session, [(ChatbotMessageRoleEnum.USER, "Asha")]
+        chatbot_session = _session_with_turns(
+            db, chatbot, [(ChatbotMessageRoleEnum.USER, "Asha")]
         )
 
         _process(chatbot_session, db)
 
         assert _transcript(db, chatbot_session) == [("user", "Asha")]
-        [payload] = callbacks.payloads
-        assert payload["success"] is False
-        assert "(code: APITimeoutError)" in payload["error"]
-        assert payload["data"] == {"session_id": str(chatbot_session.id)}
+        _assert_single_failure_webhook(
+            callbacks, chatbot_session, "(code: APITimeoutError)"
+        )
 
     def test_transcript_without_pending_user_turn_posts_failure_webhook(
         self,
         db: Session,
-        config: Config,
+        chatbot: Chatbot,
         callbacks: CallbackRecorder,
-        monkeypatch: pytest.MonkeyPatch,
+        unused_chat_model: ScriptedChatModel,
     ) -> None:
-        chat_model = ScriptedChatModel(replies=["should never be used"])
-        patch_chat_model(monkeypatch, chat_model)
-        chatbot_session = create_test_chatbot_session(db, config=config)
         # A trailing system row dodges the already-answered check, leaving an
         # assistant turn with no user message after it.
-        add_test_chatbot_messages(
+        chatbot_session = _session_with_turns(
             db,
-            chatbot_session,
+            chatbot,
             [
                 (ChatbotMessageRoleEnum.ASSISTANT, "Hi!"),
                 (ChatbotMessageRoleEnum.SYSTEM, "note"),
@@ -347,7 +421,7 @@ class TestProcessChatbotSessionMessage:
 
         _process(chatbot_session, db)
 
-        assert chat_model.calls == []
+        assert unused_chat_model.calls == []
         [payload] = callbacks.payloads
         assert payload["success"] is False
         assert "`message` is required" in payload["error"]
@@ -357,22 +431,24 @@ class TestSessionFieldProgress:
     def test_turn_persists_merged_fields_and_completion_and_webhook_reports_them(
         self,
         db: Session,
-        config: Config,
+        chatbot: Chatbot,
         callbacks: CallbackRecorder,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        chat_model = ScriptedChatModel(
-            replies=["Thanks, all set!"],
-            extractions=[
-                FieldExtraction(
-                    collected_fields=extracted_fields({"city": "Pune"}),
-                    missing_fields=[],
-                    is_complete=True,
-                )
-            ],
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["Thanks, all set!"],
+                extractions=[
+                    FieldExtraction(
+                        collected_fields=extracted_fields({"city": "Pune"}),
+                        missing_fields=[],
+                        is_complete=True,
+                    )
+                ],
+            ),
         )
-        patch_chat_model(monkeypatch, chat_model)
-        chatbot_session = create_test_chatbot_session(db, config=config)
+        chatbot_session = create_test_chatbot_session(db, chatbot=chatbot)
         update_chatbot_session_progress(
             db,
             session_id=chatbot_session.id,
@@ -399,43 +475,41 @@ class TestSessionFieldProgress:
         assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
         assert stored.updated_at > updated_before_turn
         assert callbacks.payloads == [
-            {
-                "success": True,
-                "data": {
-                    "session_id": str(chatbot_session.id),
-                    "chatbot_ref": chatbot_session.chatbot_ref,
-                    "reply": "Thanks, all set!",
-                    "status": "active",
-                    "completion_status": "complete",
-                    "collected_fields": {"name": "Asha", "city": "Pune"},
-                },
-            }
+            _success_webhook(
+                chatbot_session,
+                chatbot,
+                reply="Thanks, all set!",
+                completion_status="complete",
+                collected_fields={"name": "Asha", "city": "Pune"},
+            )
         ]
 
     def test_extraction_value_error_posts_failure_webhook_and_keeps_progress(
         self,
         db: Session,
-        config: Config,
+        chatbot: Chatbot,
         callbacks: CallbackRecorder,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        chat_model = ScriptedChatModel(
-            replies=["should never be used"],
-            extractions=[ValueError("thinking cannot be disabled for this model")],
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["should never be used"],
+                extractions=[ValueError("thinking cannot be disabled for this model")],
+            ),
         )
-        patch_chat_model(monkeypatch, chat_model)
-        chatbot_session = create_test_chatbot_session(db, config=config)
-        add_test_chatbot_messages(
-            db, chatbot_session, [(ChatbotMessageRoleEnum.USER, "Asha")]
+        chatbot_session = _session_with_turns(
+            db, chatbot, [(ChatbotMessageRoleEnum.USER, "Asha")]
         )
 
         _process(chatbot_session, db)
 
-        [payload] = callbacks.payloads
-        assert payload["success"] is False
-        assert "[KAAPI] Unsupported model configuration" in payload["error"]
-        assert "thinking cannot be disabled for this model" in payload["error"]
-        assert payload["data"] == {"session_id": str(chatbot_session.id)}
+        _assert_single_failure_webhook(
+            callbacks,
+            chatbot_session,
+            "[KAAPI] Unsupported model configuration",
+            "thinking cannot be disabled for this model",
+        )
         assert _transcript(db, chatbot_session) == [("user", "Asha")]
         db.expire_all()
         stored = db.get(ChatbotSession, chatbot_session.id)
@@ -446,22 +520,26 @@ class TestSessionFieldProgress:
     def test_complete_session_still_answers_new_messages(
         self,
         db: Session,
-        config: Config,
+        chatbot: Chatbot,
         callbacks: CallbackRecorder,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        chat_model = ScriptedChatModel(
-            replies=["You're welcome!"],
-            extractions=[
-                FieldExtraction(
-                    collected_fields=extracted_fields({"name": "Asha", "city": "Pune"}),
-                    missing_fields=[],
-                    is_complete=True,
-                )
-            ],
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["You're welcome!"],
+                extractions=[
+                    FieldExtraction(
+                        collected_fields=extracted_fields(
+                            {"name": "Asha", "city": "Pune"}
+                        ),
+                        missing_fields=[],
+                        is_complete=True,
+                    )
+                ],
+            ),
         )
-        patch_chat_model(monkeypatch, chat_model)
-        chatbot_session = create_test_chatbot_session(db, config=config)
+        chatbot_session = create_test_chatbot_session(db, chatbot=chatbot)
         update_chatbot_session_progress(
             db,
             session_id=chatbot_session.id,
@@ -487,3 +565,168 @@ class TestSessionFieldProgress:
         [payload] = callbacks.payloads
         assert payload["success"] is True
         assert payload["data"]["completion_status"] == "complete"
+
+
+def _session_on_live_flow(
+    db: Session,
+    config: Config,
+    *,
+    nodes: list[dict[str, Any]],
+    active_node_id: str,
+) -> ChatbotSession:
+    project = db.get(Project, config.project_id)
+    assert project is not None
+    chatbot = create_test_chatbot(db, project=project)
+    flow_version = create_test_flow_version(
+        db, chatbot=chatbot, nodes=nodes, is_live=True
+    )
+    return create_test_chatbot_session(
+        db, chatbot=chatbot, flow_version=flow_version, active_node_id=active_node_id
+    )
+
+
+class TestProcessChatbotSessionMessageFlowNode:
+    def test_reply_is_stored_against_the_active_node(
+        self,
+        db: Session,
+        chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        patch_chat_model(monkeypatch, ScriptedChatModel(replies=["Which city?"]))
+        chatbot_session = _session_with_turns(
+            db, chatbot, [(ChatbotMessageRoleEnum.USER, "Asha")]
+        )
+
+        _process(chatbot_session, db)
+
+        stored = list_chatbot_session_messages(db, session_id=chatbot_session.id)
+        assert [(m.role.value, m.node_id) for m in stored] == [
+            ("user", ONBOARDING_NODE_ID),
+            ("assistant", ONBOARDING_NODE_ID),
+        ]
+
+    def test_pinned_flow_prompt_is_used_after_a_newer_flow_is_published(
+        self,
+        db: Session,
+        config: Config,
+        chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        chat_model = patch_chat_model(
+            monkeypatch, ScriptedChatModel(replies=["Hi! What's your name?"])
+        )
+        chatbot_session = create_test_chatbot_session(db, chatbot=chatbot)
+        create_test_flow_version(
+            db,
+            chatbot=chatbot,
+            nodes=[
+                build_onboarding_node(
+                    config_id=config.id, prompt="Collect the student's grade."
+                )
+            ],
+            is_live=True,
+        )
+
+        _process(chatbot_session, db)
+
+        assert chat_model.calls[0][0].content == DEFAULT_SYSTEM_PROMPT
+        assert callbacks.payloads[0]["success"] is True
+
+    def test_inactive_session_posts_superseded_failure_webhook(
+        self,
+        db: Session,
+        chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        unused_chat_model: ScriptedChatModel,
+    ) -> None:
+        chatbot_session = _session_with_turns(
+            db, chatbot, [(ChatbotMessageRoleEnum.USER, "Asha")]
+        )
+        create_test_chatbot_session(
+            db, chatbot=chatbot, contact_ref=chatbot_session.contact_ref
+        )
+
+        _process(chatbot_session, db)
+
+        assert unused_chat_model.calls == []
+        assert callbacks.payloads == [
+            _failure_webhook(chatbot_session, SUPERSEDED_SESSION_ERROR)
+        ]
+        assert _transcript(db, chatbot_session) == [("user", "Asha")]
+
+    def test_active_node_missing_from_flow_posts_failure_webhook(
+        self,
+        db: Session,
+        config: Config,
+        callbacks: CallbackRecorder,
+        unused_chat_model: ScriptedChatModel,
+    ) -> None:
+        chatbot_session = _session_on_live_flow(
+            db,
+            config,
+            nodes=[build_onboarding_node(config_id=config.id)],
+            active_node_id="ghost",
+        )
+
+        _process(chatbot_session, db)
+
+        assert unused_chat_model.calls == []
+        assert callbacks.payloads == [
+            _failure_webhook(
+                chatbot_session,
+                "[KAAPI] Active node 'ghost' is not in the session's flow "
+                "version; start a new session.",
+            )
+        ]
+
+    def test_non_onboarding_active_node_posts_failure_webhook(
+        self,
+        db: Session,
+        config: Config,
+        callbacks: CallbackRecorder,
+        unused_chat_model: ScriptedChatModel,
+    ) -> None:
+        coordinator = build_onboarding_node(
+            config_id=config.id, node_id="router", node_type="coordinator"
+        )
+        chatbot_session = _session_on_live_flow(
+            db, config, nodes=[coordinator], active_node_id="router"
+        )
+
+        _process(chatbot_session, db)
+
+        assert unused_chat_model.calls == []
+        [payload] = callbacks.payloads
+        assert payload["success"] is False
+        assert "'router' has type 'coordinator'" in payload["error"]
+        assert "only 'onboarding' nodes can run" in payload["error"]
+
+    @pytest.mark.parametrize(
+        "node_overrides",
+        [{"prompt": None}, {"config_id": None}],
+        ids=["missing-prompt", "missing-config"],
+    )
+    def test_node_without_prompt_or_config_posts_failure_webhook(
+        self,
+        db: Session,
+        config: Config,
+        callbacks: CallbackRecorder,
+        unused_chat_model: ScriptedChatModel,
+        node_overrides: dict[str, Any],
+    ) -> None:
+        node_kwargs: dict[str, Any] = {"config_id": config.id, **node_overrides}
+        chatbot_session = _session_on_live_flow(
+            db,
+            config,
+            nodes=[build_onboarding_node(**node_kwargs)],
+            active_node_id=ONBOARDING_NODE_ID,
+        )
+
+        _process(chatbot_session, db)
+
+        assert unused_chat_model.calls == []
+        _assert_single_failure_webhook(
+            callbacks, chatbot_session, "missing data.prompt or data.config_id"
+        )

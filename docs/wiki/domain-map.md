@@ -23,8 +23,8 @@ APIKey → Organization, Project, User  # programmatic access
 | User | user.py | — | UserProject, APIKey, Notification |
 | APIKey | api_key.py | Organization, Project, User | auth dependency on every API route (logical) |
 | Credential | credentials.py | Organization, Project | provider clients: OpenAI/Gemini/Anthropic calls (logical); bucket providers (`google-gcp` → GCS signing, logical) |
-| Config | config/config.py | Project | ConfigVersion; LLM call path; Chatbot turn (`POST /chatbot/message`, logical); Assessment; EvaluationRun (`config_id`) |
-| ConfigVersion | config/version.py | Config | resolved by `LLMCallConfig` saved references and chatbot `config_id`/`config_version` (logical) |
+| Config | config/config.py | Project | ConfigVersion; LLM call path; ChatbotFlowVersion agent nodes (`data.config_id`, logical); Assessment; EvaluationRun (`config_id`) |
+| ConfigVersion | config/version.py | Config | resolved by `LLMCallConfig` saved references and chatbot flow agent nodes (`data.config_id`/`data.config_version`, pinned at publish, logical) |
 | LlmCall | llm/request.py | Job, LlmChain, Org, Project | Langfuse traces (logical); analytics |
 | LlmChain | llm/request.py | Org, Project | LlmCall |
 | Job | job.py | Project | LlmCall; Assessment (RESPONSE method); Celery job execution (logical); evaluation prompt improvement (`JobType.PROMPT_IMPROVEMENT`, logical) |
@@ -50,6 +50,10 @@ APIKey → Organization, Project, User  # programmatic access
 | Language | language.py (`global.languages`) | — | EvaluationDataset, EvaluationRun, STT |
 | FeatureFlag | feature_flag.py | Org, Project | route gating (logical) |
 | Notification | notification.py | Project, User | notification service |
+| Chatbot | chatbot.py | Org, Project | ChatbotFlowVersion, ChatbotSession; soft-deleted (`deleted_at`) because sessions reference it |
+| ChatbotFlowVersion | chatbot.py | Chatbot (CASCADE) | ChatbotSession (`flow_version_id`, RESTRICT); React Flow editor in kaapi-frontend (logical); Config/ConfigVersion via node `data` (logical) |
+| ChatbotSession | chatbot.py | Chatbot (RESTRICT), ChatbotFlowVersion (RESTRICT) | ChatbotSessionMessage; Celery turn worker; caller webhook (logical) |
+| ChatbotSessionMessage | chatbot.py | ChatbotSession (CASCADE) | turn history for the onboarding agent (logical) |
 
 ## External consumers (always check in blast radius)
 
