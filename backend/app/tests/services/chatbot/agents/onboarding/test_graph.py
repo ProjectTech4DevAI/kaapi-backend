@@ -9,6 +9,7 @@ from app.services.chatbot.agents.onboarding.graph import run_chatbot_turn
 from app.services.chatbot.agents.onboarding.prompts import EXTRACTION_INSTRUCTION
 from app.services.chatbot.agents.onboarding.types import FieldExtraction
 from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
+from app.services.chatbot.history import extract_final_reply
 from app.services.chatbot.types import ChatbotMessageDict, ChatbotTurnResult
 from app.services.chatbot.utils import ChatbotModelSettings
 from app.tests.utils.chatbot import (
@@ -62,10 +63,7 @@ class TestRunChatbotTurn:
 
         result = await _run_turn(history=[], user_message=None)
 
-        assert result.transcript == [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "assistant", "content": "Hi! What's your name?"},
-        ]
+        assert result.reply == "Hi! What's your name?"
         # Anthropic rejects a conversation that doesn't open with a user turn.
         sent = chat_model.calls[0]
         assert isinstance(sent[0], SystemMessage)
@@ -86,14 +84,22 @@ class TestRunChatbotTurn:
 
         result = await _run_turn(history=history, user_message="Asha")
 
-        assert result.transcript == [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "assistant", "content": "Hi! What's your name?"},
-            {"role": "user", "content": "Asha"},
-            {"role": "assistant", "content": "Nice to meet you, Asha."},
-        ]
+        assert result.reply == "Nice to meet you, Asha."
         sent_contents = [m.content for m in chat_model.calls[0]]
         assert "stale prompt from the previous call" not in sent_contents
+
+    @pytest.mark.asyncio
+    async def test_empty_reply_becomes_provider_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        patch_chat_model(monkeypatch, ScriptedChatModel(replies=["   "]))
+
+        with pytest.raises(ChatbotProviderError, match="EmptyReply"):
+            await _run_turn(history=[], user_message=None)
+
+    def test_reply_must_come_from_a_final_ai_message(self) -> None:
+        with pytest.raises(ChatbotProviderError, match="EmptyReply"):
+            extract_final_reply([HumanMessage(content="Asha")])
 
     @pytest.mark.asyncio
     async def test_missing_message_with_history_rejected(
@@ -204,13 +210,8 @@ class TestHistorySummarization:
             "bot 3",
             "user 4",
         ]
-        # Summarization only trims the model's view; the caller keeps the full transcript.
-        assert result.transcript == [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            *history,
-            {"role": "user", "content": "user 4"},
-            {"role": "assistant", "content": "Got it."},
-        ]
+        # The reply is the turn's answer, not the summary text.
+        assert result.reply == "Got it."
 
     @pytest.mark.asyncio
     async def test_long_history_within_budget_is_sent_whole(

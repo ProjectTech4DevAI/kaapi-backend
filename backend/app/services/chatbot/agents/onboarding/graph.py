@@ -30,11 +30,11 @@ from app.services.chatbot.agents.onboarding.types import (
 )
 from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
 from app.services.chatbot.history import (
+    extract_final_reply,
     has_user_turn,
     insert_after_leading_system,
     summarize_if_needed,
     to_langchain_messages,
-    to_message_dicts,
 )
 from app.services.chatbot.types import ChatbotMessageDict, ChatbotTurnResult
 from app.services.chatbot.utils import ChatbotModelSettings, get_chat_model
@@ -225,11 +225,8 @@ async def run_chatbot_turn(
     except (anthropic.APIConnectionError, anthropic.APIStatusError, ValueError) as e:
         raise _to_provider_error(e, model=model_settings.model) from e
 
-    transcript = to_message_dicts(
-        system_prompt=system_prompt, messages=result["messages"]
-    )
     return ChatbotTurnResult(
-        transcript=transcript,
+        reply=extract_final_reply(result["messages"]),
         collected_fields=result["collected_fields"],
         is_complete=result.get("is_complete", False),
     )

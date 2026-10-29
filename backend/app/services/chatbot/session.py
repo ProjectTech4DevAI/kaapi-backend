@@ -193,13 +193,6 @@ def _split_pending_turn(
     return history, pending["content"]
 
 
-def _extract_reply(transcript: list[ChatbotMessageDict]) -> str:
-    for entry in reversed(transcript):
-        if entry["role"] == ChatbotMessageRoleEnum.ASSISTANT:
-            return entry["content"]
-    raise ChatbotInputError("[KAAPI] Chat model returned no assistant reply.")
-
-
 def _send_failure_webhook(
     *,
     session_id: UUID,
@@ -295,7 +288,6 @@ def process_chatbot_session_message(
                 collected_fields=collected_fields,
             )
         )
-        reply = _extract_reply(turn_result.transcript)
     except (ChatbotInputError, ChatbotProviderError) as e:
         _send_failure_webhook(
             session_id=session_id,
@@ -305,6 +297,7 @@ def process_chatbot_session_message(
         )
         return
 
+    reply = turn_result.reply
     completion_status = turn_result.completion_status
     with Session(engine) as session:
         create_chatbot_session_message(

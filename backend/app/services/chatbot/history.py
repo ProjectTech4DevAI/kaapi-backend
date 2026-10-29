@@ -1,12 +1,16 @@
 """Conversation-history plumbing shared by every chatbot agent graph."""
 
+import logging
+
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from app.models.chatbot import ChatbotMessageRoleEnum
-from app.services.chatbot.exceptions import ChatbotInputError
+from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
 from app.services.chatbot.types import ChatbotMessageDict
 from app.services.chatbot.utils import FLOW_KEEP_RECENT_MESSAGES
+
+logger = logging.getLogger(__name__)
 
 SUMMARY_NOTE_PREFIX = "[Earlier conversation summary] "
 SUMMARIZE_INSTRUCTION = (
@@ -112,20 +116,16 @@ def to_langchain_messages(
     return [SystemMessage(content=system_prompt), *conversation]
 
 
-def to_message_dicts(
-    *, system_prompt: str, messages: list[BaseMessage]
-) -> list[ChatbotMessageDict]:
-    transcript: list[ChatbotMessageDict] = [
-        {"role": ChatbotMessageRoleEnum.SYSTEM.value, "content": system_prompt}
-    ]
-    for message in messages:
-        if message.id == KICKOFF_MESSAGE_ID:
-            continue
-        if isinstance(message, HumanMessage):
-            role = ChatbotMessageRoleEnum.USER
-        elif isinstance(message, AIMessage):
-            role = ChatbotMessageRoleEnum.ASSISTANT
-        else:
-            continue
-        transcript.append({"role": role.value, "content": message.text})
-    return transcript
+def extract_final_reply(messages: list[BaseMessage]) -> str:
+    """Text of the turn's last message, which every agent graph ends on."""
+    reply = ""
+    if messages and isinstance(messages[-1], AIMessage):
+        reply = messages[-1].text
+    if not reply.strip():
+        error_message = (
+            "[ANTHROPIC] Chat model returned no reply text — retry the turn. "
+            "If persistent, contact Kaapi. (code: EmptyReply)"
+        )
+        logger.warning(f"[extract_final_reply] {error_message}")
+        raise ChatbotProviderError(error_message)
+    return reply

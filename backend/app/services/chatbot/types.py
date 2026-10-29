@@ -8,7 +8,7 @@ ChatbotMessageDict = dict[str, str]
 
 @dataclass(frozen=True)
 class ChatbotTurnResult:
-    transcript: list[ChatbotMessageDict]
+    reply: str
     collected_fields: dict[str, Any]
     is_complete: bool
 
