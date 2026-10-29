@@ -23,6 +23,7 @@ from app.models import (
 )
 from app.services.chatbot.config import (
     build_chatbot_model_settings,
+    get_anthropic_api_key,
     get_chatbot_config_version,
 )
 from app.services.chatbot.exceptions import (
@@ -248,12 +249,22 @@ def _pin_agent_node_config(
 def validate_flow_for_publish(
     *,
     session: Session,
+    organization_id: int,
     project_id: int,
     nodes: list[ChatbotFlowNode],
     edges: list[ChatbotFlowEdge],
 ) -> list[ChatbotFlowNode]:
     """Strict publish-time checks; returns the nodes with every agent config_version pinned."""
     problems = _list_structural_problems(nodes=nodes, edges=edges)
+
+    # Agent nodes call Anthropic with the project's own key, so a live flow needs one.
+    if any(node.type in AGENT_NODE_TYPES for node in nodes):
+        try:
+            get_anthropic_api_key(
+                session=session, organization_id=organization_id, project_id=project_id
+            )
+        except ChatbotInputError as e:
+            problems.append(str(e).removeprefix(KAAPI_ERROR_TAG).strip())
 
     pinned_nodes: list[ChatbotFlowNode] = []
     for node in nodes:
@@ -353,6 +364,7 @@ def save_chatbot_flow_draft(
         # goes live directly; it is validated like a publish so live is always runnable.
         pinned_nodes = validate_flow_for_publish(
             session=session,
+            organization_id=organization_id,
             project_id=project_id,
             nodes=flow.nodes,
             edges=flow.edges,
@@ -400,6 +412,7 @@ def publish_chatbot_flow(
 
     pinned_nodes = validate_flow_for_publish(
         session=session,
+        organization_id=organization_id,
         project_id=project_id,
         nodes=parse_flow_nodes(draft.nodes),
         edges=parse_flow_edges(draft.edges),

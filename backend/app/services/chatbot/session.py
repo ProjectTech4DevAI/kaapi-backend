@@ -270,6 +270,7 @@ def process_chatbot_session_message(
             )
             model_settings: ChatbotModelSettings = resolve_chatbot_model_settings(
                 session=session,
+                organization_id=organization_id,
                 project_id=project_id,
                 config_id=turn_node.config_id,
                 config_version=turn_node.config_version,

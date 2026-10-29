@@ -53,6 +53,6 @@ All paths relative to `backend/app/`.
 - Webhook success payload: `{"success": true, "data": {"session_id", "chatbot_id", "node_id", "reply", "status", "completion_status", "collected_fields"}}`; failure: `{"success": false, "error", "data": {"session_id"}}`.
 
 ## External
-- Anthropic via `langchain-anthropic` (`ANTHROPIC_API_KEY` setting) — two calls per turn once the user has spoken (extraction + reply), plus one summary call when history exceeds the token budget.
+- Anthropic via `langchain-anthropic`, using the **project's own Anthropic credentials** (`services/chatbot/config.py:get_anthropic_api_key`; no platform `ANTHROPIC_API_KEY` fallback — missing credentials fail publish/first save with 422 and a turn with a failure webhook) — two calls per turn once the user has spoken (extraction + reply), plus one summary call when history exceeds the token budget.
 - Caller webhook (`send_callback`, HMAC-signed with the project webhook secret).
 - kaapi-frontend React Flow editor reads/writes the flow JSON as-is.

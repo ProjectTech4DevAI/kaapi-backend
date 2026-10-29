@@ -1,3 +1,5 @@
+import logging
+from dataclasses import replace
 from typing import Any, get_args
 from uuid import UUID
 
@@ -6,6 +8,7 @@ from pydantic import ValidationError
 from sqlmodel import Session
 
 from app.crud.config import ConfigVersionCrud
+from app.crud.credentials import get_provider_credential
 from app.models import ConfigVersion
 from app.models.llm.constants import Provider
 from app.models.llm.request import ConfigBlob, KaapiTextCompletionConfig
@@ -18,8 +21,30 @@ from app.services.chatbot.utils import (
     default_thinking,
 )
 
+logger = logging.getLogger(__name__)
+
 _ANTHROPIC_EFFORT_LEVELS: tuple[AnthropicEffort, ...] = get_args(AnthropicEffort)
 THINKING_TYPE_ENABLED = "enabled"
+CREDENTIAL_API_KEY = "api_key"
+ANTHROPIC_CREDENTIALS_MISSING_MESSAGE = (
+    "[KAAPI] Anthropic credentials are not configured for this project; add an "
+    "Anthropic API key in the project's credentials."
+)
+
+
+def get_anthropic_api_key(
+    *, session: Session, organization_id: int, project_id: int
+) -> str:
+    """The project's Anthropic API key; the chatbot never falls back to a platform key."""
+    credentials = get_provider_credential(
+        session=session,
+        org_id=organization_id,
+        project_id=project_id,
+        provider=Provider.ANTHROPIC.value,
+    )
+    if not isinstance(credentials, dict) or not credentials.get(CREDENTIAL_API_KEY):
+        raise ChatbotInputError(ANTHROPIC_CREDENTIALS_MISSING_MESSAGE)
+    return credentials[CREDENTIAL_API_KEY]
 
 
 def get_chatbot_config_version(
@@ -68,22 +93,27 @@ def _validate_thinking_budget(thinking: dict[str, Any], *, max_tokens: int) -> N
 def resolve_chatbot_model_settings(
     *,
     session: Session,
+    organization_id: int,
     project_id: int,
     config_id: UUID,
     config_version: int | None,
     max_tokens: int | None,
     history_token_limit: int | None,
 ) -> ChatbotModelSettings:
-    """Turn a saved config (+ request overrides) into chat-model settings."""
+    """Turn a saved config (+ request overrides) and the project's Anthropic key into chat-model settings."""
     version_row = get_chatbot_config_version(
         session=session,
         project_id=project_id,
         config_id=config_id,
         config_version=config_version,
     )
-    return build_chatbot_model_settings(
+    model_settings = build_chatbot_model_settings(
         version_row, max_tokens=max_tokens, history_token_limit=history_token_limit
     )
+    api_key = get_anthropic_api_key(
+        session=session, organization_id=organization_id, project_id=project_id
+    )
+    return replace(model_settings, api_key=api_key)
 
 
 def build_chatbot_model_settings(
