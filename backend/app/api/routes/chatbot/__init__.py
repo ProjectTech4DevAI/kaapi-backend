@@ -12,7 +12,6 @@ router = APIRouter(
     tags=["Chatbot"],
     dependencies=[Depends(require_feature(FeatureFlag.CHATBOT))],
 )
-# Session routes first so literal `/sessions/...` paths win over `/{chatbot_id}/...`.
 router.include_router(session_router, prefix=CHATBOTS_PREFIX)
 router.include_router(chatbot_router, prefix=CHATBOTS_PREFIX)
 router.include_router(flow_router, prefix=CHATBOTS_PREFIX)
