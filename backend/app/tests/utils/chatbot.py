@@ -12,6 +12,7 @@ from pydantic import Field
 from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.crud import set_creds_for_org
 from app.crud.chatbot import (
     create_chatbot,
     create_chatbot_flow_version,
@@ -21,6 +22,7 @@ from app.crud.chatbot import (
     get_live_chatbot_flow_version,
     publish_chatbot_flow_version,
 )
+from app.crud.credentials import get_provider_credential
 from app.models import (
     Chatbot,
     ChatbotFlowNodeTypeEnum,
@@ -29,8 +31,10 @@ from app.models import (
     ChatbotSession,
     ChatbotSessionMessage,
     Config,
+    CredsCreate,
     Project,
 )
+from app.models.provider_credentials import Provider
 from app.services.chatbot.agents.onboarding import graph as onboarding_graph
 from app.services.chatbot.agents.onboarding.types import (
     ExtractedField,
@@ -151,14 +155,52 @@ def patch_chat_model(
     return chat_model
 
 
+def create_test_anthropic_credential(
+    db: Session, *, project_id: int, api_key: str | None = None
+) -> str:
+    """The project's stored Anthropic key, storing one first if the project has none."""
+    project = db.get(Project, project_id)
+    assert project is not None
+    existing = get_provider_credential(
+        session=db,
+        org_id=project.organization_id,
+        project_id=project_id,
+        provider=Provider.ANTHROPIC.value,
+    )
+    if isinstance(existing, dict):
+        return existing["api_key"]
+
+    if api_key is None:
+        api_key = f"sk-ant-{random_lower_string()}"
+    set_creds_for_org(
+        session=db,
+        creds_add=CredsCreate(
+            is_active=True,
+            credential={Provider.ANTHROPIC.value: {"api_key": api_key}},
+        ),
+        organization_id=project.organization_id,
+        project_id=project_id,
+    )
+    return api_key
+
+
 def create_test_anthropic_config(
-    db: Session, *, project_id: int | None = None, **params: Any
+    db: Session,
+    *,
+    project_id: int | None = None,
+    with_anthropic_credentials: bool = True,
+    **params: Any,
 ) -> Config:
-    return create_test_config(
+    """An Anthropic config; its project also gets Anthropic credentials unless opted out,
+    since the chatbot only runs with the project's own key."""
+    config = create_test_config(
         db,
         project_id=project_id,
         config_blob=build_anthropic_text_config_blob(**params),
     )
+    if with_anthropic_credentials:
+        create_test_anthropic_credential(db, project_id=config.project_id)
+    return config
 
 
 def add_test_config_version(

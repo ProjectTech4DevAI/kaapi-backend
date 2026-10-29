@@ -4,7 +4,7 @@ from uuid import UUID
 import pytest
 from sqlmodel import Session
 
-from app.models import ChatbotFlowEdge, ChatbotFlowNode, Config
+from app.models import ChatbotFlowEdge, ChatbotFlowNode, Config, Project
 from app.services.chatbot.exceptions import ChatbotFlowValidationError
 from app.services.chatbot.flow import resolve_entry_node, validate_flow_for_publish
 from app.tests.utils.chatbot import (
@@ -29,6 +29,12 @@ def _onboarding(
     return ChatbotFlowNode.model_validate(
         build_onboarding_node(config_id=config_id, node_id=node_id, **overrides)
     )
+
+
+def _organization_id(db: Session, config: Config) -> int:
+    project = db.get(Project, config.project_id)
+    assert project is not None
+    return project.organization_id
 
 
 def _edge(edge_id: str, source: str, target: str) -> ChatbotFlowEdge:
@@ -146,6 +152,7 @@ class TestValidateFlowForPublish:
 
         pinned = validate_flow_for_publish(
             session=db,
+            organization_id=_organization_id(db, config),
             project_id=config.project_id,
             nodes=[input_node, draft_node],
             edges=[_edge("e1", "in", ONBOARDING_NODE_ID)],
@@ -165,6 +172,7 @@ class TestValidateFlowForPublish:
 
         [pinned] = validate_flow_for_publish(
             session=db,
+            organization_id=_organization_id(db, config),
             project_id=config.project_id,
             nodes=[_onboarding(config_id=config.id, config_version=1)],
             edges=[],
@@ -184,7 +192,11 @@ class TestValidateFlowForPublish:
 
         with pytest.raises(ChatbotFlowValidationError) as exc_info:
             validate_flow_for_publish(
-                session=db, project_id=config.project_id, nodes=nodes, edges=[]
+                session=db,
+                organization_id=_organization_id(db, config),
+                project_id=config.project_id,
+                nodes=nodes,
+                edges=[],
             )
 
         assert str(exc_info.value) == (
@@ -203,6 +215,7 @@ class TestValidateFlowForPublish:
         with pytest.raises(ChatbotFlowValidationError) as exc_info:
             validate_flow_for_publish(
                 session=db,
+                organization_id=_organization_id(db, bad_thinking_config),
                 project_id=bad_thinking_config.project_id,
                 nodes=[_onboarding(config_id=bad_thinking_config.id)],
                 edges=[],
@@ -220,6 +233,7 @@ class TestValidateFlowForPublish:
         with pytest.raises(ChatbotFlowValidationError) as exc_info:
             validate_flow_for_publish(
                 session=db,
+                organization_id=_organization_id(db, config),
                 project_id=config.project_id,
                 nodes=[_onboarding(config_id=other_project_config.id)],
                 edges=[],
@@ -234,7 +248,38 @@ class TestValidateFlowForPublish:
 
         with pytest.raises(ChatbotFlowValidationError) as exc_info:
             validate_flow_for_publish(
-                session=db, project_id=config.project_id, nodes=nodes, edges=[]
+                session=db,
+                organization_id=_organization_id(db, config),
+                project_id=config.project_id,
+                nodes=nodes,
+                edges=[],
             )
 
         assert "exactly one agent node (found 2)" in str(exc_info.value)
+
+    def test_missing_anthropic_credentials_joins_the_other_problems(
+        self, db: Session
+    ) -> None:
+        uncredentialed = create_test_anthropic_config(
+            db, with_anthropic_credentials=False
+        )
+        nodes = [
+            _onboarding(config_id=uncredentialed.id),
+            _node("out-a", "output"),
+            _node("out-b", "output"),
+        ]
+
+        with pytest.raises(ChatbotFlowValidationError) as exc_info:
+            validate_flow_for_publish(
+                session=db,
+                organization_id=_organization_id(db, uncredentialed),
+                project_id=uncredentialed.project_id,
+                nodes=nodes,
+                edges=[],
+            )
+
+        message = str(exc_info.value)
+        assert message.startswith("[KAAPI] Chatbot flow is invalid: ")
+        assert "at most 1 output node allowed (found 2)" in message
+        assert "Anthropic credentials are not configured for this project" in message
+        assert message.count("[KAAPI]") == 1

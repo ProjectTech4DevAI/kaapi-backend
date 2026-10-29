@@ -4,6 +4,8 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlmodel import Session
 
+from app.core.util import now
+
 from app.crud.chatbot import (
     create_chatbot_flow_version,
     get_chatbot,
@@ -14,6 +16,7 @@ from app.crud.chatbot import (
 )
 from app.models import (
     AGENT_NODE_TYPES,
+    Chatbot,
     ChatbotFlowEdge,
     ChatbotFlowNode,
     ChatbotFlowNodeTypeEnum,
@@ -291,7 +294,7 @@ def _get_chatbot_or_raise(
     organization_id: int,
     project_id: int,
     for_update: bool,
-) -> None:
+) -> Chatbot:
     chatbot = get_chatbot(
         session,
         chatbot_id=chatbot_id,
@@ -301,6 +304,12 @@ def _get_chatbot_or_raise(
     )
     if chatbot is None:
         raise ChatbotNotFoundError(CHATBOT_NOT_FOUND_MESSAGE)
+    return chatbot
+
+
+def _mark_chatbot_edited(session: Session, chatbot: Chatbot) -> None:
+    chatbot.updated_at = now()
+    session.add(chatbot)
 
 
 def get_chatbot_flow(
@@ -348,7 +357,7 @@ def save_chatbot_flow_draft(
     draft, or start a new draft when the highest version is live (live versions are immutable).
     """
     # The row lock serializes draft saves and publishes of the same chatbot.
-    _get_chatbot_or_raise(
+    chatbot = _get_chatbot_or_raise(
         session=session,
         chatbot_id=chatbot_id,
         organization_id=organization_id,
@@ -369,6 +378,7 @@ def save_chatbot_flow_draft(
             nodes=flow.nodes,
             edges=flow.edges,
         )
+        _mark_chatbot_edited(session, chatbot)
         return create_chatbot_flow_version(
             session,
             chatbot_id=chatbot_id,
@@ -378,6 +388,7 @@ def save_chatbot_flow_draft(
             is_live=True,
         )
 
+    _mark_chatbot_edited(session, chatbot)
     if not latest.is_live:
         return update_chatbot_flow_version_graph(
             session, flow_version=latest, nodes=nodes, edges=edges
@@ -399,7 +410,7 @@ def publish_chatbot_flow(
     organization_id: int,
     project_id: int,
 ) -> ChatbotFlowVersion:
-    _get_chatbot_or_raise(
+    chatbot = _get_chatbot_or_raise(
         session=session,
         chatbot_id=chatbot_id,
         organization_id=organization_id,
@@ -417,6 +428,7 @@ def publish_chatbot_flow(
         nodes=parse_flow_nodes(draft.nodes),
         edges=parse_flow_edges(draft.edges),
     )
+    _mark_chatbot_edited(session, chatbot)
     return publish_chatbot_flow_version(
         session, flow_version=draft, nodes=dump_flow_nodes(pinned_nodes)
     )

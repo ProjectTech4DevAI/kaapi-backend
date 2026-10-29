@@ -6,15 +6,21 @@ from fastapi import HTTPException
 from sqlmodel import Session
 
 from app.crud.config import ConfigVersionCrud
-from app.models import Config
-from app.services.chatbot.config import resolve_chatbot_model_settings
+from app.models import Config, Project
+from app.services.chatbot.config import (
+    get_anthropic_api_key,
+    resolve_chatbot_model_settings,
+)
 from app.services.chatbot.exceptions import ChatbotInputError
 from app.services.chatbot.utils import ChatbotModelSettings
 from app.tests.utils.chatbot import (
     add_test_config_version,
     create_test_anthropic_config,
+    create_test_anthropic_credential,
 )
 from app.tests.utils.test_data import create_test_config, create_test_project
+
+MISSING_CREDENTIALS = "Anthropic credentials are not configured for this project"
 
 
 def _resolve(
@@ -25,8 +31,11 @@ def _resolve(
     max_tokens: int | None = None,
     history_token_limit: int | None = None,
 ) -> ChatbotModelSettings:
+    project = db.get(Project, config.project_id)
+    assert project is not None
     return resolve_chatbot_model_settings(
         session=db,
+        organization_id=project.organization_id,
         project_id=config.project_id,
         config_id=config.id,
         config_version=config_version,
@@ -44,6 +53,38 @@ def _overwrite_latest_blob(db: Session, config: Config, blob: dict[str, Any]) ->
     version.config_blob = blob
     db.add(version)
     db.commit()
+
+
+def _project_api_key(db: Session, project: Project) -> str:
+    return get_anthropic_api_key(
+        session=db, organization_id=project.organization_id, project_id=project.id
+    )
+
+
+class TestGetAnthropicApiKey:
+    def test_returns_the_projects_stored_key(self, db: Session) -> None:
+        project = create_test_project(db)
+        create_test_anthropic_credential(
+            db, project_id=project.id, api_key="sk-ant-project-key"
+        )
+
+        assert _project_api_key(db, project) == "sk-ant-project-key"
+
+    def test_project_without_anthropic_credentials_raises(self, db: Session) -> None:
+        # A credential in another project of the same org must not leak across.
+        project = create_test_project(db)
+        sibling = create_test_project(db, organization_id=project.organization_id)
+        create_test_anthropic_credential(db, project_id=sibling.id)
+
+        with pytest.raises(ChatbotInputError, match=MISSING_CREDENTIALS):
+            _project_api_key(db, project)
+
+    def test_empty_stored_key_raises(self, db: Session) -> None:
+        project = create_test_project(db)
+        create_test_anthropic_credential(db, project_id=project.id, api_key="")
+
+        with pytest.raises(ChatbotInputError, match=MISSING_CREDENTIALS):
+            _project_api_key(db, project)
 
 
 class TestResolveChatbotModelSettings:
@@ -66,6 +107,22 @@ class TestResolveChatbotModelSettings:
             thinking={"type": "adaptive", "display": "summarized"},
             history_token_limit=4000,
         )
+
+    def test_settings_carry_the_projects_anthropic_key(self, db: Session) -> None:
+        config = create_test_anthropic_config(db, with_anthropic_credentials=False)
+        create_test_anthropic_credential(
+            db, project_id=config.project_id, api_key="sk-ant-project-key"
+        )
+
+        model_settings = _resolve(db, config)
+
+        assert model_settings.api_key == "sk-ant-project-key"
+
+    def test_project_without_anthropic_credentials_raises(self, db: Session) -> None:
+        config = create_test_anthropic_config(db, with_anthropic_credentials=False)
+
+        with pytest.raises(ChatbotInputError, match=MISSING_CREDENTIALS):
+            _resolve(db, config)
 
     def test_enabled_thinking_with_budget_below_max_tokens_is_accepted(
         self, db: Session
@@ -124,6 +181,7 @@ class TestResolveChatbotModelSettings:
         with pytest.raises(HTTPException) as exc_info:
             resolve_chatbot_model_settings(
                 session=db,
+                organization_id=other_project.organization_id,
                 project_id=other_project.id,
                 config_id=config.id,
                 config_version=None,
@@ -139,6 +197,7 @@ class TestResolveChatbotModelSettings:
         with pytest.raises(HTTPException) as exc_info:
             resolve_chatbot_model_settings(
                 session=db,
+                organization_id=project.organization_id,
                 project_id=project.id,
                 config_id=uuid4(),
                 config_version=None,

@@ -37,6 +37,7 @@ from app.tests.utils.chatbot import (
     add_test_chatbot_messages,
     add_test_config_version,
     build_onboarding_node,
+    create_test_anthropic_config,
     create_test_chatbot,
     create_test_chatbot_session,
     create_test_flow_version,
@@ -375,6 +376,29 @@ class TestProcessChatbotSessionMessage:
         assert unused_chat_model.calls == []
         _assert_single_failure_webhook(
             callbacks, chatbot_session, "only supports configs"
+        )
+
+    def test_missing_anthropic_credentials_posts_failure_webhook(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        unused_chat_model: ScriptedChatModel,
+    ) -> None:
+        # The flow went live while credentials existed; the key is gone by turn time.
+        uncredentialed = create_test_anthropic_config(
+            db, with_anthropic_credentials=False
+        )
+        chatbot, _ = create_test_live_chatbot(db, config=uncredentialed)
+        chatbot_session = create_test_chatbot_session(db, chatbot=chatbot)
+
+        _process(chatbot_session, db)
+
+        assert unused_chat_model.calls == []
+        assert _transcript(db, chatbot_session) == []
+        _assert_single_failure_webhook(
+            callbacks,
+            chatbot_session,
+            "Anthropic credentials are not configured for this project",
         )
 
     def test_provider_error_posts_failure_webhook_and_stores_nothing(

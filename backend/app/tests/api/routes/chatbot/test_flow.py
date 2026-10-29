@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -10,6 +11,7 @@ from sqlmodel import Session
 from app.models import Chatbot, Config
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.chatbot import (
+    CHATBOTS_URL,
     ONBOARDING_NODE_ID,
     UNKNOWN_CHATBOT_ID,
     add_test_config_version,
@@ -17,6 +19,7 @@ from app.tests.utils.chatbot import (
     build_flow_node,
     build_onboarding_node,
     create_test_anthropic_config,
+    create_test_chatbot,
     create_test_flow_version,
     flow_url,
     list_stored_flow_versions,
@@ -28,6 +31,7 @@ from app.tests.utils.test_data import create_test_config
 
 INVALID_FLOW_PREFIX = "[KAAPI] Chatbot flow is invalid: "
 NO_DRAFT_MESSAGE = "[KAAPI] Chatbot has no draft flow to publish; save the flow first."
+MISSING_CREDENTIALS = "Anthropic credentials are not configured for this project"
 INPUT_NODE_ID = "input-1"
 OUTPUT_NODE_ID = "output-1"
 
@@ -53,6 +57,14 @@ def publish(
     client: TestClient, user_api_key_header: dict[str, str], chatbot: Chatbot
 ) -> Callable[[], Response]:
     return lambda: client.post(publish_url(chatbot.id), headers=user_api_key_header)
+
+
+@pytest.fixture
+def uncredentialed_config(db: Session, user_api_key: TestAuthContext) -> Config:
+    """An Anthropic config in the caller's project, which has no Anthropic credentials."""
+    return create_test_anthropic_config(
+        db, project_id=user_api_key.project_id, with_anthropic_credentials=False
+    )
 
 
 @pytest.fixture
@@ -781,3 +793,180 @@ class TestPublishChatbotFlowValidation:
         assert "node 'router' has type 'coordinator'" in error
         assert f"node '{ONBOARDING_NODE_ID}' is missing data.prompt" in error
         assert error.count(INVALID_FLOW_PREFIX) == 1
+
+
+class TestMissingAnthropicCredentials:
+    def test_first_save_returns_422_and_stores_nothing(
+        self,
+        client: TestClient,
+        db: Session,
+        user_api_key_header: dict[str, str],
+        uncredentialed_config: Config,
+        chatbot: Chatbot,
+        save: Callable[..., Response],
+    ) -> None:
+        resp = save([build_onboarding_node(config_id=uncredentialed_config.id)])
+
+        assert resp.status_code == 422
+        error = resp.json()["error"]
+        assert error.startswith(INVALID_FLOW_PREFIX)
+        assert MISSING_CREDENTIALS in error
+        assert error.count("[KAAPI]") == 1
+        assert list_stored_flow_versions(db, chatbot) == []
+        assert (
+            client.get(flow_url(chatbot.id), headers=user_api_key_header).status_code
+            == 404
+        )
+
+    def test_publish_returns_422_and_stays_draft(
+        self,
+        db: Session,
+        uncredentialed_config: Config,
+        chatbot: Chatbot,
+        publish: Callable[[], Response],
+    ) -> None:
+        # Stored directly: the credentials were removed after the flow went live.
+        nodes = [build_onboarding_node(config_id=uncredentialed_config.id)]
+        create_test_flow_version(db, chatbot=chatbot, nodes=nodes, is_live=True)
+        create_test_flow_version(db, chatbot=chatbot, nodes=nodes)
+
+        resp = publish()
+
+        assert resp.status_code == 422
+        error = resp.json()["error"]
+        assert error.startswith(INVALID_FLOW_PREFIX)
+        assert MISSING_CREDENTIALS in error
+        live, draft = list_stored_flow_versions(db, chatbot)
+        assert (live.version, live.is_live) == (1, True)
+        assert (draft.version, draft.is_live) == (2, False)
+
+
+def _stored_updated_at(db: Session, chatbot: Chatbot) -> datetime:
+    db.expire_all()
+    stored = db.get(Chatbot, chatbot.id)
+    assert stored is not None
+    return stored.updated_at
+
+
+def _newest_chatbot_id(client: TestClient, headers: dict[str, str]) -> str:
+    resp = client.get(CHATBOTS_URL, headers=headers, params={"limit": 1})
+    assert resp.status_code == 200
+    return resp.json()["data"][0]["id"]
+
+
+SaveBranchSetup = Callable[[Session, Chatbot, Config, Callable[..., Response]], None]
+
+
+def _no_flow_yet(
+    db: Session, chatbot: Chatbot, config: Config, save: Callable[..., Response]
+) -> None:
+    pass
+
+
+def _live_and_draft(
+    db: Session, chatbot: Chatbot, config: Config, save: Callable[..., Response]
+) -> None:
+    assert save([build_onboarding_node(config_id=config.id)]).status_code == 200
+    assert (
+        save([build_onboarding_node(config_id=config.id, prompt="Draft.")]).status_code
+        == 200
+    )
+
+
+def _live_only(
+    db: Session, chatbot: Chatbot, config: Config, save: Callable[..., Response]
+) -> None:
+    create_test_flow_version(
+        db,
+        chatbot=chatbot,
+        nodes=[build_onboarding_node(config_id=config.id)],
+        is_live=True,
+    )
+
+
+SAVE_BRANCH_SETUPS: dict[str, SaveBranchSetup] = {
+    "first-live-save": _no_flow_yet,
+    "draft-overwrite": _live_and_draft,
+    "new-draft-after-live": _live_only,
+}
+
+
+class TestFlowEditsBumpChatbotUpdatedAt:
+    @pytest.mark.parametrize(
+        "branch", sorted(SAVE_BRANCH_SETUPS), ids=sorted(SAVE_BRANCH_SETUPS)
+    )
+    def test_save_moves_chatbot_to_top_of_list(
+        self,
+        client: TestClient,
+        db: Session,
+        user_api_key_header: dict[str, str],
+        user_api_key: TestAuthContext,
+        config: Config,
+        chatbot: Chatbot,
+        save: Callable[..., Response],
+        branch: str,
+    ) -> None:
+        SAVE_BRANCH_SETUPS[branch](db, chatbot, config, save)
+        newer = create_test_chatbot(db, project=user_api_key.project)
+        assert _newest_chatbot_id(client, user_api_key_header) == str(newer.id)
+        before = _stored_updated_at(db, chatbot)
+
+        resp = save([build_onboarding_node(config_id=config.id, prompt="Ask grade.")])
+
+        assert resp.status_code == 200
+        assert _stored_updated_at(db, chatbot) > before
+        assert _newest_chatbot_id(client, user_api_key_header) == str(chatbot.id)
+
+    def test_publish_moves_chatbot_to_top_of_list(
+        self,
+        client: TestClient,
+        db: Session,
+        user_api_key_header: dict[str, str],
+        user_api_key: TestAuthContext,
+        config: Config,
+        chatbot: Chatbot,
+        save: Callable[..., Response],
+        publish: Callable[[], Response],
+        live_v1: dict[str, Any],
+    ) -> None:
+        save([build_onboarding_node(config_id=config.id, prompt="Ask grade.")])
+        newer = create_test_chatbot(db, project=user_api_key.project)
+        assert _newest_chatbot_id(client, user_api_key_header) == str(newer.id)
+        before = _stored_updated_at(db, chatbot)
+
+        resp = publish()
+
+        assert resp.status_code == 200
+        assert _stored_updated_at(db, chatbot) > before
+        assert _newest_chatbot_id(client, user_api_key_header) == str(chatbot.id)
+
+    def test_rejected_first_save_leaves_updated_at_unchanged(
+        self,
+        db: Session,
+        config: Config,
+        chatbot: Chatbot,
+        save: Callable[..., Response],
+    ) -> None:
+        before = _stored_updated_at(db, chatbot)
+
+        resp = save([build_onboarding_node(config_id=config.id, prompt=None)])
+
+        assert resp.status_code == 422
+        assert _stored_updated_at(db, chatbot) == before
+
+    def test_rejected_publish_leaves_updated_at_unchanged(
+        self,
+        db: Session,
+        config: Config,
+        chatbot: Chatbot,
+        save: Callable[..., Response],
+        publish: Callable[[], Response],
+        live_v1: dict[str, Any],
+    ) -> None:
+        save([build_onboarding_node(config_id=config.id, prompt=None)])
+        before = _stored_updated_at(db, chatbot)
+
+        resp = publish()
+
+        assert resp.status_code == 422
+        assert _stored_updated_at(db, chatbot) == before
