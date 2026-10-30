@@ -1,9 +1,9 @@
 import logging
+from fastapi import HTTPException
 from typing import Any
 from uuid import UUID, uuid4
 
 from asgi_correlation_id import correlation_id
-from fastapi import HTTPException
 from opentelemetry import trace
 from sqlmodel import Session
 
@@ -85,8 +85,8 @@ def start_job(
                 job_update=JobUpdate(status=JobStatus.FAILED, error_message=str(e)),
             )
             raise HTTPException(
-                status_code=500,
-                detail="Internal server error while scheduling guardrails job",
+                status_code=503,
+                detail="Could not queue the guardrails job. Retry shortly.",
             )
 
         logger.info(

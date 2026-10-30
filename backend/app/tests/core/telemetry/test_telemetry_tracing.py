@@ -12,33 +12,7 @@ from app.core.telemetry import tracing as telemetry
 
 
 class TestSetupTelemetryInstrumentors:
-    def test_enabled_calls_instrument_on_both(self) -> None:
-        redis, botocore = MagicMock(), MagicMock()
-        with (
-            patch.object(telemetry.settings, "SENTRY_DSN", None),
-            patch.object(telemetry, "TracerProvider", MagicMock()),
-            patch.object(telemetry.trace, "set_tracer_provider", MagicMock()),
-            patch.object(telemetry, "LoggingInstrumentor", MagicMock()),
-            patch.object(telemetry, "HTTPXClientInstrumentor", MagicMock()),
-            patch.object(telemetry, "RequestsInstrumentor", MagicMock()),
-            patch(
-                "opentelemetry.instrumentation.celery.CeleryInstrumentor", MagicMock()
-            ),
-            patch("opentelemetry.instrumentation.redis.RedisInstrumentor", redis),
-            patch(
-                "opentelemetry.instrumentation.botocore.BotocoreInstrumentor", botocore
-            ),
-        ):
-            telemetry.setup_telemetry()
-
-        redis.return_value.instrument.assert_called_once()
-        botocore.return_value.instrument.assert_called_once()
-
-    def test_redis_failure_does_not_propagate_and_botocore_still_instruments(
-        self,
-    ) -> None:
-        redis = MagicMock()
-        redis.return_value.instrument.side_effect = RuntimeError("boom")
+    def test_enabled_instruments_botocore(self) -> None:
         botocore = MagicMock()
         with (
             patch.object(telemetry.settings, "SENTRY_DSN", None),
@@ -50,7 +24,6 @@ class TestSetupTelemetryInstrumentors:
             patch(
                 "opentelemetry.instrumentation.celery.CeleryInstrumentor", MagicMock()
             ),
-            patch("opentelemetry.instrumentation.redis.RedisInstrumentor", redis),
             patch(
                 "opentelemetry.instrumentation.botocore.BotocoreInstrumentor", botocore
             ),
@@ -265,7 +238,6 @@ class TestSetupTelemetryWithSentry:
             patch(
                 "opentelemetry.instrumentation.celery.CeleryInstrumentor", MagicMock()
             ),
-            patch("opentelemetry.instrumentation.redis.RedisInstrumentor", MagicMock()),
             patch(
                 "opentelemetry.instrumentation.botocore.BotocoreInstrumentor",
                 MagicMock(),

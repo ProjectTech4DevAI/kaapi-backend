@@ -1,8 +1,10 @@
 import json
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.crud import (
@@ -435,3 +437,124 @@ def test_langfuse_credential_validation(db: Session) -> None:
     )
     assert len(created_credentials) == 1
     assert created_credentials[0].provider == "langfuse"
+
+
+def test_remove_provider_credential_missing_raises_404(db: Session) -> None:
+    """Deleting a credential that was never stored is a 404, not a 500."""
+    project = create_test_project(db)
+
+    with pytest.raises(HTTPException) as exc:
+        remove_provider_credential(
+            session=db,
+            org_id=project.organization_id,
+            provider="openai",
+            project_id=project.id,
+        )
+
+    assert exc.value.status_code == 404
+
+
+def test_remove_provider_credential_race_deletes_nothing_raises_404(
+    db: Session, monkeypatch
+) -> None:
+    """Row vanishes between the existence check and the delete: 404, not 500."""
+    _, project = create_test_credential(db)
+    monkeypatch.setattr(
+        "app.crud.credentials.get_provider_credential", lambda **k: MagicMock()
+    )
+    monkeypatch.setattr(db, "exec", lambda *a, **k: MagicMock(rowcount=0))
+
+    with pytest.raises(HTTPException) as exc:
+        remove_provider_credential(
+            session=db,
+            org_id=project.organization_id,
+            provider="openai",
+            project_id=project.id,
+        )
+
+    assert exc.value.status_code == 404
+
+
+def test_remove_creds_for_org_when_none_exist_raises_404(db: Session) -> None:
+    project = create_test_project(db)
+
+    with pytest.raises(HTTPException) as exc:
+        remove_creds_for_org(
+            session=db,
+            org_id=project.organization_id,
+            project_id=project.id,
+        )
+
+    assert exc.value.status_code == 404
+
+
+def test_duplicate_provider_propagates_unique_violation(db: Session) -> None:
+    """The central DB handler turns this into a 409; crud lets it propagate."""
+    _, project = create_test_credential(db)
+
+    creds_create = CredsCreate(
+        is_active=True,
+        credential={"openai": {"api_key": "another-key"}},
+    )
+
+    with pytest.raises(IntegrityError) as exc:
+        set_creds_for_org(
+            session=db,
+            creds_add=creds_create,
+            organization_id=project.organization_id,
+            project_id=project.id,
+        )
+
+    assert exc.value.orig.diag.constraint_name == "uq_credential_org_project_provider"
+
+
+def test_integrity_error_propagates_to_db_handler(db: Session, monkeypatch) -> None:
+    """Classifying DB errors is the central handler's job, not crud's."""
+    project = create_test_project(db)
+
+    def _fail_commit() -> None:
+        raise IntegrityError("INSERT", {}, Exception("foreign key violation"))
+
+    monkeypatch.setattr(db, "commit", _fail_commit)
+
+    with pytest.raises(IntegrityError):
+        set_creds_for_org(
+            session=db,
+            creds_add=CredsCreate(
+                is_active=True, credential={"openai": {"api_key": "sk-test"}}
+            ),
+            organization_id=project.organization_id,
+            project_id=project.id,
+        )
+
+
+def test_update_creds_without_provider_raises_400(db: Session) -> None:
+    project = create_test_project(db)
+
+    with pytest.raises(HTTPException) as exc:
+        update_creds_for_org(
+            session=db,
+            org_id=project.organization_id,
+            project_id=project.id,
+            creds_in=CredsUpdate.model_construct(provider=None, credential=None),
+        )
+
+    assert exc.value.status_code == 400
+
+
+def test_remove_creds_for_org_race_deletes_nothing_raises_404(
+    db: Session, monkeypatch
+) -> None:
+    """Rows vanish between the existence check and the delete: 404, not 500."""
+    _, project = create_test_credential(db)
+    monkeypatch.setattr(
+        "app.crud.credentials.get_creds_by_org", lambda **k: [MagicMock()]
+    )
+    monkeypatch.setattr(db, "exec", lambda *a, **k: MagicMock(rowcount=0))
+
+    with pytest.raises(HTTPException) as exc:
+        remove_creds_for_org(
+            session=db, org_id=project.organization_id, project_id=project.id
+        )
+
+    assert exc.value.status_code == 404

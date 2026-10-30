@@ -8,7 +8,7 @@ worker pool so a fast-eval burst can't occupy `default`'s worker slots and delay
 LLM jobs; priority only reorders queued-not-yet-claimed messages, it can't preempt a task a
 worker already started). Within each queue, tasks are ordered by a per-task `priority` (higher
 drains first, FIFO within a band). Read `app/celery/tasks/job_execution.py` before writing — it
-shows the full pattern (decorator + timeout + OTel propagation + delegation to a service).
+shows the full pattern (decorator + timeout + delegation to a service).
 
 ## Canonical decorator stack
 
@@ -19,20 +19,18 @@ def run_my_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
     from app.services.my_domain.jobs import do_the_work  # late import to avoid cycles
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: do_the_work(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return do_the_work(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 ```
 
-`_set_trace`, `_run_with_otel_parent`, and `gevent_timeout` already exist in this module /
-`app/celery/utils.py` — reuse them, don't reinvent.
+`_set_trace` and `gevent_timeout` already exist in this module / `app/celery/utils.py` — reuse
+them, don't reinvent. Enqueue through a `start_*` helper in `app/celery/utils.py`, which calls
+plain `task.apply_async(kwargs={...})`.
 
 ## Queue and priority choice — be explicit
 
@@ -61,7 +59,7 @@ inherits its priority unless you override it.
 - **`bind=True`** so you have `self` (the task instance) for retries, IDs, etc.
 - **Always pass an explicit `queue` (`"default"` or `"evaluations"`) and `priority`.** Only fast-eval chunk/aggregate tasks use `"evaluations"`; everything else uses `"default"`.
 - **Pass `trace_id` explicitly** as a parameter and call `_set_trace(trace_id)` first thing. This wires `asgi_correlation_id` so logs from inside the task match the originating request.
-- **Wrap the work in `_run_with_otel_parent(self, lambda: ...)`** so OpenTelemetry parent context propagates from the enqueueing process.
+- **Don't propagate trace context by hand.** OTel's `CeleryInstrumentor` already parents the worker's `run/...` span to the enqueue span. Injecting headers on enqueue or attaching an extracted context in the task reparents the task's spans to the API request, and Sentry splits them into separate transactions.
 - **Delegate to a service.** The task body should be a thin shim over `app/services/<domain>/`. No DB queries, no external HTTP, no business logic inside the task itself.
 - **Late-import the service inside the function body** (as the canonical pattern does). Celery workers boot faster and you avoid model-import cycles.
 - **Idempotency.** Celery will redeliver. Either:

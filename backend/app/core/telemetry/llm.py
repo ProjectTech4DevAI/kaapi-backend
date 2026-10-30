@@ -127,12 +127,15 @@ def set_gen_ai_response_attributes(
     """Set OTel GenAI response attributes (usage, model) on `span`."""
     usage = response.usage
     if usage:
+        reasoning_tokens = usage.reasoning_tokens or 0
+        output_tokens = usage.output_tokens
+        if reasoning_tokens and usage.input_tokens + output_tokens < usage.total_tokens:
+            output_tokens += reasoning_tokens
         span.set_attribute("gen_ai.usage.input_tokens", usage.input_tokens)
-        span.set_attribute("gen_ai.usage.output_tokens", usage.output_tokens)
+        span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
         span.set_attribute("gen_ai.usage.total_tokens", usage.total_tokens)
-        reasoning_tokens = getattr(usage, "reasoning_tokens", None)
-        if reasoning_tokens is not None:
-            span.set_attribute("gen_ai.usage.output_tokens.reasoning", reasoning_tokens)
+        if reasoning_tokens:
+            span.set_attribute("gen_ai.usage.reasoning.output_tokens", reasoning_tokens)
 
     if response.response and response.response.model:
         span.set_attribute("gen_ai.response.model", response.response.model)
