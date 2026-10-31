@@ -1,5 +1,7 @@
 """Conversation-history plumbing shared by every chatbot agent graph."""
 
+import logging
+
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
@@ -7,6 +9,8 @@ from app.models.chatbot import ChatbotMessageRoleEnum
 from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
 from app.services.chatbot.types import ChatbotMessageDict
 from app.services.chatbot.utils import FLOW_KEEP_RECENT_MESSAGES
+
+logger = logging.getLogger(__name__)
 
 SUMMARY_NOTE_PREFIX = "[Earlier conversation summary] "
 SUMMARIZE_INSTRUCTION = (
@@ -122,5 +126,16 @@ def extract_final_reply(messages: list[BaseMessage]) -> str:
             "[ANTHROPIC] Chat model returned no reply text — retry the turn. "
             "If persistent, contact Kaapi. (code: EmptyReply)"
         )
+        logger.warning(f"[extract_final_reply] {error_message}")
         raise ChatbotProviderError(error_message)
     return reply
+
+
+def validate_turn_input(
+    *, history: list[ChatbotMessageDict], user_message: str | None
+) -> None:
+    if user_message is None and history:
+        raise ChatbotInputError(
+            "[KAAPI] `message` is required once `history` is non-empty; omit it only "
+            "on the first call to get the opening greeting."
+        )

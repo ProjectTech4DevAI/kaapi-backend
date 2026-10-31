@@ -25,6 +25,11 @@ class ChatbotModelSettings:
     reasoning_effort: AnthropicEffort | None = None
     thinking: dict[str, Any] = field(default_factory=default_thinking)
     history_token_limit: int = DEFAULT_HISTORY_TOKEN_LIMIT
+    instructions: str | None = None
+    # OpenAI vector store ids (Collection.knowledge_base_id); only the rag agent reads them.
+    knowledge_base_ids: tuple[str, ...] = ()
+    max_num_results: int | None = None
+    # The project's own Anthropic key; kept out of repr/eq so it never lands in logs or test diffs.
     api_key: str = field(default="", repr=False, compare=False)
 
 

@@ -3,6 +3,7 @@ from typing import NamedTuple
 from uuid import UUID
 
 from fastapi import HTTPException
+from openai import OpenAI
 from sqlmodel import Session
 
 from app.core.db import engine
@@ -26,14 +27,18 @@ from app.models import (
     ChatbotSessionStatusEnum,
     ChatbotSessionSummary,
 )
-from app.services.chatbot.agents.onboarding.graph import run_chatbot_turn
-from app.services.chatbot.config import resolve_chatbot_model_settings
+from app.services.chatbot.agents.registry import run_agent_turn
+from app.services.chatbot.config import (
+    prepare_rag_search_client,
+    resolve_chatbot_model_settings,
+)
 from app.services.chatbot.exceptions import (
     ChatbotFlowConflictError,
     ChatbotInputError,
     ChatbotProviderError,
 )
 from app.services.chatbot.flow import (
+    SUPPORTED_AGENT_NODE_TYPES,
     find_flow_node,
     get_chatbot_or_raise,
     parse_flow_edges,
@@ -52,6 +57,7 @@ NO_LIVE_FLOW_MESSAGE = "[KAAPI] Chatbot has no published flow; publish the flow 
 
 class _TurnNode(NamedTuple):
     node_id: str
+    node_type: ChatbotFlowNodeTypeEnum
     prompt: str
     config_id: UUID
     config_version: int | None
@@ -136,7 +142,7 @@ def get_latest_chatbot_session_summary(
 def _resolve_turn_node(
     *, flow_version: ChatbotFlowVersion | None, active_node_id: str
 ) -> _TurnNode:
-    """The runnable onboarding node the session is on; ChatbotInputError when it can't run."""
+    """The runnable agent node the session is on; ChatbotInputError when it can't run."""
     active_node = None
     if flow_version is not None:
         active_node = find_flow_node(
@@ -149,11 +155,13 @@ def _resolve_turn_node(
         )
         raise ChatbotInputError(error_message)
 
-    if active_node.type != ChatbotFlowNodeTypeEnum.ONBOARDING:
+    if active_node.type not in SUPPORTED_AGENT_NODE_TYPES:
+        supported = ", ".join(
+            sorted(node_type.value for node_type in SUPPORTED_AGENT_NODE_TYPES)
+        )
         error_message = (
             f"[KAAPI] Active node '{active_node_id}' has type '{active_node.type.value}', "
-            f"which the chatbot runtime does not support yet; only "
-            f"'{ChatbotFlowNodeTypeEnum.ONBOARDING.value}' nodes can run."
+            f"which the chatbot runtime does not support yet; only {supported} nodes can run."
         )
         raise ChatbotInputError(error_message)
 
@@ -167,6 +175,7 @@ def _resolve_turn_node(
 
     return _TurnNode(
         node_id=active_node.id,
+        node_type=active_node.type,
         prompt=node_data.prompt,
         config_id=node_data.config_id,
         config_version=node_data.config_version,
@@ -187,7 +196,7 @@ def _split_pending_turn(
     if not history:
         return history, None
     if history[-1]["role"] != ChatbotMessageRoleEnum.USER:
-        # No pending user turn; run_chatbot_turn rejects this with ChatbotInputError.
+        # No pending user turn; the agent runner rejects this with ChatbotInputError.
         return history, None
     pending = history.pop()
     return history, pending["content"]
@@ -251,6 +260,7 @@ def process_chatbot_session_message(
         flow_version = get_chatbot_flow_version_by_id(
             session, flow_version_id=chatbot_session.flow_version_id
         )
+        openai_client: OpenAI | None = None
 
         try:
             turn_node = _resolve_turn_node(
@@ -266,6 +276,13 @@ def process_chatbot_session_message(
                 max_tokens=None,
                 history_token_limit=None,
             )
+            if turn_node.node_type == ChatbotFlowNodeTypeEnum.RAG:
+                openai_client = prepare_rag_search_client(
+                    session=session,
+                    organization_id=organization_id,
+                    project_id=project_id,
+                    model_settings=model_settings,
+                )
         except (HTTPException, ChatbotInputError) as e:
             error = str(e.detail) if isinstance(e, HTTPException) else str(e)
             _send_failure_webhook(
@@ -280,12 +297,14 @@ def process_chatbot_session_message(
 
     try:
         turn_result = asyncio.run(
-            run_chatbot_turn(
+            run_agent_turn(
+                node_type=turn_node.node_type,
                 system_prompt=turn_node.prompt,
                 history=history,
                 user_message=user_message,
                 model_settings=model_settings,
                 collected_fields=collected_fields,
+                openai_client=openai_client,
             )
         )
     except (ChatbotInputError, ChatbotProviderError) as e:
@@ -323,6 +342,7 @@ def process_chatbot_session_message(
             "status": session_status,
             "completion_status": completion_status.value,
             "collected_fields": turn_result.collected_fields,
+            "sources": turn_result.sources,
         }
     )
     send_callback(webhook_url, envelope.model_dump(exclude_none=True), webhook_secret)
