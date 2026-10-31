@@ -9,19 +9,26 @@ from app.crud import CollectionCrud
 from app.crud.config import ConfigVersionCrud
 from app.models import Config, Project, ProviderType
 from app.services.chatbot.config import (
+    get_anthropic_api_key,
     prepare_rag_search_client,
     resolve_chatbot_model_settings,
 )
 from app.services.chatbot.exceptions import ChatbotInputError
 from app.services.chatbot.utils import ChatbotModelSettings
+from app.tests.utils.chatbot import (
+    add_test_config_version,
+    create_test_anthropic_config,
+    create_test_anthropic_credential,
+)
 from app.tests.utils.collection import get_vector_store_collection
 from app.tests.utils.test_data import (
     build_anthropic_text_config_blob,
     create_test_config,
     create_test_credential,
     create_test_project,
-    create_test_version,
 )
+
+MISSING_CREDENTIALS = "Anthropic credentials are not configured for this project"
 
 
 def _resolve(
@@ -32,8 +39,11 @@ def _resolve(
     max_tokens: int | None = None,
     history_token_limit: int | None = None,
 ) -> ChatbotModelSettings:
+    project = db.get(Project, config.project_id)
+    assert project is not None
     return resolve_chatbot_model_settings(
         session=db,
+        organization_id=project.organization_id,
         project_id=config.project_id,
         config_id=config.id,
         config_version=config_version,
@@ -53,20 +63,47 @@ def _overwrite_latest_blob(db: Session, config: Config, blob: dict[str, Any]) ->
     db.commit()
 
 
+def _project_api_key(db: Session, project: Project) -> str:
+    return get_anthropic_api_key(
+        session=db, organization_id=project.organization_id, project_id=project.id
+    )
+
+
+class TestGetAnthropicApiKey:
+    def test_returns_the_projects_stored_key(self, db: Session) -> None:
+        project = create_test_project(db)
+        create_test_anthropic_credential(
+            db, project_id=project.id, api_key="sk-ant-project-key"
+        )
+
+        assert _project_api_key(db, project) == "sk-ant-project-key"
+
+    def test_project_without_anthropic_credentials_raises(self, db: Session) -> None:
+        # A credential in another project of the same org must not leak across.
+        project = create_test_project(db)
+        sibling = create_test_project(db, organization_id=project.organization_id)
+        create_test_anthropic_credential(db, project_id=sibling.id)
+
+        with pytest.raises(ChatbotInputError, match=MISSING_CREDENTIALS):
+            _project_api_key(db, project)
+
+    def test_empty_stored_key_raises(self, db: Session) -> None:
+        project = create_test_project(db)
+        create_test_anthropic_credential(db, project_id=project.id, api_key="")
+
+        with pytest.raises(ChatbotInputError, match=MISSING_CREDENTIALS):
+            _project_api_key(db, project)
+
+
 class TestResolveChatbotModelSettings:
     def test_latest_version_with_server_defaults(self, db: Session) -> None:
-        config = create_test_config(
-            db, config_blob=build_anthropic_text_config_blob(model="claude-sonnet-4-6")
-        )
-        create_test_version(
+        config = create_test_anthropic_config(db, model="claude-sonnet-4-6")
+        add_test_config_version(
             db,
-            config_id=config.id,
-            project_id=config.project_id,
-            config_blob=build_anthropic_text_config_blob(
-                model="claude-opus-5-5",
-                effort="high",
-                thinking={"type": "adaptive", "display": "summarized"},
-            ),
+            config,
+            model="claude-opus-5-5",
+            effort="high",
+            thinking={"type": "adaptive", "display": "summarized"},
         )
 
         model_settings = _resolve(db, config)
@@ -88,6 +125,7 @@ class TestResolveChatbotModelSettings:
                 max_num_results=8,
             ),
         )
+        create_test_anthropic_credential(db, project_id=config.project_id)
 
         model_settings = _resolve(db, config)
 
@@ -97,6 +135,7 @@ class TestResolveChatbotModelSettings:
 
     def test_absent_rag_params_leave_empty_defaults(self, db: Session) -> None:
         config = create_test_config(db, config_blob=build_anthropic_text_config_blob())
+        create_test_anthropic_credential(db, project_id=config.project_id)
 
         model_settings = _resolve(db, config)
 
@@ -104,13 +143,27 @@ class TestResolveChatbotModelSettings:
         assert model_settings.knowledge_base_ids == ()
         assert model_settings.max_num_results is None
 
+    def test_settings_carry_the_projects_anthropic_key(self, db: Session) -> None:
+        config = create_test_anthropic_config(db, with_anthropic_credentials=False)
+        create_test_anthropic_credential(
+            db, project_id=config.project_id, api_key="sk-ant-project-key"
+        )
+
+        model_settings = _resolve(db, config)
+
+        assert model_settings.api_key == "sk-ant-project-key"
+
+    def test_project_without_anthropic_credentials_raises(self, db: Session) -> None:
+        config = create_test_anthropic_config(db, with_anthropic_credentials=False)
+
+        with pytest.raises(ChatbotInputError, match=MISSING_CREDENTIALS):
+            _resolve(db, config)
+
     def test_enabled_thinking_with_budget_below_max_tokens_is_accepted(
         self, db: Session
     ) -> None:
         thinking = {"type": "enabled", "budget_tokens": 2048}
-        config = create_test_config(
-            db, config_blob=build_anthropic_text_config_blob(thinking=thinking)
-        )
+        config = create_test_anthropic_config(db, thinking=thinking)
 
         model_settings = _resolve(db, config, max_tokens=4096)
 
@@ -129,23 +182,14 @@ class TestResolveChatbotModelSettings:
     def test_enabled_thinking_budget_not_below_max_tokens_rejected(
         self, db: Session, thinking: dict[str, Any]
     ) -> None:
-        config = create_test_config(
-            db, config_blob=build_anthropic_text_config_blob(thinking=thinking)
-        )
+        config = create_test_anthropic_config(db, thinking=thinking)
 
         with pytest.raises(ChatbotInputError, match="budget_tokens"):
             _resolve(db, config)
 
     def test_explicit_version_and_request_overrides(self, db: Session) -> None:
-        config = create_test_config(
-            db, config_blob=build_anthropic_text_config_blob(model="claude-sonnet-4-6")
-        )
-        create_test_version(
-            db,
-            config_id=config.id,
-            project_id=config.project_id,
-            config_blob=build_anthropic_text_config_blob(model="claude-opus-5-5"),
-        )
+        config = create_test_anthropic_config(db, model="claude-sonnet-4-6")
+        add_test_config_version(db, config)
 
         model_settings = _resolve(
             db, config, config_version=1, max_tokens=256, history_token_limit=900
@@ -158,7 +202,7 @@ class TestResolveChatbotModelSettings:
         assert model_settings.thinking == {"type": "adaptive"}
 
     def test_unknown_version_raises_404(self, db: Session) -> None:
-        config = create_test_config(db, config_blob=build_anthropic_text_config_blob())
+        config = create_test_anthropic_config(db)
 
         with pytest.raises(HTTPException) as exc_info:
             _resolve(db, config, config_version=99)
@@ -166,12 +210,13 @@ class TestResolveChatbotModelSettings:
         assert exc_info.value.status_code == 404
 
     def test_config_from_other_project_raises_404(self, db: Session) -> None:
-        config = create_test_config(db, config_blob=build_anthropic_text_config_blob())
+        config = create_test_anthropic_config(db)
         other_project = create_test_project(db)
 
         with pytest.raises(HTTPException) as exc_info:
             resolve_chatbot_model_settings(
                 session=db,
+                organization_id=other_project.organization_id,
                 project_id=other_project.id,
                 config_id=config.id,
                 config_version=None,
@@ -187,6 +232,7 @@ class TestResolveChatbotModelSettings:
         with pytest.raises(HTTPException) as exc_info:
             resolve_chatbot_model_settings(
                 session=db,
+                organization_id=project.organization_id,
                 project_id=project.id,
                 config_id=uuid4(),
                 config_version=None,
@@ -197,7 +243,7 @@ class TestResolveChatbotModelSettings:
         assert exc_info.value.status_code == 404
 
     def test_no_live_versions_raises_404(self, db: Session) -> None:
-        config = create_test_config(db, config_blob=build_anthropic_text_config_blob())
+        config = create_test_anthropic_config(db)
         ConfigVersionCrud(
             session=db, project_id=config.project_id, config_id=config.id
         ).delete_or_raise(1)
@@ -221,14 +267,14 @@ class TestResolveChatbotModelSettings:
             _resolve(db, config)
 
     def test_invalid_stored_blob_rejected(self, db: Session) -> None:
-        config = create_test_config(db, config_blob=build_anthropic_text_config_blob())
+        config = create_test_anthropic_config(db)
         _overwrite_latest_blob(db, config, {"completion": {"provider": "anthropic"}})
 
         with pytest.raises(ChatbotInputError, match="blob is invalid"):
             _resolve(db, config)
 
     def test_missing_model_rejected(self, db: Session) -> None:
-        config = create_test_config(db, config_blob=build_anthropic_text_config_blob())
+        config = create_test_anthropic_config(db)
         _overwrite_latest_blob(
             db,
             config,
@@ -240,9 +286,7 @@ class TestResolveChatbotModelSettings:
 
     @pytest.mark.parametrize("effort", ["none", "minimal"])
     def test_non_anthropic_effort_rejected(self, db: Session, effort: str) -> None:
-        config = create_test_config(
-            db, config_blob=build_anthropic_text_config_blob(effort=effort)
-        )
+        config = create_test_anthropic_config(db, effort=effort)
 
         with pytest.raises(ChatbotInputError, match=f"'{effort}' is not an Anthropic"):
             _resolve(db, config)

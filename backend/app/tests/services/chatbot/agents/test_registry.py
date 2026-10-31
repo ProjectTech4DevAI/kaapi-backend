@@ -1,6 +1,6 @@
 import pytest
 
-from app.models import ChatbotAgentTypeEnum
+from app.models import ChatbotFlowNodeTypeEnum
 from app.services.chatbot.agents.registry import run_agent_turn
 from app.services.chatbot.exceptions import ChatbotInputError
 from app.services.chatbot.utils import ChatbotModelSettings
@@ -29,7 +29,7 @@ class TestRunAgentTurn:
 
         with pytest.raises(ChatbotInputError, match="needs an OpenAI client"):
             await run_agent_turn(
-                agent_type=ChatbotAgentTypeEnum.RAG,
+                node_type=ChatbotFlowNodeTypeEnum.RAG,
                 system_prompt=SYSTEM_PROMPT,
                 history=[],
                 user_message="hello",
@@ -46,7 +46,7 @@ class TestRunAgentTurn:
         client = FakeOpenAIClient()
 
         result = await run_agent_turn(
-            agent_type=ChatbotAgentTypeEnum.ONBOARDING,
+            node_type=ChatbotFlowNodeTypeEnum.ONBOARDING,
             system_prompt=SYSTEM_PROMPT,
             history=[],
             user_message="I'm Asha",
@@ -79,7 +79,7 @@ class TestRunAgentTurn:
         )
 
         result = await run_agent_turn(
-            agent_type=ChatbotAgentTypeEnum.RAG,
+            node_type=ChatbotFlowNodeTypeEnum.RAG,
             system_prompt=SYSTEM_PROMPT,
             history=[],
             user_message="What is the tuition?",

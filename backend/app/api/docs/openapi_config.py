@@ -34,7 +34,7 @@ tags_metadata = [
     },
     {
         "name": "Chatbot",
-        "description": "Prompt-driven conversational chatbot turns",
+        "description": "Chatbots, their versioned React Flow graphs, and conversation sessions",
     },
     {
         "name": "Guardrails",

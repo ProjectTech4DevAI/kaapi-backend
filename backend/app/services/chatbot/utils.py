@@ -5,8 +5,6 @@ from typing import Any, Literal
 
 from langchain_anthropic import ChatAnthropic
 
-from app.core.config import settings
-
 AnthropicEffort = Literal["low", "medium", "high", "xhigh", "max"]
 
 DEFAULT_MAX_OUTPUT_TOKENS = 1024
@@ -31,21 +29,24 @@ class ChatbotModelSettings:
     # OpenAI vector store ids (Collection.knowledge_base_id); only the rag agent reads them.
     knowledge_base_ids: tuple[str, ...] = ()
     max_num_results: int | None = None
+    # The project's own Anthropic key; kept out of repr/eq so it never lands in logs or test diffs.
+    api_key: str = field(default="", repr=False, compare=False)
 
 
 def get_chat_model(model_settings: ChatbotModelSettings) -> ChatAnthropic:
     """LangChain's provider abstraction, so swapping providers later is a
     config change here, not a rewrite of the node.
     """
-    if not settings.ANTHROPIC_API_KEY:
+    if not model_settings.api_key:
         raise RuntimeError(
-            "[get_chat_model] ANTHROPIC_API_KEY is not set; export it or set it in .env"
+            "[get_chat_model] model_settings has no api_key; build it with "
+            "resolve_chatbot_model_settings so the project's Anthropic credentials are loaded"
         )
     kwargs: dict[str, Any] = {
         "model": model_settings.model,
         "max_tokens": model_settings.max_tokens,
         "thinking": model_settings.thinking,
-        "anthropic_api_key": settings.ANTHROPIC_API_KEY,
+        "anthropic_api_key": model_settings.api_key,
     }
     if model_settings.reasoning_effort is not None:
         kwargs["reasoning_effort"] = model_settings.reasoning_effort

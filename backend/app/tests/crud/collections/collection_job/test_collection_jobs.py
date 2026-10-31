@@ -1,11 +1,19 @@
 from typing import Any
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
 from sqlmodel import Session
 from sqlalchemy.exc import IntegrityError
 
-from app.models import CollectionJob, CollectionJobStatus, CollectionActionType, Project
+from app.models import (
+    CollectionJob,
+    CollectionJobCreate,
+    CollectionJobStatus,
+    CollectionJobUpdate,
+    CollectionActionType,
+    Project,
+)
 from app.crud import CollectionJobCrud
 from app.core.util import now
 from app.tests.utils.utils import get_project
@@ -126,3 +134,129 @@ def test_create_collection_job_with_invalid_data(
 
     with pytest.raises(IntegrityError):
         collection_job_crud.create(collection_job)
+
+
+def _create_request(project_id: int, name: str | None) -> CollectionJobCreate:
+    return CollectionJobCreate(
+        action_type=CollectionActionType.CREATE,
+        project_id=project_id,
+        status=CollectionJobStatus.PENDING,
+        name=name,
+    )
+
+
+def test_create_or_get_in_flight_creates_new_job(
+    db: Session, sample_project: Project
+) -> None:
+    crud = CollectionJobCrud(db, sample_project.id)
+
+    job, created = crud.create_or_get_in_flight(
+        _create_request(sample_project.id, "kb-new")
+    )
+
+    assert created is True
+    assert job.name == "kb-new"
+    assert job.status == CollectionJobStatus.PENDING
+
+
+def test_create_or_get_in_flight_returns_existing_job(
+    db: Session, sample_project: Project
+) -> None:
+    crud = CollectionJobCrud(db, sample_project.id)
+    first, _ = crud.create_or_get_in_flight(
+        _create_request(sample_project.id, "kb-dup")
+    )
+
+    second, created = crud.create_or_get_in_flight(
+        _create_request(sample_project.id, "kb-dup")
+    )
+
+    assert created is False
+    assert second.id == first.id
+
+
+def test_create_or_get_in_flight_returns_existing_on_insert_race(
+    db: Session, sample_project: Project
+) -> None:
+    """Both requests passed the lookup; the unique index rejects the second insert."""
+    crud = CollectionJobCrud(db, sample_project.id)
+    crud.create_or_get_in_flight(_create_request(sample_project.id, "kb-race"))
+    winner = CollectionJob(
+        project_id=sample_project.id,
+        action_type=CollectionActionType.CREATE,
+        status=CollectionJobStatus.PROCESSING,
+        name="kb-race",
+    )
+
+    with patch.object(
+        CollectionJobCrud,
+        "read_in_flight_create",
+        side_effect=[None, winner],
+    ):
+        second, created = crud.create_or_get_in_flight(
+            _create_request(sample_project.id, "kb-race")
+        )
+
+    assert created is False
+    assert second is winner
+
+
+def test_create_or_get_in_flight_reraises_when_no_in_flight_job(
+    db: Session, sample_project: Project
+) -> None:
+    crud = CollectionJobCrud(db, sample_project.id)
+    crud.create_or_get_in_flight(_create_request(sample_project.id, "kb-gone"))
+
+    with patch.object(
+        CollectionJobCrud, "read_in_flight_create", side_effect=[None, None]
+    ):
+        with pytest.raises(IntegrityError):
+            crud.create_or_get_in_flight(_create_request(sample_project.id, "kb-gone"))
+
+
+def test_create_or_get_in_flight_allows_name_after_job_finished(
+    db: Session, sample_project: Project
+) -> None:
+    crud = CollectionJobCrud(db, sample_project.id)
+    first, _ = crud.create_or_get_in_flight(
+        _create_request(sample_project.id, "kb-reuse")
+    )
+    crud.update(first.id, CollectionJobUpdate(status=CollectionJobStatus.FAILED))
+
+    second, created = crud.create_or_get_in_flight(
+        _create_request(sample_project.id, "kb-reuse")
+    )
+
+    assert created is True
+    assert second.id != first.id
+
+
+def test_create_or_get_in_flight_without_name_always_creates(
+    db: Session, sample_project: Project
+) -> None:
+    crud = CollectionJobCrud(db, sample_project.id)
+
+    first, first_created = crud.create_or_get_in_flight(
+        _create_request(sample_project.id, None)
+    )
+    second, second_created = crud.create_or_get_in_flight(
+        _create_request(sample_project.id, None)
+    )
+
+    assert first_created and second_created
+    assert first.id != second.id
+
+
+def test_read_in_flight_create_ignores_other_action_and_status(
+    db: Session, sample_project: Project
+) -> None:
+    crud = CollectionJobCrud(db, sample_project.id)
+    done = CollectionJob(
+        project_id=sample_project.id,
+        action_type=CollectionActionType.CREATE,
+        status=CollectionJobStatus.SUCCESSFUL,
+        name="kb-read",
+    )
+    crud.create(done)
+
+    assert crud.read_in_flight_create("kb-read") is None

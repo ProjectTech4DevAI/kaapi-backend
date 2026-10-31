@@ -1,4 +1,5 @@
 import logging
+from dataclasses import replace
 from typing import Any, get_args
 from uuid import UUID
 
@@ -9,6 +10,7 @@ from sqlmodel import Session
 
 from app.crud import CollectionCrud
 from app.crud.config import ConfigVersionCrud
+from app.crud.credentials import get_provider_credential
 from app.models import ConfigVersion, ProviderType
 from app.models.llm.constants import Provider
 from app.models.llm.request import ConfigBlob, KaapiTextCompletionConfig
@@ -26,11 +28,32 @@ logger = logging.getLogger(__name__)
 
 _ANTHROPIC_EFFORT_LEVELS: tuple[AnthropicEffort, ...] = get_args(AnthropicEffort)
 THINKING_TYPE_ENABLED = "enabled"
+CREDENTIAL_API_KEY = "api_key"
+ANTHROPIC_CREDENTIALS_MISSING_MESSAGE = (
+    "[KAAPI] Anthropic credentials are not configured for this project; add an "
+    "Anthropic API key in the project's credentials."
+)
 
 
-def _get_config_version(
+def get_anthropic_api_key(
+    *, session: Session, organization_id: int, project_id: int
+) -> str:
+    """The project's Anthropic API key; the chatbot never falls back to a platform key."""
+    credentials = get_provider_credential(
+        session=session,
+        org_id=organization_id,
+        project_id=project_id,
+        provider=Provider.ANTHROPIC.value,
+    )
+    if not isinstance(credentials, dict) or not credentials.get(CREDENTIAL_API_KEY):
+        raise ChatbotInputError(ANTHROPIC_CREDENTIALS_MISSING_MESSAGE)
+    return credentials[CREDENTIAL_API_KEY]
+
+
+def get_chatbot_config_version(
     *, session: Session, project_id: int, config_id: UUID, config_version: int | None
 ) -> ConfigVersion:
+    """The requested version, or the latest live one when `config_version` is None."""
     version_crud = ConfigVersionCrud(
         session=session, config_id=config_id, project_id=project_id
     )
@@ -73,20 +96,35 @@ def _validate_thinking_budget(thinking: dict[str, Any], *, max_tokens: int) -> N
 def resolve_chatbot_model_settings(
     *,
     session: Session,
+    organization_id: int,
     project_id: int,
     config_id: UUID,
     config_version: int | None,
     max_tokens: int | None,
     history_token_limit: int | None,
 ) -> ChatbotModelSettings:
-    """Turn a saved config (+ request overrides) into chat-model settings."""
-    version_row = _get_config_version(
+    """Turn a saved config (+ request overrides) and the project's Anthropic key into chat-model settings."""
+    version_row = get_chatbot_config_version(
         session=session,
         project_id=project_id,
         config_id=config_id,
         config_version=config_version,
     )
+    model_settings = build_chatbot_model_settings(
+        version_row, max_tokens=max_tokens, history_token_limit=history_token_limit
+    )
+    api_key = get_anthropic_api_key(
+        session=session, organization_id=organization_id, project_id=project_id
+    )
+    return replace(model_settings, api_key=api_key)
 
+
+def build_chatbot_model_settings(
+    version_row: ConfigVersion,
+    *,
+    max_tokens: int | None,
+    history_token_limit: int | None,
+) -> ChatbotModelSettings:
     try:
         blob = ConfigBlob.model_validate(version_row.config_blob)
     except ValidationError as e:
