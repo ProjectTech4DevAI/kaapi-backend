@@ -12,13 +12,9 @@ from app.core.batch import (
     start_batch_job,
 )
 from app.models.batch_job import BatchJobType
-from app.crud.tts_evaluations.result import (
-    get_pending_results_for_run,
-    update_tts_result,
-)
+from app.crud.tts_evaluations.result import fail_pending_tts_results
 from app.crud.tts_evaluations.run import update_tts_run
 from app.models import EvaluationRun
-from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
 from app.services.tts_evaluations.constants import (
     DEFAULT_STYLE_PROMPT,
@@ -138,17 +134,12 @@ def start_tts_evaluation_batch(
                 f"[start_tts_evaluation_batch] Failed to submit batch | "
                 f"model: {model}, error: {str(e)}"
             )
-            pending = get_pending_results_for_run(
-                session=session, run_id=run.id, provider=model
+            fail_pending_tts_results(
+                session=session,
+                run_id=run.id,
+                provider=model,
+                error_message=f"Batch submission failed for {model}: {str(e)}",
             )
-            for result in pending:
-                update_tts_result(
-                    session=session,
-                    result_id=result.id,
-                    status=JobStatus.FAILED.value,
-                    error_message=f"Batch submission failed for {model}: {str(e)}",
-                )
-            session.commit()
 
     if not batch_jobs:
         raise Exception("Batch submission failed for all models")

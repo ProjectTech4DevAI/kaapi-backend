@@ -25,6 +25,10 @@ from app.models.tts_evaluation import (
 from app.services.tts_evaluations.constants import (
     DEFAULT_STYLE_PROMPT,
     DEFAULT_VOICE_NAME,
+    ELEVENLABS_TTS_MODELS,
+    ELEVENLABS_VOICE_ID,
+    SARVAM_SPEAKER,
+    SARVAM_TTS_MODELS,
 )
 from app.utils import APIResponse, load_description
 
@@ -114,11 +118,22 @@ def start_tts_evaluation(
             detail=f"Failed to queue batch submission: {e}",
         )
 
+    voices: dict[str, str] = {}
+    for model in run_create.models:
+        if model in SARVAM_TTS_MODELS:
+            voices[model] = SARVAM_SPEAKER
+        elif model in ELEVENLABS_TTS_MODELS:
+            voices[model] = ELEVENLABS_VOICE_ID
+        else:
+            voices[model] = DEFAULT_VOICE_NAME
+
     return APIResponse.success_response(
         data=TTSEvaluationRunPublic.from_model(
             run,
             run_metadata={
+                # Legacy key kept for existing clients; `voices` is per model.
                 "voice_name": DEFAULT_VOICE_NAME,
+                "voices": voices,
                 "style_prompt": DEFAULT_STYLE_PROMPT,
             },
         )

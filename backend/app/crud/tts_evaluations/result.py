@@ -3,7 +3,8 @@
 import logging
 from typing import Any
 
-from sqlmodel import Session, func, select
+from sqlalchemy import update
+from sqlmodel import Session, col, func, select
 
 from app.core.cloud.storage import CloudStorage
 from app.core.exception_handlers import HTTPException
@@ -195,6 +196,46 @@ def update_tts_result(
     session.flush()
 
     return result
+
+
+def fail_pending_tts_results(
+    *,
+    session: Session,
+    run_id: int,
+    provider: str,
+    error_message: str,
+) -> int:
+    """Mark one provider's PENDING rows of a run FAILED in a single UPDATE.
+
+    The PENDING guard keeps a late stale/cleanup pass from overwriting a row a
+    worker has just finished.
+
+    Returns:
+        int: Number of rows marked FAILED
+    """
+    statement = (
+        update(TTSResult)
+        .where(
+            col(TTSResult.evaluation_run_id) == run_id,
+            col(TTSResult.provider) == provider,
+            col(TTSResult.status) == JobStatus.PENDING.value,
+        )
+        .values(
+            status=JobStatus.FAILED.value,
+            error_message=error_message,
+            updated_at=now(),
+        )
+    )
+    failed_count = session.exec(statement).rowcount
+    session.commit()
+
+    if failed_count:
+        logger.warning(
+            f"[fail_pending_tts_results] Failed pending results | run_id={run_id}, "
+            f"provider={provider}, count={failed_count}, error={error_message}"
+        )
+
+    return failed_count
 
 
 def update_tts_human_feedback(
