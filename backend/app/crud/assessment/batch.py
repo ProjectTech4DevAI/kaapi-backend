@@ -29,11 +29,9 @@ from app.models.config.assessment_blob import VIDEO_COLUMN_TYPE
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
 from app.models.llm.request import ConfigBlob
 from app.services.assessment.utils.attachments import (
-    attachment_type_for_row,
     build_anthropic_attachment_parts,
     build_gemini_attachment_parts,
     resolve_attachment_values,
-    resolve_item_type,
     rewrite_gcs_attachment_urls,
 )
 from app.services.assessment.validators import (
@@ -130,13 +128,7 @@ def build_openai_jsonl(
         # Attachments
         for att in attachments:
             cell_value = row.get(att.column, "")
-            input_parts.extend(
-                resolve_attachment_values(
-                    cell_value,
-                    att,
-                    type_override=attachment_type_for_row(att, row),
-                )
-            )
+            input_parts.extend(resolve_attachment_values(cell_value, att))
 
         if not input_parts:
             logger.warning("[build_openai_jsonl] Skipping empty row | idx=%s", idx)
@@ -195,17 +187,11 @@ def build_google_jsonl(
         has_video = False
         for att in attachments:
             cell_value = row.get(att.column, "")
-            type_override = attachment_type_for_row(att, row)
-            if cell_value.strip() and (
-                resolve_item_type(att.type, type_override) == VIDEO_COLUMN_TYPE
-            ):
+            if cell_value.strip() and att.type == VIDEO_COLUMN_TYPE:
                 has_video = True
             parts.extend(
                 build_gemini_attachment_parts(
-                    cell_value,
-                    att,
-                    type_override=type_override,
-                    video_part_config=video_part_config,
+                    cell_value, att, video_part_config=video_part_config
                 )
             )
 
@@ -282,13 +268,7 @@ def build_anthropic_jsonl(
         # Attachments (Anthropic uses url-source image/document blocks)
         for att in attachments:
             cell_value = row.get(att.column, "")
-            content.extend(
-                build_anthropic_attachment_parts(
-                    cell_value,
-                    att,
-                    type_override=attachment_type_for_row(att, row),
-                )
-            )
+            content.extend(build_anthropic_attachment_parts(cell_value, att))
 
         if not content:
             logger.warning("[build_anthropic_jsonl] Skipping empty row | idx=%s", idx)

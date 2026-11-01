@@ -21,11 +21,23 @@ JSON_SCHEMA_OBJECT_TYPE = "object"
 IMAGE_COLUMN_TYPE = "image"
 PDF_COLUMN_TYPE = "pdf"
 VIDEO_COLUMN_TYPE = "video"
+AUDIO_COLUMN_TYPE = "audio"
 # Input-column types carrying a media reference rather than prompt text.
-ATTACHMENT_COLUMN_TYPES = (IMAGE_COLUMN_TYPE, PDF_COLUMN_TYPE, VIDEO_COLUMN_TYPE)
+ATTACHMENT_COLUMN_TYPES = (
+    IMAGE_COLUMN_TYPE,
+    PDF_COLUMN_TYPE,
+    VIDEO_COLUMN_TYPE,
+    AUDIO_COLUMN_TYPE,
+)
 
-AttachmentColumnType = Literal["image", "pdf", "video"]
+AttachmentColumnType = Literal["image", "pdf", "video", "audio"]
 ColumnType = Literal["text"] | AttachmentColumnType
+
+# Media column types a provider cannot take, so a config pairing them is rejected at save.
+UNSUPPORTED_COLUMN_TYPES_BY_PROVIDER: dict[str, tuple[str, ...]] = {
+    Provider.OPENAI: (VIDEO_COLUMN_TYPE, AUDIO_COLUMN_TYPE),
+    Provider.ANTHROPIC: (VIDEO_COLUMN_TYPE, AUDIO_COLUMN_TYPE),
+}
 
 # {column} placeholders in a submission template; the capture group is the column name.
 PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
@@ -223,5 +235,31 @@ class AssessmentConfigBlob(SQLModel):
                 raise ValueError(
                     f"{block} submission references unknown input_schema column(s): "
                     f"{', '.join(unknown)}"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_column_types_supported(self):
+        """Every stage's provider must accept each media column type in input_schema."""
+        stage_providers: list[tuple[str, str]] = [
+            ("assessment", self.assessment.provider)
+        ]
+        topic_relevance = self.pre_filters.topic_relevance if self.pre_filters else None
+        if topic_relevance is not None:
+            stage_providers.append(
+                ("pre_filter topic_relevance", topic_relevance.provider)
+            )
+
+        for stage, provider in stage_providers:
+            unsupported = UNSUPPORTED_COLUMN_TYPES_BY_PROVIDER.get(provider, ())
+            offending = sorted(
+                column
+                for column, spec in self.input_schema.items()
+                if spec.type in unsupported
+            )
+            if offending:
+                raise ValueError(
+                    f"{stage} provider '{provider}' does not support "
+                    f"{'/'.join(unsupported)} input columns: {', '.join(offending)}"
                 )
         return self

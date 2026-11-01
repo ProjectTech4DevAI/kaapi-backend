@@ -58,6 +58,12 @@ _EXTENSION_TYPES = {
     ".flv": "video",
     ".webm": "video",
     ".3gp": "video",
+    ".wav": "audio",
+    ".mp3": "audio",
+    ".aiff": "audio",
+    ".aac": "audio",
+    ".ogg": "audio",
+    ".flac": "audio",
 }
 
 

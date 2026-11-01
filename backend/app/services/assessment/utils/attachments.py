@@ -11,7 +11,7 @@ from sqlmodel import Session
 from app.core.config import settings
 from app.models.assessment import AssessmentAttachment
 from app.models.config.assessment_blob import (
-    ATTACHMENT_COLUMN_TYPES,
+    AUDIO_COLUMN_TYPE,
     IMAGE_COLUMN_TYPE,
     VIDEO_COLUMN_TYPE,
 )
@@ -45,9 +45,19 @@ _VIDEO_MIME_BY_EXT = {
     ".3gp": "video/3gpp",
 }
 
+_AUDIO_MIME_BY_EXT = {
+    ".wav": "audio/wav",
+    ".mp3": "audio/mp3",
+    ".aiff": "audio/aiff",
+    ".aac": "audio/aac",
+    ".ogg": "audio/ogg",
+    ".flac": "audio/flac",
+}
+
 _PDF_MIME = "application/pdf"
 _DEFAULT_IMAGE_MIME = "image/png"
 _DEFAULT_VIDEO_MIME = "video/mp4"
+_DEFAULT_AUDIO_MIME = "audio/mp3"
 
 YOUTUBE_HOSTS = ("youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com")
 
@@ -157,77 +167,26 @@ def _resolve_video_mime_from_url(url: str) -> str | None:
     return None
 
 
-def resolve_item_type(declared: str, type_override: str | None = None) -> str | None:
-    """Resolve an attachment item as 'image', 'pdf' or 'video' from the declared type.
-
-    A per-row ``type_override`` (for 'mixed' columns) wins, else the column's declared
-    ``type``. Returns None when the type stays unresolved (e.g. a 'mixed' row whose
-    value didn't map to a concrete type) so callers can skip rather than guess.
-    """
-    item_type = type_override or declared
-    return item_type if item_type in ATTACHMENT_COLUMN_TYPES else None
-
-
-def _normalize_type_value(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip().casefold()
-
-
-def _split_type_values(value: str) -> list[str]:
-    return [
-        normalized
-        for part in re.split(r"[\n,]+", value)
-        if (normalized := _normalize_type_value(part))
-    ]
-
-
-def attachment_type_for_row(
-    att: AssessmentAttachment, row: dict[str, str]
-) -> str | None:
-    """For a 'mixed' column, resolve this row's type from type_column + type_value_map.
-
-    Returns a concrete attachment type, or None to let normal detection decide.
-    """
-    type_column = getattr(att, "type_column", None)
-    type_value_map = getattr(att, "type_value_map", None)
-    if att.type != "mixed" or not type_column or not type_value_map:
-        return None
-
-    normalized_map: dict[str, str] = {}
-    for raw_values, mapped_type in type_value_map.items():
-        if mapped_type not in ATTACHMENT_COLUMN_TYPES:
-            continue
-        for value in _split_type_values(raw_values):
-            normalized_map[value] = mapped_type
-
-    row_values = _split_type_values(row.get(type_column) or "")
-    if not row_values:
-        return None
-
-    mapped_values = {
-        normalized_map[value] for value in row_values if value in normalized_map
-    }
-    return mapped_values.pop() if len(mapped_values) == 1 else None
+def _resolve_audio_mime_from_url(url: str) -> str | None:
+    path = urlparse(url).path or ""
+    for ext, mime in _AUDIO_MIME_BY_EXT.items():
+        if path.lower().endswith(ext):
+            return mime
+    return None
 
 
 def resolve_attachment_values(
     value: str,
     att: AssessmentAttachment,
-    type_override: str | None = None,
 ) -> list[dict[str, JsonValue]]:
     """Resolve one dataset cell into OpenAI-supported content params (by URL)."""
     value = value.strip()
     if not value:
         return []
 
-    item_type = resolve_item_type(att.type, type_override)
-    if item_type is None:
-        logger.warning(
-            "[resolve_attachment_values] Unresolved type for column=%s — skipping",
-            att.column,
-        )
-        return []
-    # Openai doesn't support video attachments
-    if item_type == VIDEO_COLUMN_TYPE:
+    item_type = att.type
+    # Openai doesn't support video or audio attachments (Responses API)
+    if item_type in (VIDEO_COLUMN_TYPE, AUDIO_COLUMN_TYPE):
         return []
     resolved: list[dict[str, JsonValue]] = []
     for item_value in split_attachment_urls(value):
@@ -242,22 +201,15 @@ def resolve_attachment_values(
 def build_anthropic_attachment_parts(
     value: str,
     att: AssessmentAttachment,
-    type_override: str | None = None,
 ) -> list[dict[str, JsonValue]]:
     """Convert one dataset cell into one or more Anthropic content blocks (by URL)."""
     value = value.strip()
     if not value:
         return []
 
-    item_type = resolve_item_type(att.type, type_override)
-    if item_type is None:
-        logger.warning(
-            "[build_anthropic_attachment_parts] Unresolved type for column=%s — skipping",
-            att.column,
-        )
-        return []
-    # Anthropic doesn't support video attachments
-    if item_type == VIDEO_COLUMN_TYPE:
+    item_type = att.type
+    # Anthropic doesn't support video or audio attachments
+    if item_type in (VIDEO_COLUMN_TYPE, AUDIO_COLUMN_TYPE):
         return []
     blocks: list[dict[str, JsonValue]] = []
     for item_value in split_attachment_urls(value):
@@ -282,26 +234,19 @@ def build_gemini_video_part(
 def build_gemini_attachment_parts(
     value: str,
     att: AssessmentAttachment,
-    type_override: str | None = None,
     video_part_config: dict[str, JsonValue] | None = None,
 ) -> list[dict[str, JsonValue]]:
     """Convert one dataset cell into one or more Gemini content parts (by URL).
 
     Mirrors the per-item type routing used for the L2 batch so the same
-    image/pdf/video handling applies to prefilter (topic relevance) calls.
+    image/pdf/video/audio handling applies to prefilter (topic relevance) calls.
     ``video_part_config`` comes from the Google mapper, already wire-shaped.
     """
     value = value.strip()
     if not value:
         return []
 
-    item_type = resolve_item_type(att.type, type_override)
-    if item_type is None:
-        logger.warning(
-            "[build_gemini_attachment_parts] Unresolved type for column=%s — skipping",
-            att.column,
-        )
-        return []
+    item_type = att.type
     parts: list[dict[str, JsonValue]] = []
     for item_value in split_attachment_urls(value):
         url = to_direct_attachment_url(item_value, item_type)
@@ -310,6 +255,9 @@ def build_gemini_attachment_parts(
             parts.append({"fileData": {"mimeType": mime_type, "fileUri": url}})
         elif item_type == VIDEO_COLUMN_TYPE:
             parts.append(build_gemini_video_part(url, video_part_config))
+        elif item_type == AUDIO_COLUMN_TYPE:
+            mime_type = _resolve_audio_mime_from_url(url) or _DEFAULT_AUDIO_MIME
+            parts.append({"fileData": {"mimeType": mime_type, "fileUri": url}})
         else:
             parts.append({"fileData": {"mimeType": _PDF_MIME, "fileUri": url}})
     return parts
