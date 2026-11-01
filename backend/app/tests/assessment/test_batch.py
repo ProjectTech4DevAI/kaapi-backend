@@ -20,11 +20,9 @@ from app.models.assessment import AssessmentAttachment
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
 from app.services.assessment.utils.attachments import (
     _guess_image_mime_from_url,
-    attachment_type_for_row,
     build_anthropic_attachment_parts,
     build_gemini_attachment_parts,
     resolve_attachment_values,
-    resolve_item_type,
     rewrite_gcs_attachment_urls,
     split_attachment_urls,
     to_direct_attachment_url,
@@ -607,24 +605,8 @@ class TestBatchHelpers:
         assert parts[0]["source"] == {"type": "url", "url": "https://example.com/a.png"}
 
 
-class TestResolveItemType:
-    """Image/pdf routing now trusts the user-declared type (no detection)."""
-
-    def test_declared_image(self) -> None:
-        assert resolve_item_type("image") == "image"
-
-    def test_declared_pdf(self) -> None:
-        assert resolve_item_type("pdf") == "pdf"
-
-    def test_override_wins(self) -> None:
-        assert resolve_item_type("image", "pdf") == "pdf"
-        assert resolve_item_type("pdf", "image") == "image"
-
-    def test_mixed_without_override_is_unresolved(self) -> None:
-        assert resolve_item_type("mixed") is None
-
-    def test_unknown_declared_is_unresolved(self) -> None:
-        assert resolve_item_type("whatever") is None
+class TestDeclaredAttachmentType:
+    """Routing trusts the user-declared column type (no detection)."""
 
     def test_column_uses_single_declared_type(self) -> None:
         """One column, many URLs -> all routed by the declared type."""
@@ -643,125 +625,15 @@ class TestAttachmentMime:
         assert _guess_image_mime_from_url("http://x/a.txt") is None
 
 
-class TestAttachmentTypeForRow:
-    def test_mixed_resolves_from_type_column(self) -> None:
-        from app.services.assessment.utils.attachments import attachment_type_for_row
-
-        att = AssessmentAttachment(
-            column="Docs",
-            type="mixed",
-            format="url",
-            type_column="DOC type",
-            type_value_map={"Photo": "image", "Report": "pdf"},
-        )
-        assert attachment_type_for_row(att, {"DOC type": "Photo"}) == "image"
-        assert attachment_type_for_row(att, {"DOC type": "Report"}) == "pdf"
-        assert attachment_type_for_row(att, {"DOC type": "Unknown"}) is None
-
-    def test_mixed_resolves_comma_separated_value_lists(self) -> None:
-        from app.services.assessment.utils.attachments import attachment_type_for_row
-
-        att = AssessmentAttachment(
-            column="Docs",
-            type="mixed",
-            format="url",
-            type_column="DOC type",
-            type_value_map={"Img-Prototype, Img-Handtext": "image", "Pdf": "pdf"},
-        )
-
-        assert attachment_type_for_row(att, {"DOC type": "Img-Prototype"}) == "image"
-        assert attachment_type_for_row(att, {"DOC type": "Img-Handtext"}) == "image"
-        assert attachment_type_for_row(att, {"DOC type": "pdf"}) == "pdf"
-
-    def test_mixed_resolves_row_value_lists_when_same_type(self) -> None:
-        from app.services.assessment.utils.attachments import attachment_type_for_row
-
-        att = AssessmentAttachment(
-            column="Docs",
-            type="mixed",
-            format="url",
-            type_column="DOC type",
-            type_value_map={"Img-Prototype, Img-Handtext": "image", "Pdf": "pdf"},
-        )
-
-        assert (
-            attachment_type_for_row(
-                att,
-                {"DOC type": "Img-Prototype, Img-Handtext"},
-            )
-            == "image"
-        )
-        assert attachment_type_for_row(att, {"DOC type": "Img-Prototype, Pdf"}) is None
-
-    def test_mixed_missing_type_mapping_fields_returns_none(self) -> None:
-        from app.services.assessment.utils.attachments import attachment_type_for_row
-
-        att = SimpleNamespace(column="Docs", type="mixed", format="url")
-
-        assert attachment_type_for_row(att, {"Docs": "x"}) is None
-
-    def test_non_mixed_returns_none(self) -> None:
-        from app.services.assessment.utils.attachments import attachment_type_for_row
-
-        att = AssessmentAttachment(column="Docs", type="image", format="url")
-        assert attachment_type_for_row(att, {"Docs": "x"}) is None
-
-    def test_mixed_config_missing_routing_fields_is_rejected(self) -> None:
-        import pytest
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            AssessmentAttachment(column="Docs", type="mixed", format="url")
-
-    def test_mixed_config_invalid_map_value_is_rejected(self) -> None:
-        import pytest
-        from pydantic import ValidationError
-
-        with pytest.raises(ValidationError):
-            AssessmentAttachment(
-                column="Docs",
-                type="mixed",
-                format="url",
-                type_column="DOC type",
-                type_value_map={"Report": "spreadsheet"},
-            )
-
-    def test_override_forces_part_type(self) -> None:
-        from app.services.assessment.utils.attachments import resolve_attachment_values
-
-        att = AssessmentAttachment(
-            column="Docs",
-            type="mixed",
-            format="url",
-            type_column="DOC type",
-            type_value_map={"Report": "pdf"},
-        )
-        url = "https://drive.google.com/file/d/ID/view"
-        parts = resolve_attachment_values(url, att, type_override="pdf")
-        assert parts[0]["type"] == "input_file"
-
-
 class TestAttachmentResolutionBranches:
     _IMG = AssessmentAttachment(column="Docs", type="image", format="url")
     _PDF = AssessmentAttachment(column="Docs", type="pdf", format="url")
     _VIDEO = AssessmentAttachment(column="Docs", type="video", format="url")
-    _MIXED = AssessmentAttachment(
-        column="Docs",
-        type="mixed",
-        format="url",
-        type_column="DOC type",
-        type_value_map={"Report": "pdf"},
-    )
+    _AUDIO = AssessmentAttachment(column="Docs", type="audio", format="url")
 
     def test_blank_value_returns_empty(self) -> None:
         assert resolve_attachment_values("  ", self._IMG) == []
         assert build_gemini_attachment_parts("  ", self._IMG) == []
-
-    def test_unresolved_mixed_is_skipped(self) -> None:
-        url = "https://x.com/a.jpg"
-        # No override and declared 'mixed' -> unresolved -> skip rather than guess.
-        assert resolve_attachment_values(url, self._MIXED) == []
-        assert build_gemini_attachment_parts(url, self._MIXED) == []
 
     def test_gemini_image_and_pdf_parts(self) -> None:
         img = build_gemini_attachment_parts("https://x.com/a.png", self._IMG)[0]
@@ -773,6 +645,38 @@ class TestAttachmentResolutionBranches:
         url = "https://x.com/a.mp4"
         assert resolve_attachment_values(url, self._VIDEO) == []
         assert build_anthropic_attachment_parts(url, self._VIDEO) == []
+
+    def test_openai_and_anthropic_skip_audio(self) -> None:
+        url = "https://x.com/a.wav"
+        assert resolve_attachment_values(url, self._AUDIO) == []
+        assert build_anthropic_attachment_parts(url, self._AUDIO) == []
+
+    def test_gemini_audio_part_resolves_mime_from_extension(self) -> None:
+        part = build_gemini_attachment_parts(
+            "https://x.com/a.WAV?sig=1, gs://b/c.flac", self._AUDIO
+        )
+        assert part[0]["fileData"] == {
+            "fileUri": "https://x.com/a.WAV?sig=1",
+            "mimeType": "audio/wav",
+        }
+        assert part[1]["fileData"]["mimeType"] == "audio/flac"
+
+    def test_gemini_audio_part_unknown_extension_uses_default_mime(self) -> None:
+        part = build_gemini_attachment_parts("https://x.com/clip", self._AUDIO)[0]
+        assert part["fileData"]["mimeType"] == "audio/mp3"
+
+    def test_google_jsonl_carries_audio_part(self) -> None:
+        jsonl = build_google_jsonl(
+            rows=[{"clip": "https://x.com/a.mp3", "q": "hi"}],
+            text_columns=["q"],
+            attachments=[
+                AssessmentAttachment(column="clip", type="audio", format="url")
+            ],
+            prompt_template="{q}",
+            google_params={"model": "gemini-2.5-flash"},
+        )
+        parts = jsonl[0]["request"]["contents"][0]["parts"]
+        assert parts[1]["fileData"]["mimeType"] == "audio/mp3"
 
     def test_gemini_video_part_youtube_omits_mime_type(self) -> None:
         part = build_gemini_attachment_parts(
@@ -791,16 +695,3 @@ class TestAttachmentResolutionBranches:
             "mimeType": "video/mp4",
         }
         assert part["videoMetadata"] == {"fps": 1.0}
-
-    def test_type_for_row_blank_value_returns_none(self) -> None:
-        assert attachment_type_for_row(self._MIXED, {"DOC type": "  "}) is None
-
-    def test_type_for_row_ignores_invalid_map_value(self) -> None:
-        # SimpleNamespace bypasses the model validator to exercise the guard that
-        # skips map entries whose target type isn't 'image'/'pdf'.
-        att = SimpleNamespace(
-            type="mixed",
-            type_column="DOC type",
-            type_value_map={"Report": "spreadsheet"},
-        )
-        assert attachment_type_for_row(att, {"DOC type": "Report"}) is None

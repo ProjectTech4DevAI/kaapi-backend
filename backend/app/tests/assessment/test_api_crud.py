@@ -407,6 +407,57 @@ def _blob_with_submissions(
     return blob
 
 
+class TestUnsupportedColumnTypeValidator:
+    @pytest.mark.parametrize("provider", ["openai", "anthropic"])
+    @pytest.mark.parametrize("column_type", ["audio", "video"])
+    def test_media_column_rejected_for_unsupported_assessment_provider(
+        self, provider: str, column_type: str
+    ) -> None:
+        blob = _blob_with_submissions(
+            input_schema={"a": {"type": "text"}, "m": {"type": column_type}}
+        )
+        blob["assessment"]["provider"] = provider
+        with pytest.raises(
+            ValidationError, match=f"assessment provider '{provider}'.*: m"
+        ):
+            AssessmentConfigBlob.model_validate(blob)
+
+    def test_media_column_rejected_for_unsupported_prefilter_provider(self) -> None:
+        blob = _blob_with_submissions(
+            input_schema={"a": {"type": "text"}, "m": {"type": "audio"}},
+            topic_submission="rank {a}",
+        )
+        blob["assessment"]["provider"] = "google-gcp"
+        with pytest.raises(
+            ValidationError, match="pre_filter topic_relevance provider 'openai'"
+        ):
+            AssessmentConfigBlob.model_validate(blob)
+
+    @pytest.mark.parametrize("provider", ["google", "google-aistudio", "google-gcp"])
+    def test_media_column_accepted_for_google(self, provider: str) -> None:
+        blob = _blob_with_submissions(
+            input_schema={
+                "a": {"type": "text"},
+                "m": {"type": "audio"},
+                "v": {"type": "video"},
+            }
+        )
+        blob["assessment"]["provider"] = provider
+        assert (
+            AssessmentConfigBlob.model_validate(blob).input_schema["m"].type == "audio"
+        )
+
+    def test_image_and_pdf_columns_accepted_for_openai(self) -> None:
+        blob = _blob_with_submissions(
+            input_schema={
+                "a": {"type": "text"},
+                "i": {"type": "image"},
+                "p": {"type": "pdf"},
+            }
+        )
+        AssessmentConfigBlob.model_validate(blob)
+
+
 class TestSubmissionPlaceholderValidator:
     def test_valid_assessment_and_prefilter_submission_passes(self) -> None:
         blob = AssessmentConfigBlob.model_validate(

@@ -208,6 +208,21 @@ class TestSubmit:
             {"img": {"type": "image", "format": "url"}},
         )
 
+    def test_audio_column_with_audio_url_passes_validation(self) -> None:
+        submission._validate_rows_against_schema(
+            [{"clip": "https://x.com/a.wav?sig=1"}],
+            {"clip": {"type": "audio", "format": "url"}},
+        )
+
+    def test_audio_column_with_video_url_is_422(self) -> None:
+        with pytest.raises(HTTPException) as exc:
+            submission._validate_rows_against_schema(
+                [{"clip": "https://x.com/a.mp4"}],
+                {"clip": {"type": "audio", "format": "url"}},
+            )
+        assert exc.value.status_code == 422
+        assert "Change the column type to 'video'" in exc.value.detail
+
     def test_unsupported_provider_is_422(self, db) -> None:
         auth = get_user_test_auth_context(db)
         # Build a config whose stored blob names an unsupported batch provider.
