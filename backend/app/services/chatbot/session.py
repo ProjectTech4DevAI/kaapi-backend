@@ -204,7 +204,6 @@ def _send_failure_webhook(
         error=error, data={"session_id": str(session_id)}
     )
     send_callback(webhook_url, envelope.model_dump(exclude_none=True), webhook_secret)
-    return
 
 
 def process_chatbot_session_message(
@@ -326,4 +325,3 @@ def process_chatbot_session_message(
         }
     )
     send_callback(webhook_url, envelope.model_dump(exclude_none=True), webhook_secret)
-    return

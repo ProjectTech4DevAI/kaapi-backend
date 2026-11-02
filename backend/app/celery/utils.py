@@ -342,7 +342,7 @@ def start_chatbot_session_message(
     organization_id: int,
     project_id: int,
     webhook_url: str,
-    trace_id: str = "N/A",
+    trace_id: str,
 ) -> str:
     from app.celery.tasks.job_execution import run_chatbot_session_message
 
