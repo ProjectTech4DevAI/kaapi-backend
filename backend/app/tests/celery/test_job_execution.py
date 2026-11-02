@@ -1,4 +1,5 @@
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 
@@ -56,3 +57,32 @@ class TestAssessmentApiBatchReenqueue:
         apply_async = self._run(requeue=False)
 
         apply_async.assert_not_called()
+
+
+class TestRunChatbotSessionMessage:
+    def test_hands_service_a_uuid_session_id(self):
+        session_id = uuid4()
+        received: list[dict] = []
+        with (
+            patch.object(job_execution, "_set_trace", lambda trace_id: None),
+            patch(
+                "app.services.chatbot.session.process_chatbot_session_message",
+                lambda **kwargs: received.append(kwargs),
+            ),
+        ):
+            job_execution.run_chatbot_session_message(
+                session_id=str(session_id),
+                organization_id=2,
+                project_id=3,
+                webhook_url="https://hooks.example.com/chatbot",
+                trace_id="trace-1",
+            )
+
+        assert received == [
+            {
+                "session_id": session_id,
+                "organization_id": 2,
+                "project_id": 3,
+                "webhook_url": "https://hooks.example.com/chatbot",
+            }
+        ]
