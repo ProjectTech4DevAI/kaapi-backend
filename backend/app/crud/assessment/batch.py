@@ -25,7 +25,6 @@ from app.models.assessment import (
     AssessmentSubmission,
 )
 from app.models.batch_job import BatchJob, BatchJobType
-from app.models.config.assessment_blob import VIDEO_COLUMN_TYPE
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
 from app.models.llm.request import ConfigBlob
 from app.services.assessment.utils.attachments import (
@@ -187,7 +186,7 @@ def build_google_jsonl(
         has_video = False
         for att in attachments:
             cell_value = row.get(att.column, "")
-            if cell_value.strip() and att.type == VIDEO_COLUMN_TYPE:
+            if cell_value.strip() and att.type == "video":
                 has_video = True
             parts.extend(
                 build_gemini_attachment_parts(

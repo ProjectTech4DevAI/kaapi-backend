@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Literal
+from typing import Literal, get_args
 
 from pydantic import JsonValue, model_validator
 from sqlmodel import Field, SQLModel
@@ -18,26 +18,15 @@ logger = logging.getLogger(__name__)
 # object-typed dict. Provider strict-mode normalisation is a run-mode concern.
 JSON_SCHEMA_OBJECT_TYPE = "object"
 
-IMAGE_COLUMN_TYPE = "image"
-PDF_COLUMN_TYPE = "pdf"
-VIDEO_COLUMN_TYPE = "video"
-AUDIO_COLUMN_TYPE = "audio"
-# Input-column types carrying a media reference rather than prompt text.
-ATTACHMENT_COLUMN_TYPES = (
-    IMAGE_COLUMN_TYPE,
-    PDF_COLUMN_TYPE,
-    VIDEO_COLUMN_TYPE,
-    AUDIO_COLUMN_TYPE,
-)
-
 AttachmentColumnType = Literal["image", "pdf", "video", "audio"]
 ColumnType = Literal["text"] | AttachmentColumnType
+# Input-column types carrying a media reference rather than prompt text.
+ATTACHMENT_COLUMN_TYPES = get_args(AttachmentColumnType)
 
 # Media column types a provider cannot take, so a config pairing them is rejected at save.
-UNSUPPORTED_COLUMN_TYPES_BY_PROVIDER: dict[str, tuple[str, ...]] = {
-    Provider.OPENAI: (VIDEO_COLUMN_TYPE, AUDIO_COLUMN_TYPE),
-    Provider.ANTHROPIC: (VIDEO_COLUMN_TYPE, AUDIO_COLUMN_TYPE),
-}
+UNSUPPORTED_COLUMN_TYPES_BY_PROVIDER: dict[str, tuple[str, ...]] = dict.fromkeys(
+    (Provider.OPENAI, Provider.ANTHROPIC), ("video", "audio")
+)
 
 # {column} placeholders in a submission template; the capture group is the column name.
 PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
@@ -63,9 +52,7 @@ class InputColumn(SQLModel):
 
     @model_validator(mode="after")
     def _validate_video_format(self):
-        if self.type in (VIDEO_COLUMN_TYPE, AUDIO_COLUMN_TYPE) and (
-            self.format == "base64"
-        ):
+        if self.type in ("video", "audio") and self.format == "base64":
             raise ValueError(f"A '{self.type}' input column must be url-format.")
         return self
 
@@ -243,16 +230,13 @@ class AssessmentConfigBlob(SQLModel):
     @model_validator(mode="after")
     def _validate_column_types_supported(self):
         """Every stage's provider must accept each media column type in input_schema."""
-        stage_providers: list[tuple[str, str]] = [
-            ("assessment", self.assessment.provider)
-        ]
-        topic_relevance = self.pre_filters.topic_relevance if self.pre_filters else None
-        if topic_relevance is not None:
-            stage_providers.append(
-                ("pre_filter topic_relevance", topic_relevance.provider)
-            )
+        stage_providers = {"assessment": self.assessment.provider}
+        if self.pre_filters and self.pre_filters.topic_relevance:
+            stage_providers[
+                "pre_filter topic_relevance"
+            ] = self.pre_filters.topic_relevance.provider
 
-        for stage, provider in stage_providers:
+        for stage, provider in stage_providers.items():
             unsupported = UNSUPPORTED_COLUMN_TYPES_BY_PROVIDER.get(provider, ())
             offending = sorted(
                 column

@@ -20,6 +20,7 @@ from app.models.assessment import AssessmentAttachment
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
 from app.services.assessment.utils.attachments import (
     _guess_image_mime_from_url,
+    attachment_type_from_url,
     build_anthropic_attachment_parts,
     build_gemini_attachment_parts,
     resolve_attachment_values,
@@ -615,6 +616,21 @@ class TestDeclaredAttachmentType:
         resolved = resolve_attachment_values(value, att)
         types = [obj["type"] for obj in resolved]
         assert types == ["input_file", "input_file"]
+
+
+class TestAttachmentTypeFromUrl:
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("https://x.com/a.PDF?sig=1", "pdf"),
+            ("https://x.com/a.png", "image"),
+            ("https://x.com/a.mp4", "video"),
+            ("https://x.com/a.m4a", "audio"),
+            ("https://x.com/a", None),
+        ],
+    )
+    def test_type_from_extension(self, url: str, expected: str | None) -> None:
+        assert attachment_type_from_url(url) == expected
 
 
 class TestAttachmentMime:

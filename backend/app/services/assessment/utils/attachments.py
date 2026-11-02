@@ -10,11 +10,6 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.models.assessment import AssessmentAttachment
-from app.models.config.assessment_blob import (
-    AUDIO_COLUMN_TYPE,
-    IMAGE_COLUMN_TYPE,
-    VIDEO_COLUMN_TYPE,
-)
 from app.models.llm.constants import KaapiProvider
 from app.services.buckets.attachments import is_gcs_uri, resolve_attachments
 
@@ -61,6 +56,24 @@ _DEFAULT_VIDEO_MIME = "video/mp4"
 _DEFAULT_AUDIO_MIME = "audio/mp3"
 
 YOUTUBE_HOSTS = ("youtube.com", "www.youtube.com", "youtu.be", "m.youtube.com")
+
+
+def attachment_type_from_url(url: str) -> str | None:
+    """The attachment type a URL's own extension implies, or None when it names none.
+
+    Presigned URLs carry a query string, so only the path is read.
+    """
+    path = urlparse(url).path.lower()
+    if path.endswith(".pdf"):
+        return "pdf"
+    for kind, mime_by_ext in (
+        ("image", _IMAGE_MIME_BY_EXT),
+        ("video", _VIDEO_MIME_BY_EXT),
+        ("audio", _AUDIO_MIME_BY_EXT),
+    ):
+        if path.endswith(tuple(mime_by_ext)):
+            return kind
+    return None
 
 
 def split_attachment_urls(value: str) -> list[str]:
@@ -187,12 +200,12 @@ def resolve_attachment_values(
 
     item_type = att.type
     # Openai doesn't support video or audio attachments (Responses API)
-    if item_type in (VIDEO_COLUMN_TYPE, AUDIO_COLUMN_TYPE):
+    if item_type in ("video", "audio"):
         return []
     resolved: list[dict[str, JsonValue]] = []
     for item_value in split_attachment_urls(value):
         url = to_direct_attachment_url(item_value, item_type)
-        if item_type == IMAGE_COLUMN_TYPE:
+        if item_type == "image":
             resolved.append({"type": "input_image", "image_url": url})
         else:
             resolved.append({"type": "input_file", "file_url": url})
@@ -210,12 +223,12 @@ def build_anthropic_attachment_parts(
 
     item_type = att.type
     # Anthropic doesn't support video or audio attachments
-    if item_type in (VIDEO_COLUMN_TYPE, AUDIO_COLUMN_TYPE):
+    if item_type in ("video", "audio"):
         return []
     blocks: list[dict[str, JsonValue]] = []
     for item_value in split_attachment_urls(value):
         url = to_direct_attachment_url(item_value, item_type)
-        if item_type == IMAGE_COLUMN_TYPE:
+        if item_type == "image":
             blocks.append({"type": "image", "source": {"type": "url", "url": url}})
         else:
             blocks.append({"type": "document", "source": {"type": "url", "url": url}})
@@ -251,12 +264,12 @@ def build_gemini_attachment_parts(
     parts: list[dict[str, JsonValue]] = []
     for item_value in split_attachment_urls(value):
         url = to_direct_attachment_url(item_value, item_type)
-        if item_type == IMAGE_COLUMN_TYPE:
+        if item_type == "image":
             mime_type = _guess_image_mime_from_url(url) or _DEFAULT_IMAGE_MIME
             parts.append({"fileData": {"mimeType": mime_type, "fileUri": url}})
-        elif item_type == VIDEO_COLUMN_TYPE:
+        elif item_type == "video":
             parts.append(build_gemini_video_part(url, video_part_config))
-        elif item_type == AUDIO_COLUMN_TYPE:
+        elif item_type == "audio":
             mime_type = _resolve_audio_mime_from_url(url) or _DEFAULT_AUDIO_MIME
             parts.append({"fileData": {"mimeType": mime_type, "fileUri": url}})
         else:
