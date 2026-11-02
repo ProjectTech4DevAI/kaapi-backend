@@ -25,6 +25,7 @@ from app.crud.evaluations.judge_prompts import (
     KNOWLEDGE_BASE_JUDGE_PROMPT,
     PROMPT_JUDGE_PROMPT,
 )
+from app.crud.evaluations.latency import elapsed_ms, start_timer
 from app.crud.evaluations.response_parsing import extract_response_text
 from app.crud.evaluations.retry import retry_openai_call
 from app.crud.evaluations.score import (
@@ -138,6 +139,7 @@ class JudgeResult:
 
     metrics: dict[JudgeMetricEnum, MetricScore]
     usage: dict[str, int]
+    latency_ms: float | None = None
 
 
 def _required_input_union(metrics: list[JudgeMetricSpec]) -> list[JudgeInputEnum]:
@@ -304,7 +306,9 @@ def judge_row(
     }
 
     try:
+        started = start_timer()
         response = _create_judge_response(openai_client, params)
+        latency_ms = elapsed_ms(started)
     except openai.OpenAIError as exc:
         status = getattr(exc, "status_code", None)
         # 5xx is provider-side (alert-worthy); 4xx/None is caller/Kaapi-side noise.
@@ -327,4 +331,4 @@ def judge_row(
     }
 
     metric_scores = _parse_judge_output(extract_response_text(response), applicable)
-    return JudgeResult(metrics=metric_scores, usage=usage)
+    return JudgeResult(metrics=metric_scores, usage=usage, latency_ms=latency_ms)

@@ -14,3 +14,8 @@ been created, information about the collection will be returned to the user via
 the callback URL. If a callback URL is not provided, clients can check the
 `collection job info` endpoint with the `job_id`, to retrieve
 information about the created collection.
+
+Requests are retry-safe by `name`: if a create job with the same `name` is still
+`PENDING` or `PROCESSING` in the project, the response returns that existing
+job's `job_id` instead of creating a second job. Once the job finishes, an
+existing collection with that name still returns 409.

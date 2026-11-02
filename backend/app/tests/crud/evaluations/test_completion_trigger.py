@@ -17,12 +17,15 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlmodel import Session
 
 from app.crud.evaluations.core import (
     TERMINAL_EVAL_STATUSES,
     update_evaluation_run,
 )
 from app.models import EvaluationRun, EvaluationRunUpdate
+from app.tests.utils.auth import TestAuthContext
+from app.tests.utils.test_data import create_test_evaluation_run
 
 
 def _stub_eval_run(
@@ -163,3 +166,33 @@ class TestCallbackUrlTrigger:
                 update=EvaluationRunUpdate(status=status, **extra),
             )
             callback_delay.assert_called_once_with(eval_run.id)
+
+
+class TestLatencyUpdate:
+    def test_latency_only_update_persists_without_enqueue(
+        self, db: Session, user_api_key: TestAuthContext
+    ):
+        # EvaluationRunUpdate drops unknown kwargs, so a missing field would be a
+        # silent no-op rather than an error.
+        eval_run = create_test_evaluation_run(
+            db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+        )
+
+        with patch(
+            "app.crud.evaluations.core._enqueue_eval_completion_notification"
+        ) as enq:
+            update_evaluation_run(
+                session=db,
+                eval_run=eval_run,
+                update=EvaluationRunUpdate(
+                    latency={"avg_latency_ms": 1.0, "call_count": 1}
+                ),
+            )
+
+        enq.assert_not_called()
+        db.expire_all()
+        persisted = db.get(EvaluationRun, eval_run.id)
+        assert persisted.latency == {"avg_latency_ms": 1.0, "call_count": 1}
+        assert persisted.status == "processing"

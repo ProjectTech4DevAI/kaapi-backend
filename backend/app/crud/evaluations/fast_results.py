@@ -2,7 +2,8 @@
 
 Pure builders and aggregation helpers: no OpenAI, DB or storage access. The
 dicts produced here are the units uploaded to S3, so they must stay
-JSON-serializable and match the batch path's shape.
+JSON-serializable. They are a superset of the batch path's shape; `latency_ms`
+is fast-only.
 """
 
 from collections.abc import Mapping
@@ -39,6 +40,7 @@ class ResponseResult(TypedDict, total=False):
     guardrail: str | None
     input_to_llm: str | None
     output_from_llm: str | None
+    latency_ms: float | None
 
 
 class EmbeddingResult(TypedDict, total=False):
@@ -50,6 +52,7 @@ class EmbeddingResult(TypedDict, total=False):
     usage: dict[str, int]
     failed: bool
     error: str
+    latency_ms: float | None
 
 
 RESPONSE_USAGE_KEYS: tuple[str, ...] = ("input_tokens", "output_tokens", "total_tokens")
@@ -70,6 +73,7 @@ def build_response_result(
     guardrail: str | None = None,
     input_to_llm: str | None = None,
     output_from_llm: str | None = None,
+    latency_ms: float | None = None,
 ) -> ResponseResult:
     """One Stage-1 per-item result, in the batch path's shape."""
     return {
@@ -85,6 +89,7 @@ def build_response_result(
         "guardrail": guardrail,
         "input_to_llm": input_to_llm,
         "output_from_llm": output_from_llm,
+        "latency_ms": latency_ms,
     }
 
 
@@ -103,6 +108,7 @@ def build_embedding_failure(item_id: str, error: str) -> EmbeddingResult:
         "usage": {},
         "failed": True,
         "error": error,
+        "latency_ms": None,
     }
 
 
@@ -111,7 +117,9 @@ def extract_usage(usage_obj: Any, keys: tuple[str, ...]) -> dict[str, int]:
     return {key: int(field_value(usage_obj, key, 0) or 0) for key in keys}
 
 
-def parse_embedding_pair(*, item_id: str, response: Any) -> EmbeddingResult:
+def parse_embedding_pair(
+    *, item_id: str, response: Any, latency_ms: float | None = None
+) -> EmbeddingResult:
     """Unpack an embeddings response into one Stage-2 per-pair result.
 
     The request embeds `[output_text, ground_truth]`, so index 0 is the generated
@@ -139,6 +147,7 @@ def parse_embedding_pair(*, item_id: str, response: Any) -> EmbeddingResult:
         "ground_truth_embedding": ground_truth_embedding,
         "usage": extract_usage(field_value(response, "usage"), EMBEDDING_USAGE_KEYS),
         "failed": output_embedding is None or ground_truth_embedding is None,
+        "latency_ms": latency_ms,
     }
 
 

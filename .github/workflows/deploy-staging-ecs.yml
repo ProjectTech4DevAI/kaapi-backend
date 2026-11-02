@@ -33,16 +33,16 @@ jobs:
       - name: Build and Push Docker Image
         env:
           REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          REPOSITORY: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-repo
+          REPOSITORY: ${{ vars.AWS_RESOURCE_PREFIX }}-backend-repo
         run: |
           docker build --build-arg GIT_SHA=${{ github.sha }} -t $REGISTRY/$REPOSITORY:latest ./backend
           docker push $REGISTRY/$REPOSITORY:latest
 
       - name: Run database migrations
         env:
-          CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-cluster
-          SERVICE: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-service
-          TASK_DEF: ${{ vars.AWS_RESOURCE_PREFIX }}-staging-task
+          CLUSTER: ${{ vars.AWS_RESOURCE_PREFIX }}-backend-cluster
+          SERVICE: ${{ vars.AWS_RESOURCE_PREFIX }}-backend-celery-service
+          TASK_DEF: ${{ vars.AWS_RESOURCE_PREFIX }}-backend-celery
         run: |
           CONTAINER_NAME=$(aws ecs describe-task-definition --task-definition $TASK_DEF --query 'taskDefinition.containerDefinitions[0].name' --output text)
 

@@ -391,6 +391,10 @@ class TestExecuteEvalCompletionCallback:
             run_mode="fast",
             callback_url=self._HOOK,
         )
+        # Populated so the leak check below can't pass merely because it's NULL.
+        run.latency = {"avg_latency_ms": 250.0, "call_count": 4}
+        patched_session.add(run)
+        patched_session.commit()
 
         with (
             patch.object(
@@ -417,7 +421,14 @@ class TestExecuteEvalCompletionCallback:
         assert data["id"] == run.id
         assert data["status"] == "completed"
         assert data["run_mode"] == "fast"
-        for leaked in ("score", "traces", "cost", "callback_url", "error_message"):
+        for leaked in (
+            "score",
+            "traces",
+            "cost",
+            "latency",
+            "callback_url",
+            "error_message",
+        ):
             assert leaked not in data
 
     def test_failed_run_delivers_slim_failure_payload(

@@ -20,6 +20,7 @@ from app.models import (
     Credential,
     CredsCreate,
     EvaluationDataset,
+    EvaluationRun,
     FineTuning,
     FineTuningJobCreate,
     ModelEvaluation,
@@ -460,3 +461,30 @@ def create_test_evaluation_dataset(
     db.commit()
     db.refresh(dataset)
     return dataset
+
+
+def create_test_evaluation_run(
+    db: Session,
+    organization_id: int,
+    project_id: int,
+    status: str = "processing",
+) -> EvaluationRun:
+    """Persist an EvaluationRun backed by a real dataset and stored config."""
+    dataset = create_test_evaluation_dataset(
+        db=db, organization_id=organization_id, project_id=project_id
+    )
+    config = create_test_config(db, project_id=project_id)
+    eval_run = EvaluationRun(
+        run_name=f"test_run_{random_lower_string()}",
+        dataset_name=dataset.name,
+        dataset_id=dataset.id,
+        config_id=config.id,
+        config_version=1,
+        status=status,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    db.add(eval_run)
+    db.commit()
+    db.refresh(eval_run)
+    return eval_run

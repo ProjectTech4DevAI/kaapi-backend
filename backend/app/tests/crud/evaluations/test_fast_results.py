@@ -45,6 +45,7 @@ class TestBuildResponseResult:
             "guardrail",
             "input_to_llm",
             "output_from_llm",
+            "latency_ms",
         }
 
     def test_optional_fields_default_to_none(self) -> None:
@@ -62,6 +63,19 @@ class TestBuildResponseResult:
         assert result["guardrail"] is None
         assert result["input_to_llm"] is None
         assert result["output_from_llm"] is None
+        assert result["latency_ms"] is None
+
+    def test_carries_latency_ms(self) -> None:
+        result = build_response_result(
+            item_id="i",
+            question="q",
+            ground_truth="gt",
+            question_id=1,
+            generated_output="out",
+            failed=False,
+            latency_ms=12.3,
+        )
+        assert result["latency_ms"] == 12.3
 
 
 class TestBuildEmbeddingFailure:
@@ -71,6 +85,11 @@ class TestBuildEmbeddingFailure:
         assert result["output_embedding"] is None
         assert result["ground_truth_embedding"] is None
         assert result["error"] == "empty output or ground_truth"
+
+    def test_has_null_latency_ms(self) -> None:
+        result = build_embedding_failure("item_1_0", "boom")
+        assert "latency_ms" in result
+        assert result["latency_ms"] is None
 
 
 class TestExtractUsage:
@@ -122,6 +141,21 @@ class TestParseEmbeddingPair:
         )
         assert result["failed"] is True
         assert "expected 2 embeddings" in result["error"]
+
+    def test_carries_latency_ms(self) -> None:
+        result = parse_embedding_pair(
+            item_id="i",
+            response=self._response([(0, [1.0]), (1, [2.0])]),
+            latency_ms=45.6,
+        )
+        assert result["latency_ms"] == 45.6
+
+    def test_short_payload_drops_latency_ms(self) -> None:
+        # The call returned but produced nothing usable, so it isn't a timed call.
+        result = parse_embedding_pair(
+            item_id="i", response=self._response([(0, [1.0])]), latency_ms=45.6
+        )
+        assert result["latency_ms"] is None
 
 
 class TestSumUsage:
