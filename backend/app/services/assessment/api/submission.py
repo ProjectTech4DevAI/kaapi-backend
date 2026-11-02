@@ -35,7 +35,10 @@ from app.services.assessment.api.submission_store import (
     open_uploaded_rows,
     upload_submission_rows,
 )
-from app.services.assessment.utils.attachments import attachment_type_from_url
+from app.services.assessment.utils.attachments import (
+    attachment_type_from_url,
+    split_attachment_urls,
+)
 from app.utils import validate_callback_url
 
 logger = logging.getLogger(__name__)
@@ -76,8 +79,11 @@ def _validate_rows_against_schema(
         for column, spec in input_schema.items():
             column_type = (spec or {}).get("type")
             value = (row.get(column) or "").strip()
-            if value and column_type in ATTACHMENT_COLUMN_TYPES:
-                if not value.startswith(_URL_PREFIXES):
+            if not value or column_type not in ATTACHMENT_COLUMN_TYPES:
+                continue
+            # A cell may hold several URLs; the builder sends each one separately.
+            for url in split_attachment_urls(value):
+                if not url.startswith(_URL_PREFIXES):
                     raise HTTPException(
                         status_code=422,
                         detail=(
@@ -86,7 +92,7 @@ def _validate_rows_against_schema(
                         ),
                     )
                 # The provider only reports a mistyped column later, as an opaque format error.
-                actual = attachment_type_from_url(value)
+                actual = attachment_type_from_url(url)
                 if actual is not None and actual != column_type:
                     raise HTTPException(
                         status_code=422,
