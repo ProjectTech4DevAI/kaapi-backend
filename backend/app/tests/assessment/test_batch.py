@@ -661,6 +661,10 @@ class TestAttachmentResolutionBranches:
         }
         assert part[1]["fileData"]["mimeType"] == "audio/flac"
 
+    def test_gemini_audio_part_m4a_mime(self) -> None:
+        part = build_gemini_attachment_parts("https://x.com/a.m4a", self._AUDIO)[0]
+        assert part["fileData"]["mimeType"] == "audio/m4a"
+
     def test_gemini_audio_part_unknown_extension_uses_default_mime(self) -> None:
         part = build_gemini_attachment_parts("https://x.com/clip", self._AUDIO)[0]
         assert part["fileData"]["mimeType"] == "audio/mp3"

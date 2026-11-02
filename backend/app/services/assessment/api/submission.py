@@ -64,6 +64,7 @@ _EXTENSION_TYPES = {
     ".aac": "audio",
     ".ogg": "audio",
     ".flac": "audio",
+    ".m4a": "audio",
 }
 
 

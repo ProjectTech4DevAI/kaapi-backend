@@ -63,8 +63,10 @@ class InputColumn(SQLModel):
 
     @model_validator(mode="after")
     def _validate_video_format(self):
-        if self.type == VIDEO_COLUMN_TYPE and self.format == "base64":
-            raise ValueError("A 'video' input column must be url-format.")
+        if self.type in (VIDEO_COLUMN_TYPE, AUDIO_COLUMN_TYPE) and (
+            self.format == "base64"
+        ):
+            raise ValueError(f"A '{self.type}' input column must be url-format.")
         return self
 
 

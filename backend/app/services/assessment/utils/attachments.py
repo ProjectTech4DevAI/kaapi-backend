@@ -52,6 +52,7 @@ _AUDIO_MIME_BY_EXT = {
     ".aac": "audio/aac",
     ".ogg": "audio/ogg",
     ".flac": "audio/flac",
+    ".m4a": "audio/m4a",
 }
 
 _PDF_MIME = "application/pdf"
