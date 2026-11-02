@@ -207,7 +207,7 @@ def column_kinds(
 ) -> tuple[list[str], list[AssessmentAttachment]]:
     """Split columns into text names and attachment specs per the config's ``input_schema``.
 
-    A column typed image/pdf/video is an attachment (url-format only); anything else is text.
+    A column typed image/pdf/video/audio is an attachment (url-format only); anything else is text.
     """
     text_columns: list[str] = []
     attachments: list[AssessmentAttachment] = []
