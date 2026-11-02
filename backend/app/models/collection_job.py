@@ -2,6 +2,7 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID, uuid4
 
+from sqlalchemy import Index, text
 from sqlmodel import JSON, Column, Field, SQLModel, Text
 
 from app.core.util import now
@@ -24,6 +25,17 @@ class CollectionJob(SQLModel, table=True):
     """Database model for CollectionJob operations."""
 
     __tablename__ = "collection_jobs"  # pyright: ignore[reportAssignmentType]
+    __table_args__ = (
+        Index(
+            "uq_collection_jobs_project_id_name_in_flight",
+            "project_id",
+            "name",
+            unique=True,
+            postgresql_where=text(
+                "action_type = 'CREATE' AND status IN ('PENDING', 'PROCESSING')"
+            ),
+        ),
+    )
 
     id: UUID = Field(
         default_factory=uuid4,
@@ -42,6 +54,14 @@ class CollectionJob(SQLModel, table=True):
         nullable=False,
         description="Type of operation",
         sa_column_kwargs={"comment": "Type of operation (CREATE, DELETE)"},
+    )
+    name: str | None = Field(
+        default=None,
+        nullable=True,
+        description="Requested collection name",
+        sa_column_kwargs={
+            "comment": "Requested collection name; keeps in-flight CREATE jobs unique per project"
+        },
     )
     task_id: str | None = Field(
         default=None,
@@ -153,6 +173,7 @@ class CollectionJob(SQLModel, table=True):
 # Request models
 class CollectionJobCreate(SQLModel):
     collection_id: UUID | None = None
+    name: str | None = None
     status: CollectionJobStatus
     action_type: CollectionActionType
     docs_num: int | None = None
