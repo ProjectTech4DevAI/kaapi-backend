@@ -12,11 +12,15 @@ from app.models import Chatbot, Config
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.chatbot import (
     CHATBOTS_URL,
+    COORDINATOR_NODE_ID,
     ONBOARDING_NODE_ID,
     UNKNOWN_CHATBOT_ID,
     add_test_config_version,
+    build_coordinator_flow,
+    build_coordinator_node,
     build_flow_edge,
     build_flow_node,
+    build_intent_edge,
     build_onboarding_node,
     create_test_anthropic_config,
     create_test_chatbot,
@@ -34,6 +38,25 @@ NO_DRAFT_MESSAGE = "[KAAPI] Chatbot has no draft flow to publish; save the flow 
 MISSING_CREDENTIALS = "Anthropic credentials are not configured for this project"
 INPUT_NODE_ID = "input-1"
 OUTPUT_NODE_ID = "output-1"
+ROUTES = {"Enroll": "enroll-agent", "Feedback": "feedback-agent"}
+
+
+def _coordinator_flow_with(
+    cid: UUID,
+    *,
+    extra_nodes: list[dict[str, Any]] | None = None,
+    extra_edges: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """A valid input -> coordinator -> two-agent flow plus whatever breaks it."""
+    nodes, edges = build_coordinator_flow(config_id=cid, routes=ROUTES)
+    return nodes + (extra_nodes or []), edges + (extra_edges or [])
+
+
+def _coordinator_flow_replacing_node(
+    cid: UUID, node: dict[str, Any]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    nodes, edges = build_coordinator_flow(config_id=cid, routes=ROUTES)
+    return [node if n["id"] == node["id"] else n for n in nodes], edges
 
 
 @pytest.fixture
@@ -459,6 +482,36 @@ class TestPublishChatbotFlow:
         assert stored.nodes[1]["data"]["label"] == "Beneficiary Info Extractor"
         assert "config_version" not in stored.nodes[0]["data"]
 
+    def test_coordinator_flow_publishes_with_its_config_version_pinned(
+        self,
+        db: Session,
+        config: Config,
+        chatbot: Chatbot,
+        save: Callable[..., Response],
+        publish: Callable[[], Response],
+        live_v1: dict[str, Any],
+    ) -> None:
+        add_test_config_version(db, config)
+        nodes, edges = build_coordinator_flow(config_id=config.id, routes=ROUTES)
+        coordinator = next(n for n in nodes if n["id"] == COORDINATOR_NODE_ID)
+        del coordinator["data"]["config_version"]
+        assert save(nodes, edges).status_code == 200
+
+        resp = publish()
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["is_live"] is True
+        _, stored = list_stored_flow_versions(db, chatbot)
+        assert stored.is_live is True
+        stored_nodes = {node["id"]: node for node in stored.nodes}
+        assert stored_nodes[COORDINATOR_NODE_ID]["data"]["config_version"] == 2
+        assert {
+            edge["data"]["intent"] for edge in stored.edges if edge.get("data")
+        } == {
+            "Enroll",
+            "Feedback",
+        }
+
     def test_explicit_config_version_is_kept(
         self,
         db: Session,
@@ -578,12 +631,93 @@ INVALID_FLOW_CASES: dict[str, tuple[FlowBuilder, str]] = {
         ),
         "edge 'e2' source 'ghost' is not a node in the flow",
     ),
-    "coordinator-node": (
-        lambda cid: (
-            [build_onboarding_node(config_id=cid, node_type="coordinator")],
-            [],
+    "coordinator-without-routes": (
+        lambda cid: ([build_coordinator_node(config_id=cid)], []),
+        f"coordinator node '{COORDINATOR_NODE_ID}' needs at least one outgoing edge",
+    ),
+    "coordinator-route-to-rag": (
+        lambda cid: _coordinator_flow_with(
+            cid,
+            extra_nodes=[
+                build_onboarding_node(config_id=cid, node_id="faq", node_type="rag")
+            ],
+            extra_edges=[build_intent_edge("e-faq", "faq", "Questions")],
         ),
-        f"node '{ONBOARDING_NODE_ID}' has type 'coordinator', which is not supported yet",
+        f"edge 'e-faq' from coordinator '{COORDINATOR_NODE_ID}' must target an "
+        "onboarding node (target 'faq' is 'rag')",
+    ),
+    "coordinator-route-to-output": (
+        lambda cid: _coordinator_flow_with(
+            cid,
+            extra_nodes=[build_flow_node(OUTPUT_NODE_ID, "output")],
+            extra_edges=[build_intent_edge("e-out", OUTPUT_NODE_ID, "Done")],
+        ),
+        f"edge 'e-out' from coordinator '{COORDINATOR_NODE_ID}' must target an "
+        f"onboarding node (target '{OUTPUT_NODE_ID}' is 'output')",
+    ),
+    "coordinator-route-to-coordinator": (
+        lambda cid: _coordinator_flow_with(
+            cid,
+            extra_nodes=[build_coordinator_node(config_id=cid, node_id="router-2")],
+            extra_edges=[
+                build_intent_edge("e-router-2", "router-2", "Other"),
+                build_intent_edge(
+                    "e-back", "enroll-agent", "Enroll", source="router-2"
+                ),
+            ],
+        ),
+        f"edge 'e-router-2' from coordinator '{COORDINATOR_NODE_ID}' must target an "
+        "onboarding node (target 'router-2' is 'coordinator')",
+    ),
+    "two-coordinators": (
+        lambda cid: _coordinator_flow_with(
+            cid,
+            extra_nodes=[build_coordinator_node(config_id=cid, node_id="router-2")],
+            extra_edges=[
+                build_intent_edge(
+                    "e-router-2", "feedback-agent", "Feedback", source="router-2"
+                )
+            ],
+        ),
+        "at most 1 coordinator node allowed (found 2)",
+    ),
+    "coordinator-route-missing-intent": (
+        lambda cid: _coordinator_flow_with(
+            cid,
+            extra_nodes=[build_onboarding_node(config_id=cid, node_id="third")],
+            extra_edges=[build_flow_edge("e-third", COORDINATOR_NODE_ID, "third")],
+        ),
+        f"edge 'e-third' from coordinator '{COORDINATOR_NODE_ID}' is missing "
+        "data.intent",
+    ),
+    "coordinator-route-blank-intent": (
+        lambda cid: _coordinator_flow_with(
+            cid,
+            extra_nodes=[build_onboarding_node(config_id=cid, node_id="third")],
+            extra_edges=[build_intent_edge("e-third", "third", "   ")],
+        ),
+        f"edge 'e-third' from coordinator '{COORDINATOR_NODE_ID}' is missing "
+        "data.intent",
+    ),
+    "coordinator-duplicate-intent": (
+        lambda cid: _coordinator_flow_with(
+            cid,
+            extra_nodes=[build_onboarding_node(config_id=cid, node_id="third")],
+            extra_edges=[build_intent_edge("e-third", "third", " Enroll ")],
+        ),
+        f"coordinator '{COORDINATOR_NODE_ID}' has duplicate intent 'Enroll'",
+    ),
+    "coordinator-missing-prompt": (
+        lambda cid: _coordinator_flow_replacing_node(
+            cid, build_coordinator_node(config_id=cid, prompt=None)
+        ),
+        f"node '{COORDINATOR_NODE_ID}' is missing data.prompt",
+    ),
+    "coordinator-missing-config-id": (
+        lambda cid: _coordinator_flow_replacing_node(
+            cid, build_coordinator_node(config_id=None)
+        ),
+        f"node '{COORDINATOR_NODE_ID}' is missing data.config_id",
     ),
     "rag-node": (
         lambda cid: ([build_onboarding_node(config_id=cid, node_type="rag")], []),
@@ -663,7 +797,7 @@ INVALID_FLOW_CASES: dict[str, tuple[FlowBuilder, str]] = {
 # A representative subset: the first save shares publish's validator, so the full
 # matrix is covered by the publish tests below.
 FIRST_SAVE_INVALID_CASES = [
-    "coordinator-node",
+    "coordinator-route-missing-intent",
     "duplicate-node-ids",
     "input-edge-to-output",
     "no-edges-no-agent",
@@ -778,9 +912,7 @@ class TestPublishChatbotFlowValidation:
             [
                 build_flow_node("in-a", "input"),
                 build_flow_node("in-b", "input"),
-                build_onboarding_node(
-                    config_id=config.id, node_id="router", node_type="coordinator"
-                ),
+                build_coordinator_node(config_id=config.id, node_id="router"),
                 build_onboarding_node(config_id=config.id, prompt=None),
             ]
         )
@@ -790,7 +922,7 @@ class TestPublishChatbotFlowValidation:
         assert resp.status_code == 422
         error = resp.json()["error"]
         assert "at most 1 input node allowed (found 2)" in error
-        assert "node 'router' has type 'coordinator'" in error
+        assert "coordinator node 'router' needs at least one outgoing edge" in error
         assert f"node '{ONBOARDING_NODE_ID}' is missing data.prompt" in error
         assert error.count(INVALID_FLOW_PREFIX) == 1
 

@@ -17,7 +17,6 @@ from pydantic import BaseModel, ValidationError
 from app.services.chatbot.agents.onboarding.prompts import (
     EXTRACTION_FLOW_PROMPT_TEMPLATE,
     EXTRACTION_INSTRUCTION,
-    EXTRACTION_METHOD,
     EXTRACTION_PRIOR_FIELDS_TEMPLATE,
     PROGRESS_COLLECTED_TEMPLATE,
     PROGRESS_COMPLETE_NOTE,
@@ -37,7 +36,12 @@ from app.services.chatbot.history import (
     to_langchain_messages,
 )
 from app.services.chatbot.types import ChatbotMessageDict, ChatbotTurnResult
-from app.services.chatbot.utils import ChatbotModelSettings, get_chat_model
+from app.services.chatbot.utils import (
+    STRUCTURED_OUTPUT_METHOD,
+    ChatbotModelSettings,
+    get_chat_model,
+    to_provider_error,
+)
 
 ExtractionModel = Runnable[LanguageModelInput, dict | BaseModel]
 
@@ -163,28 +167,8 @@ def build_onboarding_graph(
 
 
 def _get_extraction_model(chat_model: BaseChatModel) -> ExtractionModel:
-    return chat_model.with_structured_output(FieldExtraction, method=EXTRACTION_METHOD)
-
-
-def _to_provider_error(error: Exception, *, model: str) -> ChatbotProviderError:
-    if isinstance(error, anthropic.APITimeoutError):
-        return ChatbotProviderError(
-            "[KAAPI] Request timed out — retry smaller. If persistent, contact Kaapi. "
-            "(code: APITimeoutError)"
-        )
-    if isinstance(error, anthropic.APIConnectionError):
-        return ChatbotProviderError(
-            "[KAAPI] Network/DNS issue reaching provider — check connectivity. "
-            "If persistent, contact Kaapi. (code: APIConnectionError)"
-        )
-    if isinstance(error, anthropic.APIStatusError):
-        return ChatbotProviderError(
-            f"[ANTHROPIC] Chat model call failed: {error.message} "
-            f"(code: {error.status_code}, request_id: {error.request_id})"
-        )
-    return ChatbotProviderError(
-        f"[KAAPI] Unsupported model configuration for '{model}': {error} "
-        "— update the config's model, thinking, or effort. (code: ValueError)"
+    return chat_model.with_structured_output(
+        FieldExtraction, method=STRUCTURED_OUTPUT_METHOD
     )
 
 
@@ -223,7 +207,7 @@ async def run_chatbot_turn(
         # ChatAnthropic.invoke is sync; keep it off the event loop.
         result = await asyncio.to_thread(graph.invoke, initial_state)
     except (anthropic.APIConnectionError, anthropic.APIStatusError, ValueError) as e:
-        raise _to_provider_error(e, model=model_settings.model) from e
+        raise to_provider_error(e, model=model_settings.model) from e
 
     return ChatbotTurnResult(
         reply=extract_final_reply(result["messages"]),

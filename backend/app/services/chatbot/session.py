@@ -1,5 +1,6 @@
 import asyncio
-from typing import NamedTuple
+import logging
+from typing import Any, NamedTuple
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -26,6 +27,13 @@ from app.models import (
     ChatbotSessionStatusEnum,
     ChatbotSessionSummary,
 )
+from app.services.chatbot.agents.coordinator.graph import (
+    CoordinatorRoute,
+    run_coordinator_turn,
+)
+from app.services.chatbot.agents.coordinator.prompts import (
+    FALLBACK_CLARIFYING_QUESTION,
+)
 from app.services.chatbot.agents.onboarding.graph import run_chatbot_turn
 from app.services.chatbot.config import resolve_chatbot_model_settings
 from app.services.chatbot.exceptions import (
@@ -34,15 +42,20 @@ from app.services.chatbot.exceptions import (
     ChatbotProviderError,
 )
 from app.services.chatbot.flow import (
+    EDGE_DESCRIPTION_KEY,
+    EDGE_INTENT_KEY,
+    SUPPORTED_AGENT_NODE_TYPES,
     find_flow_node,
     get_chatbot_or_raise,
     parse_flow_edges,
     parse_flow_nodes,
     resolve_entry_node,
 )
-from app.services.chatbot.types import ChatbotMessageDict
+from app.services.chatbot.types import ChatbotMessageDict, ChatbotTurnResult
 from app.services.chatbot.utils import ChatbotModelSettings
 from app.utils import APIResponse, get_webhook_secret, send_callback
+
+logger = logging.getLogger(__name__)
 
 SUPERSEDED_SESSION_ERROR = (
     "[KAAPI] Chatbot session was superseded by a newer session; start a new session."
@@ -50,11 +63,29 @@ SUPERSEDED_SESSION_ERROR = (
 NO_LIVE_FLOW_MESSAGE = "[KAAPI] Chatbot has no published flow; publish the flow first."
 
 
+_RUNNABLE_NODE_TYPES_LABEL = ", ".join(
+    sorted(f"'{node_type.value}'" for node_type in SUPPORTED_AGENT_NODE_TYPES)
+)
+ACTIVE_NODE_LABEL = "Active node"
+ROUTE_TARGET_LABEL = "Route target"
+
+
 class _TurnNode(NamedTuple):
     node_id: str
     prompt: str
     config_id: UUID
     config_version: int | None
+    node_type: ChatbotFlowNodeTypeEnum
+
+
+_RouteTargets = dict[str, tuple[_TurnNode, ChatbotModelSettings]]
+
+
+class _TurnOutcome(NamedTuple):
+    result: ChatbotTurnResult
+    reply_node_id: str
+    # None leaves the session's active node unchanged.
+    next_active_node_id: str | None
 
 
 def start_chatbot_session(
@@ -134,33 +165,35 @@ def get_latest_chatbot_session_summary(
 
 
 def _resolve_turn_node(
-    *, flow_version: ChatbotFlowVersion | None, active_node_id: str
+    *,
+    flow_version: ChatbotFlowVersion,
+    active_node_id: str,
+    label: str = ACTIVE_NODE_LABEL,
 ) -> _TurnNode:
-    """The runnable onboarding node the session is on; ChatbotInputError when it can't run."""
-    active_node = None
-    if flow_version is not None:
-        active_node = find_flow_node(
-            parse_flow_nodes(flow_version.nodes), active_node_id
-        )
+    """The runnable agent node `active_node_id` names; ChatbotInputError when it can't run.
+
+    `label` names the node's role in error messages (the active node or a coordinator's route target).
+    """
+    active_node = find_flow_node(parse_flow_nodes(flow_version.nodes), active_node_id)
     if active_node is None:
         error_message = (
-            f"[KAAPI] Active node '{active_node_id}' is not in the session's flow "
+            f"[KAAPI] {label} '{active_node_id}' is not in the session's flow "
             "version; start a new session."
         )
         raise ChatbotInputError(error_message)
 
-    if active_node.type != ChatbotFlowNodeTypeEnum.ONBOARDING:
+    if active_node.type not in SUPPORTED_AGENT_NODE_TYPES:
         error_message = (
-            f"[KAAPI] Active node '{active_node_id}' has type '{active_node.type.value}', "
+            f"[KAAPI] {label} '{active_node_id}' has type '{active_node.type.value}', "
             f"which the chatbot runtime does not support yet; only "
-            f"'{ChatbotFlowNodeTypeEnum.ONBOARDING.value}' nodes can run."
+            f"{_RUNNABLE_NODE_TYPES_LABEL} nodes can run."
         )
         raise ChatbotInputError(error_message)
 
     node_data = active_node.agent_data()
     if node_data.prompt is None or node_data.config_id is None:
         error_message = (
-            f"[KAAPI] Active node '{active_node_id}' is missing data.prompt or "
+            f"[KAAPI] {label} '{active_node_id}' is missing data.prompt or "
             "data.config_id; republish the flow and start a new session."
         )
         raise ChatbotInputError(error_message)
@@ -170,6 +203,123 @@ def _resolve_turn_node(
         prompt=node_data.prompt,
         config_id=node_data.config_id,
         config_version=node_data.config_version,
+        node_type=active_node.type,
+    )
+
+
+def _resolve_coordinator_routes(
+    *,
+    session: Session,
+    flow_version: ChatbotFlowVersion,
+    coordinator_node_id: str,
+    organization_id: int,
+    project_id: int,
+) -> tuple[list[CoordinatorRoute], _RouteTargets]:
+    """Every outgoing route of the coordinator, plus each target's node and model settings.
+
+    Intents and target types are enforced at publish, the only way a flow goes live.
+    """
+    routes: list[CoordinatorRoute] = []
+    targets: _RouteTargets = {}
+    for edge in parse_flow_edges(flow_version.edges):
+        if edge.source != coordinator_node_id:
+            continue
+
+        target_node = _resolve_turn_node(
+            flow_version=flow_version,
+            active_node_id=edge.target,
+            label=ROUTE_TARGET_LABEL,
+        )
+        description = edge.data.get(EDGE_DESCRIPTION_KEY)
+        targets[target_node.node_id] = (
+            target_node,
+            resolve_chatbot_model_settings(
+                session=session,
+                organization_id=organization_id,
+                project_id=project_id,
+                config_id=target_node.config_id,
+                config_version=target_node.config_version,
+                max_tokens=None,
+                history_token_limit=None,
+            ),
+        )
+        routes.append(
+            CoordinatorRoute(
+                intent=edge.data[EDGE_INTENT_KEY].strip(),
+                description=description if isinstance(description, str) else None,
+                target_node_id=target_node.node_id,
+            )
+        )
+
+    if not routes:
+        error_message = (
+            f"[KAAPI] Coordinator '{coordinator_node_id}' has no outgoing routes; "
+            "republish the flow and start a new session."
+        )
+        raise ChatbotInputError(error_message)
+    return routes, targets
+
+
+def _find_return_coordinator(
+    *, flow_version: ChatbotFlowVersion, node_id: str
+) -> str | None:
+    """The coordinator that routes to `node_id`, or None when the node isn't behind one."""
+    nodes = parse_flow_nodes(flow_version.nodes)
+    for edge in parse_flow_edges(flow_version.edges):
+        if edge.target != node_id:
+            continue
+        source_node = find_flow_node(nodes, edge.source)
+        if (
+            source_node is not None
+            and source_node.type == ChatbotFlowNodeTypeEnum.COORDINATOR
+        ):
+            return source_node.id
+    return None
+
+
+async def _run_coordinator_turn_and_handoff(
+    *,
+    coordinator_node: _TurnNode,
+    model_settings: ChatbotModelSettings,
+    routes: list[CoordinatorRoute],
+    targets: _RouteTargets,
+    history: list[ChatbotMessageDict],
+    user_message: str | None,
+    collected_fields: dict[str, Any],
+) -> _TurnOutcome:
+    """Route, then let the chosen agent reply in the same turn (silent handoff)."""
+    decision = await run_coordinator_turn(
+        system_prompt=coordinator_node.prompt,
+        history=history,
+        user_message=user_message,
+        routes=routes,
+        model_settings=model_settings,
+    )
+    if decision.target_node_id is None:
+        question = decision.clarifying_question or FALLBACK_CLARIFYING_QUESTION
+        return _TurnOutcome(
+            result=ChatbotTurnResult(
+                reply=question, collected_fields=collected_fields, is_complete=False
+            ),
+            reply_node_id=coordinator_node.node_id,
+            next_active_node_id=None,
+        )
+
+    target_node, target_settings = targets[decision.target_node_id]
+    turn_result = await run_chatbot_turn(
+        system_prompt=target_node.prompt,
+        history=history,
+        user_message=user_message,
+        model_settings=target_settings,
+        collected_fields=collected_fields,
+    )
+    # A finished sub-flow hands the session back so the next message is routed afresh.
+    return _TurnOutcome(
+        result=turn_result,
+        reply_node_id=target_node.node_id,
+        next_active_node_id=(
+            coordinator_node.node_id if turn_result.is_complete else target_node.node_id
+        ),
     )
 
 
@@ -251,7 +401,17 @@ def process_chatbot_session_message(
             session, flow_version_id=chatbot_session.flow_version_id
         )
 
+        # Everything the turn needs (incl. every route target's settings) is resolved
+        # here, so no DB access happens once the LLM calls start.
+        routes: list[CoordinatorRoute] = []
+        targets: _RouteTargets = {}
+        return_node_id: str | None = None
         try:
+            if flow_version is None:
+                raise ChatbotInputError(
+                    f"[KAAPI] {ACTIVE_NODE_LABEL} '{chatbot_session.active_node_id}' "
+                    "is not in the session's flow version; start a new session."
+                )
             turn_node = _resolve_turn_node(
                 flow_version=flow_version,
                 active_node_id=chatbot_session.active_node_id,
@@ -265,6 +425,18 @@ def process_chatbot_session_message(
                 max_tokens=None,
                 history_token_limit=None,
             )
+            if turn_node.node_type == ChatbotFlowNodeTypeEnum.COORDINATOR:
+                routes, targets = _resolve_coordinator_routes(
+                    session=session,
+                    flow_version=flow_version,
+                    coordinator_node_id=turn_node.node_id,
+                    organization_id=organization_id,
+                    project_id=project_id,
+                )
+            else:
+                return_node_id = _find_return_coordinator(
+                    flow_version=flow_version, node_id=turn_node.node_id
+                )
         except (HTTPException, ChatbotInputError) as e:
             error = str(e.detail) if isinstance(e, HTTPException) else str(e)
             _send_failure_webhook(
@@ -278,15 +450,33 @@ def process_chatbot_session_message(
     history, user_message = _split_pending_turn(stored_messages)
 
     try:
-        turn_result = asyncio.run(
-            run_chatbot_turn(
-                system_prompt=turn_node.prompt,
-                history=history,
-                user_message=user_message,
-                model_settings=model_settings,
-                collected_fields=collected_fields,
+        if turn_node.node_type == ChatbotFlowNodeTypeEnum.COORDINATOR:
+            outcome = asyncio.run(
+                _run_coordinator_turn_and_handoff(
+                    coordinator_node=turn_node,
+                    model_settings=model_settings,
+                    routes=routes,
+                    targets=targets,
+                    history=history,
+                    user_message=user_message,
+                    collected_fields=collected_fields,
+                )
             )
-        )
+        else:
+            turn_result = asyncio.run(
+                run_chatbot_turn(
+                    system_prompt=turn_node.prompt,
+                    history=history,
+                    user_message=user_message,
+                    model_settings=model_settings,
+                    collected_fields=collected_fields,
+                )
+            )
+            outcome = _TurnOutcome(
+                result=turn_result,
+                reply_node_id=turn_node.node_id,
+                next_active_node_id=return_node_id if turn_result.is_complete else None,
+            )
     except (ChatbotInputError, ChatbotProviderError) as e:
         _send_failure_webhook(
             session_id=session_id,
@@ -296,6 +486,7 @@ def process_chatbot_session_message(
         )
         return
 
+    turn_result = outcome.result
     reply = turn_result.reply
     completion_status = turn_result.completion_status
     with Session(engine) as session:
@@ -304,20 +495,26 @@ def process_chatbot_session_message(
             session_id=session_id,
             role=ChatbotMessageRoleEnum.ASSISTANT,
             content=reply,
-            node_id=turn_node.node_id,
+            node_id=outcome.reply_node_id,
         )
         update_chatbot_session_progress(
             session,
             session_id=session_id,
             collected_fields=turn_result.collected_fields,
             completion_status=completion_status,
+            active_node_id=outcome.next_active_node_id,
         )
+    logger.info(
+        f"[process_chatbot_session_message] Turn stored | session_id: {session_id}, "
+        f"reply_node_id: {outcome.reply_node_id}, "
+        f"next_active_node_id: {outcome.next_active_node_id}"
+    )
 
     envelope = APIResponse.success_response(
         data={
             "session_id": str(session_id),
             "chatbot_id": str(chatbot_id),
-            "node_id": turn_node.node_id,
+            "node_id": outcome.reply_node_id,
             "reply": reply,
             "status": session_status,
             "completion_status": completion_status.value,
