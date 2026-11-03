@@ -175,19 +175,19 @@ def _resolve_config(
     except ValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
-    provider = blob.assessment.provider
+    # The last stage (the assessment when present) names the run's provider and model.
+    last_stage = batch_service.build_pipeline(
+        blob.pre_filters, with_assessment=blob.assessment is not None
+    )[-1]["stage"]
+    provider, model = batch_service.stage_provider_model(blob, last_stage)
     if not batch_service.is_supported_provider(provider):
         raise HTTPException(
             status_code=422,
-            detail=(
-                f"Config provider '{blob.assessment.provider}' is not supported for "
-                f"batch assessment."
-            ),
+            detail=f"Config provider '{provider}' is not supported for batch assessment.",
         )
-    model = blob.assessment.params.get("model")
     if not model:
         raise HTTPException(
-            status_code=422, detail="Config assessment params must include a model."
+            status_code=422, detail="Config params must include a model."
         )
     return blob, provider, model
 

@@ -1263,6 +1263,73 @@ class TestRunBatchStageAllGatedOut:
         assert len(delivered) == 1
 
 
+class TestOptionalStages:
+    """A config may carry only a pre-filter, only an assessment, or both."""
+
+    @staticmethod
+    def _blob_with(*, pre_filter: bool, assessment: bool) -> AssessmentConfigBlob:
+        raw = _blob_dict(topic_relevance=True if pre_filter else None)
+        if not assessment:
+            raw.pop("assessment")
+        return AssessmentConfigBlob.model_validate(raw)
+
+    @pytest.mark.parametrize(
+        ("pre_filter", "assessment", "stages"),
+        [
+            (True, False, ["topic_relevance"]),
+            (False, True, ["assessment"]),
+            (True, True, ["topic_relevance", "assessment"]),
+        ],
+    )
+    def test_pipeline_holds_only_present_stages(
+        self, pre_filter, assessment, stages
+    ) -> None:
+        blob = self._blob_with(pre_filter=pre_filter, assessment=assessment)
+        pipeline = build_pipeline(blob.pre_filters, with_assessment=assessment)
+        assert [step["stage"] for step in pipeline] == stages
+
+    def test_neither_stage_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="at least one of"):
+            self._blob_with(pre_filter=False, assessment=False)
+
+    def test_pre_filter_only_finalizes_on_its_last_stage(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        pipeline = build_pipeline(
+            self._blob_with(pre_filter=True, assessment=False).pre_filters,
+            with_assessment=False,
+        )
+        assessment, execution = _seed_assessment(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            config_id=_make_config_id(db, auth.project_id),
+            bag=_bag_for(pipeline, total=2, callback=""),
+            data=[{"a": "1"}, {"a": "2"}],
+            status=AssessmentStatus.PROCESSING,
+        )
+        bag = dict(execution.execution)
+        bag["verdicts"] = {
+            "topic_relevance": {
+                "0": {"verdict": True, "reasoning": "ok"},
+                "1": {"verdict": False, "reasoning": "off topic"},
+            }
+        }
+        bag["gate_passed"] = [True, False]
+
+        _finalize(db, execution, assessment, bag)
+
+        db.refresh(assessment)
+        db.refresh(execution)
+        assert assessment.status == AssessmentStatus.COMPLETED
+        assert execution.execution["stage"] == "topic_relevance"
+        result = build_result(session=db, assessment=assessment, execution=execution)
+        assert [item.output.assessment for item in result.items] == [None, None]
+        assert result.items[0].output.pre_filter.topic_relevance.verdict is True
+        assert result.items[1].output.pre_filter.topic_relevance.verdict is False
+        assert result.counts.filtered == 1
+        assert result.counts.assessed == 0
+
+
 class TestFinalizeAndFail:
     def _setup(self, db, auth, callback):
         pipeline = build_pipeline(None)
