@@ -65,6 +65,8 @@ def execute_tts_result_processing(
         f"provider={tts_provider}, celery_task_id={task_id}"
     )
 
+    result_map: dict[int, TTSResult] = {}
+
     try:
         with Session(engine) as session:
             gemini_client = GeminiClient.from_credentials(
@@ -78,7 +80,6 @@ def execute_tts_result_processing(
             pending = get_pending_results_for_run(
                 session=session, run_id=evaluation_run_id, provider=tts_provider
             )
-            result_map: dict[int, TTSResult] = {}
             for result in pending:
                 result_map[result.id] = result
 
@@ -178,6 +179,10 @@ def execute_tts_result_processing(
                     result_record.updated_at = now()
                     processed_count += 1
 
+                except SoftTimeLimitExceeded:
+                    # An Exception subclass; without this it would fail only this
+                    # row and the loop would run past the soft limit.
+                    raise
                 except Exception as audio_err:
                     logger.warning(
                         f"[execute_tts_result_processing] Audio processing failed | "
@@ -233,7 +238,14 @@ def execute_tts_result_processing(
         logger.warning(
             f"[execute_tts_result_processing] TTS result processing timed out | run_id={evaluation_run_id}"
         )
+        # Rows finished before the timeout already have audio uploaded; save them
+        # so only the unprocessed rows are failed.
+        finished = [
+            r for r in result_map.values() if r.status != JobStatus.PENDING.value
+        ]
         with Session(engine) as session:
+            session.add_all(finished)
+            session.commit()
             fail_pending_tts_results(
                 session=session,
                 run_id=evaluation_run_id,

@@ -16,6 +16,7 @@ from sqlmodel import Session
 from app.celery.utils import start_tts_sync_generation
 from app.core.cloud.storage import get_cloud_storage
 from app.core.db import engine
+from app.crud.evaluations.cron_utils import get_batch_jobs_for_run
 from app.crud.tts_evaluations.batch import start_tts_evaluation_batch
 from app.crud.tts_evaluations.dataset import get_tts_dataset_by_id
 from app.crud.tts_evaluations.result import (
@@ -25,10 +26,11 @@ from app.crud.tts_evaluations.result import (
 )
 from app.crud.tts_evaluations.run import get_tts_run_by_id, update_tts_run
 from app.models import Language
+from app.models.batch_job import BatchJobType
 from app.models.tts_evaluation import TTSResult
 from app.services.tts_evaluations.constants import (
     DEFAULT_TTS_LANGUAGE,
-    GEMINI_TTS_MODELS,
+    GEMINI_BATCH_TTS_MODELS,
     SYNC_TTS_MODELS,
     LOCALE_TO_BCP47,
 )
@@ -66,7 +68,7 @@ def execute_batch_submission(
         dict: Result summary with batch job info
     """
     run_id = int(job_id)
-    batch_models = [model for model in models if model in GEMINI_TTS_MODELS]
+    batch_models = [model for model in models if model in GEMINI_BATCH_TTS_MODELS]
     sync_models = [model for model in models if model in SYNC_TTS_MODELS]
 
     logger.info(
@@ -168,15 +170,15 @@ def execute_batch_submission(
 
         batch_result: dict[str, Any] = {}
         if batch_models:
-            with Session(engine) as session:
-                batch_results: list[TTSResult] = []
-                for model in batch_models:
-                    batch_results.extend(
-                        get_pending_results_for_run(
-                            session=session, run_id=run_id, provider=model
+            try:
+                with Session(engine) as session:
+                    batch_results: list[TTSResult] = []
+                    for model in batch_models:
+                        batch_results.extend(
+                            get_pending_results_for_run(
+                                session=session, run_id=run_id, provider=model
+                            )
                         )
-                    )
-                try:
                     batch_result = start_tts_evaluation_batch(
                         session=session,
                         run=run,
@@ -184,13 +186,26 @@ def execute_batch_submission(
                         org_id=organization_id,
                         project_id=project_id,
                     )
-                except Exception as e:
-                    logger.error(
-                        f"[execute_batch_submission] Gemini batch submission failed | "
-                        f"run_id: {run_id}, error: {str(e)}",
-                        exc_info=True,
-                    )
-                    for model in batch_models:
+            except Exception as e:
+                logger.error(
+                    f"[execute_batch_submission] Gemini batch submission failed | "
+                    f"run_id: {run_id}, error: {str(e)}",
+                    exc_info=True,
+                )
+                # Jobs committed before the failure are still polled by the cron,
+                # so only models without a submitted batch are failed here.
+                with Session(engine) as session:
+                    submitted_models = {
+                        batch_job.config.get("tts_provider")
+                        for batch_job in get_batch_jobs_for_run(
+                            session=session,
+                            run=run,
+                            job_type=BatchJobType.TTS_EVALUATION,
+                        )
+                        if batch_job.provider_batch_id
+                    }
+                for model in batch_models:
+                    if model not in submitted_models:
                         failed_models[model] = f"Batch submission failed: {str(e)}"
 
         if failed_models:

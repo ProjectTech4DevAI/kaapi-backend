@@ -23,7 +23,7 @@ from app.tests.utils.tts_evaluation import (
 )
 
 MODULE = "app.services.tts_evaluations.batch_result_processing"
-GEMINI = "gemini-2.5-pro-preview-tts"
+GEMINI = "gemini-3.8-flash-tts"
 SARVAM = "bulbul:v3"
 # 24 kHz / 16-bit / mono: 48000 bytes is one second; the WAV adds a 44-byte header.
 ONE_SECOND_PCM_B64 = base64.b64encode(b"\x00\x01" * 24000).decode()
@@ -41,6 +41,22 @@ def _audio_response(
 
 def _ok(result_id: int | str, **kwargs: Any) -> dict[str, Any]:
     return {"custom_id": str(result_id), "response": _audio_response(**kwargs)}
+
+
+class _TimesOutAfterFirst(list):
+    """Batch output whose iteration is interrupted after the first row.
+
+    The timeout is raised between rows rather than from a mocked call because
+    SoftTimeLimitExceeded is an Exception and the per-row handler would swallow it.
+    """
+
+    def __init__(self, items: list[dict[str, Any]], timeout: BaseException) -> None:
+        super().__init__(items)
+        self._timeout = timeout
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        yield self[0]
+        raise self._timeout
 
 
 @dataclass
@@ -233,6 +249,46 @@ class TestExecuteTTSResultProcessing:
         )
         assert sarvam_row.status == JobStatus.PENDING.value
         assert run.status == "pending"
+
+    @pytest.mark.parametrize(
+        "timeout", [Timeout(), SoftTimeLimitExceeded()], ids=["gevent", "soft"]
+    )
+    def test_timeout_mid_loop_keeps_rows_already_processed(
+        self,
+        db: Session,
+        run: EvaluationRun,
+        boundaries: Boundaries,
+        timeout: BaseException,
+    ) -> None:
+        # Regression: rows uploaded before the timeout were lost and failed too.
+        processed, unprocessed = (
+            create_test_tts_result_row(db, run=run) for _ in range(2)
+        )
+        processed_id, unprocessed_id = processed.id, unprocessed.id
+        output = _TimesOutAfterFirst([_ok(processed_id), _ok(unprocessed_id)], timeout)
+
+        def download(_batch_id: str) -> list[dict[str, Any]]:
+            # In production the prefetch session has closed by now, detaching the
+            # rows; without this the shared test session autoflushes them anyway.
+            db.expunge_all()
+            return output
+
+        boundaries.download.side_effect = download
+
+        with pytest.raises(type(timeout)):
+            _execute(run)
+
+        db.expunge_all()
+        processed = db.get(TTSResult, processed_id)
+        unprocessed = db.get(TTSResult, unprocessed_id)
+        assert processed.status == JobStatus.SUCCESS.value
+        assert processed.object_store_url.startswith(
+            "s3://bucket/evaluations/tts/audio/"
+        )
+        assert (unprocessed.status, unprocessed.error_message) == (
+            JobStatus.FAILED.value,
+            "Result processing exceeded soft time limit",
+        )
 
     def test_unexpected_error_fails_only_this_models_pending_rows(
         self, db: Session, run: EvaluationRun, boundaries: Boundaries

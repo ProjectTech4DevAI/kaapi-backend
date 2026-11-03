@@ -5,7 +5,7 @@ Required fields:
 - **dataset_id**: ID of the TTS dataset to evaluate
 
 Optional fields:
-- **models**: List of TTS models to use (default: `["gemini-2.5-pro-preview-tts"]`)
+- **models**: List of TTS models to use (default: `["gemini-3.8-flash-tts"]`)
 
 The evaluation will:
 1. Process each text sample through the specified TTS models
@@ -15,4 +15,4 @@ The evaluation will:
 Synthesis uses the dataset's language; datasets without a language are synthesized as `en-IN`.
 The response's `run_metadata.voices` lists the voice used per model.
 
-**Supported models:** `gemini-2.5-pro-preview-tts`, `gemini-3.1-flash-tts-preview`, `bulbul:v3` (Sarvam), `eleven_v3`, `eleven_v4` (ElevenLabs)
+**Supported models:** `gemini-3.8-flash-tts`, `gemini-3.8-flash-lite-tts`, `bulbul:v3` (Sarvam), `eleven_v3`, `eleven_v4` (ElevenLabs)

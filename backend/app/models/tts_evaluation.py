@@ -13,7 +13,10 @@ from sqlmodel import SQLModel
 
 from app.core.util import now
 from app.models.job import JobStatus
-from app.services.tts_evaluations.constants import SUPPORTED_TTS_MODELS
+from app.services.tts_evaluations.constants import (
+    DEFAULT_TTS_MODEL,
+    SUPPORTED_TTS_MODELS,
+)
 
 if TYPE_CHECKING:
     from app.models import EvaluationDataset, EvaluationRun
@@ -57,7 +60,7 @@ class TTSResult(SQLModel, table=True):
 
     provider: str = SQLField(
         max_length=100,
-        description="TTS provider used (e.g., gemini-2.5-pro-preview-tts)",
+        description="TTS provider used (e.g., gemini-3.8-flash-tts)",
         sa_column_kwargs={
             "comment": "TTS provider used (e.g., gemini-2.5-pro-preview-tts)"
         },
@@ -285,7 +288,7 @@ class TTSEvaluationRunCreate(BaseModel):
     run_name: str = Field(..., description="Name for this evaluation run", min_length=1)
     dataset_id: int = Field(..., description="ID of the TTS dataset to evaluate")
     models: list[str] = Field(
-        default_factory=lambda: ["gemini-2.5-pro-preview-tts"],
+        default_factory=lambda: [DEFAULT_TTS_MODEL],
         description="List of TTS models to use",
         min_length=1,
     )

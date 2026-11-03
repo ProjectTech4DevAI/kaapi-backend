@@ -16,6 +16,7 @@ from app.models.tts_evaluation import TTSResult
 from app.services.tts_evaluations.batch_job import execute_batch_submission
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.tts_evaluation import (
+    create_test_tts_batch_job,
     create_test_tts_run_with_dataset,
     fake_gemini_batch,
     use_test_session,
@@ -24,7 +25,8 @@ from app.tests.utils.utils import get_non_existent_id
 
 MODULE = "app.services.tts_evaluations.batch_job"
 CRUD_BATCH = "app.crud.tts_evaluations.batch"
-GEMINI = "gemini-2.5-pro-preview-tts"
+GEMINI = "gemini-3.8-flash-tts"
+GEMINI_FLASH = "gemini-3.8-flash-lite-tts"
 SARVAM = "bulbul:v3"
 ELEVEN = "eleven_v3"
 
@@ -163,6 +165,47 @@ class TestExecuteBatchSubmission:
         # Left for the cron to finalize.
         db.refresh(run)
         assert run.status == "processing"
+
+    @pytest.mark.parametrize(
+        ("provider_batch_id", "submitted_state"),
+        [
+            ("batches/already-submitted", (JobStatus.PENDING.value, None)),
+            (
+                None,
+                (JobStatus.FAILED.value, "Batch submission failed: link run failed"),
+            ),
+        ],
+        ids=["submitted_job_kept", "job_without_provider_id_failed"],
+    )
+    def test_gemini_submission_failure_keeps_models_with_submitted_batch(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        provider_batch_id: str | None,
+        submitted_state: tuple[str, str | None],
+    ) -> None:
+        run = _run(db, user_api_key, [GEMINI, GEMINI_FLASH])
+        # Simulates start_tts_evaluation_batch committing GEMINI's job and then
+        # raising (e.g. while linking the run) before GEMINI_FLASH was submitted.
+        create_test_tts_batch_job(
+            db,
+            run=run,
+            model=GEMINI,
+            provider_status="JOB_STATE_PENDING",
+            provider_batch_id=provider_batch_id,
+        )
+
+        with patch(
+            f"{MODULE}.start_tts_evaluation_batch",
+            side_effect=RuntimeError("link run failed"),
+        ):
+            outcome = _execute(run)
+
+        assert outcome["success"] is True
+        assert _row_states(db, run, GEMINI) == {submitted_state}
+        assert _row_states(db, run, GEMINI_FLASH) == {
+            (JobStatus.FAILED.value, "Batch submission failed: link run failed")
+        }
 
     def test_enqueue_failure_fails_only_that_models_rows(
         self, db: Session, user_api_key: TestAuthContext, boundaries: SimpleNamespace

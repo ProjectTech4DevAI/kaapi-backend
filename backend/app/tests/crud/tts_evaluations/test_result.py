@@ -8,7 +8,7 @@ from app.tests.utils.tts_evaluation import (
     create_test_tts_run_with_dataset,
 )
 
-GEMINI = "gemini-2.5-pro-preview-tts"
+GEMINI = "gemini-3.8-flash-tts"
 SARVAM = "bulbul:v3"
 
 

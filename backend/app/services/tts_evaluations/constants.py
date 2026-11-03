@@ -5,7 +5,13 @@ so importing models here would create a cycle.
 """
 
 # Gemini models go through the Gemini Batch API; Sarvam/ElevenLabs are called directly.
-GEMINI_TTS_MODELS = ["gemini-2.5-pro-preview-tts", "gemini-3.1-flash-tts-preview"]
+GEMINI_TTS_MODELS = ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"]
+# Rejected for new runs but still routed, so runs started before the switch can finish.
+DEPRECATED_GEMINI_TTS_MODELS = [
+    "gemini-2.5-pro-preview-tts",
+    "gemini-3.1-flash-tts-preview",
+]
+GEMINI_BATCH_TTS_MODELS = GEMINI_TTS_MODELS + DEPRECATED_GEMINI_TTS_MODELS
 SARVAM_TTS_MODELS = ["bulbul:v3"]
 ELEVENLABS_TTS_MODELS = ["eleven_v4", "eleven_v3"]
 
@@ -15,7 +21,7 @@ SYNC_TTS_MODELS = SARVAM_TTS_MODELS + ELEVENLABS_TTS_MODELS
 SUPPORTED_TTS_MODELS = GEMINI_TTS_MODELS + SYNC_TTS_MODELS
 
 # Default TTS model
-DEFAULT_TTS_MODEL = "gemini-2.5-pro-preview-tts"
+DEFAULT_TTS_MODEL = "gemini-3.8-flash-tts"
 
 # Default voice configuration
 DEFAULT_VOICE_NAME = "Kore"

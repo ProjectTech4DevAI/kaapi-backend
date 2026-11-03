@@ -16,7 +16,10 @@ from app.models.batch_job import BatchJob
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
 from app.core.config import settings
-from app.services.tts_evaluations.constants import TTS_SYNC_STALE_GRACE_SECONDS
+from app.services.tts_evaluations.constants import (
+    DEPRECATED_GEMINI_TTS_MODELS,
+    TTS_SYNC_STALE_GRACE_SECONDS,
+)
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.tts_evaluation import (
     create_test_tts_batch_job,
@@ -25,8 +28,8 @@ from app.tests.utils.tts_evaluation import (
 )
 
 MODULE = "app.crud.tts_evaluations.cron"
-GEMINI = "gemini-2.5-pro-preview-tts"
-GEMINI_FLASH = "gemini-3.1-flash-tts-preview"
+GEMINI = "gemini-3.8-flash-tts"
+GEMINI_FLASH = "gemini-3.8-flash-lite-tts"
 SARVAM = "bulbul:v3"
 
 
@@ -120,6 +123,27 @@ class TestPollTTSRunGeminiBatches:
             dispatched["tts_provider"],
             dispatched["provider_batch_id"],
         ) == (run.id, GEMINI, batch_job.provider_batch_id)
+
+    @pytest.mark.parametrize("model", DEPRECATED_GEMINI_TTS_MODELS)
+    async def test_deprecated_model_batch_still_dispatches(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        dispatch: MagicMock,
+        model: str,
+    ) -> None:
+        # Runs started before a model was deprecated must still finish.
+        run = _processing_run(db, user_api_key, [model])
+        create_test_tts_batch_job(
+            db, run=run, model=model, provider_status=BatchJobState.RUNNING.value
+        )
+        create_test_tts_result_row(db, run=run, provider=model)
+
+        with _gemini_reports(BatchJobState.SUCCEEDED):
+            outcome = await _poll(db, run)
+
+        assert outcome["action"] == "dispatched"
+        assert dispatch.call_args.kwargs["tts_provider"] == model
 
     async def test_succeeded_batch_with_no_pending_rows_is_not_reprocessed(
         self, db: Session, user_api_key: TestAuthContext, dispatch: MagicMock

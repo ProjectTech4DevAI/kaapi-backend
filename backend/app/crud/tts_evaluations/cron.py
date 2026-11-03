@@ -32,7 +32,7 @@ from app.models import EvaluationRun
 from app.models.batch_job import BatchJob, BatchJobType
 from app.models.stt_evaluation import EvaluationType
 from app.services.tts_evaluations.constants import (
-    GEMINI_TTS_MODELS,
+    GEMINI_BATCH_TTS_MODELS,
     SYNC_TTS_MODELS,
     TTS_SYNC_STALE_GRACE_SECONDS,
 )
@@ -178,7 +178,7 @@ async def poll_tts_run(
 
     previous_status = run.status
     models = run.providers or []
-    batch_models = [model for model in models if model in GEMINI_TTS_MODELS]
+    batch_models = [model for model in models if model in GEMINI_BATCH_TTS_MODELS]
     sync_models = [model for model in models if model in SYNC_TTS_MODELS]
     # Both timestamps are naive UTC (`now()` strips tzinfo before storing).
     stale_after = timedelta(
