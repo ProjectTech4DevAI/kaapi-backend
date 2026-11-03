@@ -108,7 +108,7 @@ def build_chatbot_flow_version_public(
     )
 
 
-def _raise_flow_validation_error(function_name: str, problems: list[str]) -> NoReturn:
+def _raise_flow_validation_error(problems: list[str]) -> NoReturn:
     error_message = f"{KAAPI_ERROR_TAG} Chatbot flow is invalid: {'; '.join(problems)}."
     raise ChatbotFlowValidationError(error_message)
 
@@ -125,7 +125,6 @@ def resolve_entry_node(
         agent_nodes = [node for node in nodes if node.type in AGENT_NODE_TYPES]
         if len(agent_nodes) != 1:
             _raise_flow_validation_error(
-                "resolve_entry_node",
                 [
                     "a flow without edges must contain exactly one agent node "
                     f"(found {len(agent_nodes)})"
@@ -136,7 +135,6 @@ def resolve_entry_node(
     input_nodes = [node for node in nodes if node.type == ChatbotFlowNodeTypeEnum.INPUT]
     if len(input_nodes) != 1:
         _raise_flow_validation_error(
-            "resolve_entry_node",
             [
                 "a flow with edges must contain exactly one input node "
                 f"(found {len(input_nodes)})"
@@ -147,7 +145,6 @@ def resolve_entry_node(
     entry_edges = [edge for edge in edges if edge.source == input_node_id]
     if len(entry_edges) != 1:
         _raise_flow_validation_error(
-            "resolve_entry_node",
             [
                 f"input node '{input_node_id}' must have exactly one outgoing edge "
                 f"(found {len(entry_edges)})"
@@ -157,7 +154,6 @@ def resolve_entry_node(
     entry_node = find_flow_node(nodes, entry_edges[0].target)
     if entry_node is None or entry_node.type not in AGENT_NODE_TYPES:
         _raise_flow_validation_error(
-            "resolve_entry_node",
             [
                 f"the input node's edge must lead to an agent node "
                 f"(target '{entry_edges[0].target}')"
@@ -237,9 +233,7 @@ def _pin_agent_node_config(
         return node, problems
 
     try:
-        model_settings = build_chatbot_model_settings(
-            version_row, max_tokens=None, history_token_limit=None
-        )
+        model_settings = build_chatbot_model_settings(version_row)
     except ChatbotInputError as e:
         reason = str(e).removeprefix(KAAPI_ERROR_TAG).strip()
         problems.append(f"node '{node.id}': {reason}")
@@ -298,7 +292,7 @@ def validate_flow_for_publish(
         problems.extend(node_problems)
 
     if problems:
-        _raise_flow_validation_error("validate_flow_for_publish", problems)
+        _raise_flow_validation_error(problems)
 
     resolve_entry_node(nodes=pinned_nodes, edges=edges)
     return pinned_nodes

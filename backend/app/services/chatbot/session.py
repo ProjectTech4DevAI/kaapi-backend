@@ -237,8 +237,6 @@ def _resolve_turn_runtime(
             project_id=project_id,
             config_id=turn_node.config_id,
             config_version=turn_node.config_version,
-            max_tokens=None,
-            history_token_limit=None,
         )
         if turn_node.node_type == ChatbotFlowNodeTypeEnum.RAG:
             openai_client = prepare_rag_search_client(

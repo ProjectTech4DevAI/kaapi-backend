@@ -14,7 +14,11 @@ from app.services.chatbot.config import (
     resolve_chatbot_model_settings,
 )
 from app.services.chatbot.exceptions import ChatbotInputError
-from app.services.chatbot.utils import ChatbotModelSettings
+from app.services.chatbot.utils import (
+    DEFAULT_HISTORY_TOKEN_LIMIT,
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    ChatbotModelSettings,
+)
 from app.tests.utils.chatbot import (
     add_test_config_version,
     create_test_anthropic_config,
@@ -36,8 +40,6 @@ def _resolve(
     config: Config,
     *,
     config_version: int | None = None,
-    max_tokens: int | None = None,
-    history_token_limit: int | None = None,
 ) -> ChatbotModelSettings:
     project = db.get(Project, config.project_id)
     assert project is not None
@@ -47,8 +49,6 @@ def _resolve(
         project_id=config.project_id,
         config_id=config.id,
         config_version=config_version,
-        max_tokens=max_tokens,
-        history_token_limit=history_token_limit,
     )
 
 
@@ -162,13 +162,13 @@ class TestResolveChatbotModelSettings:
     def test_enabled_thinking_with_budget_below_max_tokens_is_accepted(
         self, db: Session
     ) -> None:
-        thinking = {"type": "enabled", "budget_tokens": 2048}
+        thinking = {"type": "enabled", "budget_tokens": 512}
         config = create_test_anthropic_config(db, thinking=thinking)
 
-        model_settings = _resolve(db, config, max_tokens=4096)
+        model_settings = _resolve(db, config)
 
         assert model_settings.thinking == thinking
-        assert model_settings.max_tokens == 4096
+        assert model_settings.max_tokens == DEFAULT_MAX_OUTPUT_TOKENS
 
     @pytest.mark.parametrize(
         "thinking",
@@ -187,17 +187,15 @@ class TestResolveChatbotModelSettings:
         with pytest.raises(ChatbotInputError, match="budget_tokens"):
             _resolve(db, config)
 
-    def test_explicit_version_and_request_overrides(self, db: Session) -> None:
+    def test_explicit_version_uses_default_limits(self, db: Session) -> None:
         config = create_test_anthropic_config(db, model="claude-sonnet-4-6")
         add_test_config_version(db, config)
 
-        model_settings = _resolve(
-            db, config, config_version=1, max_tokens=256, history_token_limit=900
-        )
+        model_settings = _resolve(db, config, config_version=1)
 
         assert model_settings.model == "claude-sonnet-4-6"
-        assert model_settings.max_tokens == 256
-        assert model_settings.history_token_limit == 900
+        assert model_settings.max_tokens == DEFAULT_MAX_OUTPUT_TOKENS
+        assert model_settings.history_token_limit == DEFAULT_HISTORY_TOKEN_LIMIT
         assert model_settings.reasoning_effort is None
         assert model_settings.thinking == {"type": "adaptive"}
 
@@ -220,8 +218,6 @@ class TestResolveChatbotModelSettings:
                 project_id=other_project.id,
                 config_id=config.id,
                 config_version=None,
-                max_tokens=None,
-                history_token_limit=None,
             )
 
         assert exc_info.value.status_code == 404
@@ -236,8 +232,6 @@ class TestResolveChatbotModelSettings:
                 project_id=project.id,
                 config_id=uuid4(),
                 config_version=None,
-                max_tokens=None,
-                history_token_limit=None,
             )
 
         assert exc_info.value.status_code == 404

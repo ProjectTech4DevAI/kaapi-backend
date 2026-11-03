@@ -100,31 +100,22 @@ def resolve_chatbot_model_settings(
     project_id: int,
     config_id: UUID,
     config_version: int | None,
-    max_tokens: int | None,
-    history_token_limit: int | None,
 ) -> ChatbotModelSettings:
-    """Turn a saved config (+ request overrides) and the project's Anthropic key into chat-model settings."""
+    """Turn a saved config and the project's Anthropic key into chat-model settings."""
     version_row = get_chatbot_config_version(
         session=session,
         project_id=project_id,
         config_id=config_id,
         config_version=config_version,
     )
-    model_settings = build_chatbot_model_settings(
-        version_row, max_tokens=max_tokens, history_token_limit=history_token_limit
-    )
+    model_settings = build_chatbot_model_settings(version_row)
     api_key = get_anthropic_api_key(
         session=session, organization_id=organization_id, project_id=project_id
     )
     return replace(model_settings, api_key=api_key)
 
 
-def build_chatbot_model_settings(
-    version_row: ConfigVersion,
-    *,
-    max_tokens: int | None,
-    history_token_limit: int | None,
-) -> ChatbotModelSettings:
+def build_chatbot_model_settings(version_row: ConfigVersion) -> ChatbotModelSettings:
     try:
         blob = ConfigBlob.model_validate(version_row.config_blob)
     except ValidationError as e:
@@ -150,20 +141,13 @@ def build_chatbot_model_settings(
         )
 
     thinking = params.thinking if params.thinking is not None else default_thinking()
-    resolved_max_tokens = (
-        max_tokens if max_tokens is not None else DEFAULT_MAX_OUTPUT_TOKENS
-    )
-    _validate_thinking_budget(thinking, max_tokens=resolved_max_tokens)
+    _validate_thinking_budget(thinking, max_tokens=DEFAULT_MAX_OUTPUT_TOKENS)
     model_settings = ChatbotModelSettings(
         model=params.model,
-        max_tokens=resolved_max_tokens,
+        max_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
         reasoning_effort=_to_anthropic_effort(params.effort),
         thinking=thinking,
-        history_token_limit=(
-            history_token_limit
-            if history_token_limit is not None
-            else DEFAULT_HISTORY_TOKEN_LIMIT
-        ),
+        history_token_limit=DEFAULT_HISTORY_TOKEN_LIMIT,
         instructions=params.instructions,
         knowledge_base_ids=tuple(params.knowledge_base_ids or ()),
         max_num_results=params.max_num_results,
