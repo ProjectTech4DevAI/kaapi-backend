@@ -12,7 +12,6 @@ from app.models.assessment import AssessmentAttachment
 from app.services.assessment.prefilter import constants
 from app.services.assessment.prefilter.request_builder import build_request_line
 from app.services.assessment.utils.attachments import (
-    attachment_type_for_row,
     build_gemini_attachment_parts,
     resolve_attachment_values,
 )
@@ -65,11 +64,10 @@ def build_topic_relevance_requests(
             cell = row.get(att.column, "")
             if not cell.strip():
                 continue
-            override = attachment_type_for_row(att, row)
             attachment_parts.extend(
-                resolve_attachment_values(cell, att, type_override=override)
+                resolve_attachment_values(cell, att)
                 if is_openai
-                else build_gemini_attachment_parts(cell, att, type_override=override)
+                else build_gemini_attachment_parts(cell, att)
             )
         lines.append(
             build_request_line(

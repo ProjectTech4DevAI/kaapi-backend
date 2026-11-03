@@ -5,7 +5,7 @@ A project has many chatbots; each chatbot's behaviour is a React Flow graph (nod
 All paths relative to `backend/app/`.
 
 ## Routes (`/chatbots`, all require project scope and the `CHATBOT` feature flag)
-- `api/routes/chatbot/__init__.py` mounts session routes first so literal `/sessions/...` paths are matched before `/{chatbot_id}/...`. `require_feature(FeatureFlag.CHATBOT)` sits on the router → 403 when off. Migration `089` only adds the enum value — no rows are seeded, so the flag is off until a superuser creates it per project via `POST /feature-flags` (`enabled: true`).
+- `api/routes/chatbot/__init__.py` mounts session routes first so literal `/sessions/...` paths are matched before `/{chatbot_id}/...`. `require_feature(FeatureFlag.CHATBOT)` sits on the router → 403 when off. Migration `088` also adds the enum value — no rows are seeded, so the flag is off until a superuser creates it per project via `POST /feature-flags` (`enabled: true`).
 - `api/routes/chatbot/chatbot.py`
   - `POST /chatbots` {name} → 201 `ChatbotPublic`
   - `GET /chatbots?skip=&limit=` → the project's non-deleted chatbots, newest `updated_at` first

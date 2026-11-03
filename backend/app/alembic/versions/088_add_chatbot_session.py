@@ -1,4 +1,4 @@
-"""add chatbot, flow version, session and message tables
+"""add chatbot, flow version, session and message tables + CHATBOT feature flag key
 
 Revision ID: 088
 Revises: 087
@@ -300,8 +300,16 @@ def upgrade():
         unique=False,
     )
 
+    # ADD VALUE cannot run inside the migration's transaction on all PG versions.
+    with op.get_context().autocommit_block():
+        op.execute("ALTER TYPE featureflagkey ADD VALUE IF NOT EXISTS 'CHATBOT'")
+
 
 def downgrade():
-    raise NotImplementedError(
-        "not reversible: dropping chatbot tables discards chatbot flows and stored conversations"
-    )
+    op.drop_table("chatbot_session_message")
+    op.drop_table("chatbot_session")
+    op.drop_table("chatbot_flow_version")
+    op.drop_table("chatbot")
+    sa.Enum(name="chatbotmessageroleenum").drop(op.get_bind())
+    sa.Enum(name="chatbotcompletionstatusenum").drop(op.get_bind())
+    sa.Enum(name="chatbotsessionstatusenum").drop(op.get_bind())
