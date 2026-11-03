@@ -1,7 +1,6 @@
 """Knowledge-base search over OpenAI vector stores; Anthropic has no native file search."""
 
 import html
-import logging
 
 import openai
 from langchain_core.tools import BaseTool, StructuredTool
@@ -23,10 +22,6 @@ from app.services.chatbot.agents.rag.types import (
     SearchKnowledgeBaseArgs,
 )
 from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
-from app.services.chatbot.provider_errors import PROVIDER_SERVER_ERROR_STATUS
-from app.utils import mask_string
-
-logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_NUM_RESULTS = 5
 OPENAI_MAX_NUM_RESULTS = 50
@@ -52,16 +47,9 @@ def get_knowledge_base_client(
             "[KAAPI] The rag agent searches knowledge bases with the project's OpenAI "
             "credentials, but none are configured; add OpenAI credentials to this project."
         )
-        logger.warning(
-            f"[get_knowledge_base_client] {error_message} | project_id: {project_id}"
-        )
         raise ChatbotInputError(error_message)
 
     api_key = credentials[CREDENTIAL_API_KEY]
-    logger.info(
-        f"[get_knowledge_base_client] OpenAI client configured | "
-        f"project_id: {project_id}, api_key: {mask_string(api_key)}"
-    )
     return OpenAI(
         api_key=api_key,
         timeout=OPENAI_TIMEOUT_SECONDS,
@@ -82,21 +70,11 @@ def _to_search_error(error: openai.OpenAIError, *, vector_store_id: str) -> str:
             "[KAAPI] Knowledge base search timed out — retry the turn. If persistent, "
             "contact Kaapi. (code: APITimeoutError)"
         )
-        logger.error(
-            f"[search_knowledge_bases] {error_message} | provider=openai, "
-            f"vector_store_id: {vector_store_id}",
-            exc_info=error,
-        )
         return error_message
     if isinstance(error, openai.APIConnectionError):
         error_message = (
             "[KAAPI] Network/DNS issue reaching OpenAI for knowledge base search — "
             "check connectivity. If persistent, contact Kaapi. (code: APIConnectionError)"
-        )
-        logger.error(
-            f"[search_knowledge_bases] {error_message} | provider=openai, "
-            f"vector_store_id: {vector_store_id}",
-            exc_info=error,
         )
         return error_message
     if isinstance(error, openai.APIStatusError):
@@ -104,27 +82,11 @@ def _to_search_error(error: openai.OpenAIError, *, vector_store_id: str) -> str:
             f"[OPENAI] Knowledge base search failed for '{vector_store_id}': "
             f"{error.message} (code: {error.status_code}, request_id: {error.request_id})"
         )
-        # 5xx is provider-side (alert-worthy); 4xx is caller's fault (noise if alerted)
-        log = (
-            logger.error
-            if error.status_code >= PROVIDER_SERVER_ERROR_STATUS
-            else logger.warning
-        )
-        log(
-            f"[search_knowledge_bases] {error_message} | provider=openai, "
-            f"vector_store_id: {vector_store_id}",
-            exc_info=error,
-        )
         return error_message
 
     error_message = (
         f"[OPENAI] Knowledge base search failed for '{vector_store_id}': {error} "
         f"— retry the turn. If persistent, contact Kaapi. (code: {type(error).__name__})"
-    )
-    logger.error(
-        f"[search_knowledge_bases] {error_message} | provider=openai, "
-        f"vector_store_id: {vector_store_id}",
-        exc_info=error,
     )
     return error_message
 
@@ -140,10 +102,6 @@ def search_knowledge_bases(
     top_k = _resolve_top_k(max_num_results)
     passages: list[KnowledgeBasePassage] = []
     for vector_store_id in knowledge_base_ids:
-        logger.info(
-            f"[search_knowledge_bases] Searching knowledge base | "
-            f"vector_store_id: {vector_store_id}, max_num_results: {top_k}"
-        )
         try:
             page = client.vector_stores.search(
                 vector_store_id, query=query, max_num_results=top_k
@@ -167,10 +125,6 @@ def search_knowledge_bases(
 
     passages.sort(key=lambda passage: passage.score, reverse=True)
     top_passages = passages[:top_k]
-    logger.info(
-        f"[search_knowledge_bases] Knowledge base search finished | "
-        f"knowledge_bases: {len(knowledge_base_ids)}, passages: {len(top_passages)}"
-    )
     return top_passages
 
 
