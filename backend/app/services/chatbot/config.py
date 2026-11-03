@@ -1,4 +1,3 @@
-import logging
 from dataclasses import replace
 from typing import Any, get_args
 from uuid import UUID
@@ -23,8 +22,6 @@ from app.services.chatbot.utils import (
     ChatbotModelSettings,
     default_thinking,
 )
-
-logger = logging.getLogger(__name__)
 
 _ANTHROPIC_EFFORT_LEVELS: tuple[AnthropicEffort, ...] = get_args(AnthropicEffort)
 THINKING_TYPE_ENABLED = "enabled"
@@ -163,9 +160,6 @@ def _validate_knowledge_base_ids(
             "[KAAPI] The rag agent needs a config with non-empty "
             "completion.params.knowledge_base_ids; add the collection's knowledge base id."
         )
-        logger.warning(
-            f"[_validate_knowledge_base_ids] {error_message} | project_id: {project_id}"
-        )
         raise ChatbotInputError(error_message)
 
     known_ids: set[str] = set()
@@ -182,9 +176,6 @@ def _validate_knowledge_base_ids(
             "[KAAPI] Config knowledge_base_ids not found among this project's OpenAI "
             f"collections: {', '.join(unknown_ids)}; use the knowledge_base_id of an "
             "existing collection."
-        )
-        logger.warning(
-            f"[_validate_knowledge_base_ids] {error_message} | project_id: {project_id}"
         )
         raise ChatbotInputError(error_message)
 
