@@ -18,7 +18,6 @@ CHAT_MODEL_ERRORS: tuple[type[Exception], ...] = (
 
 
 def to_provider_error(error: Exception, *, model: str) -> ChatbotProviderError:
-    # APITimeoutError subclasses APIConnectionError, so it must be checked first.
     if isinstance(error, anthropic.APITimeoutError):
         error_message = (
             "[KAAPI] Request timed out — retry smaller. If persistent, contact Kaapi. "
