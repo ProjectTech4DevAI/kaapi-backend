@@ -1,5 +1,4 @@
 import asyncio
-from typing import Any, NamedTuple
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -45,7 +44,12 @@ from app.services.chatbot.flow import (
     parse_flow_nodes,
     resolve_entry_node,
 )
-from app.services.chatbot.types import ChatbotMessageDict, ChatbotTurnResult
+from app.services.chatbot.types import (
+    ChatbotMessageDict,
+    ChatbotTurnResult,
+    TurnContext,
+    TurnNode,
+)
 from app.services.chatbot.utils import ChatbotModelSettings
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
@@ -53,14 +57,6 @@ SUPERSEDED_SESSION_ERROR = (
     "[KAAPI] Chatbot session was superseded by a newer session; start a new session."
 )
 NO_LIVE_FLOW_MESSAGE = "[KAAPI] Chatbot has no published flow; publish the flow first."
-
-
-class _TurnNode(NamedTuple):
-    node_id: str
-    node_type: ChatbotFlowNodeTypeEnum
-    prompt: str
-    config_id: UUID
-    config_version: int | None
 
 
 def start_chatbot_session(
@@ -158,7 +154,7 @@ def get_active_node_type(
 
 def _resolve_turn_node(
     *, flow_version: ChatbotFlowVersion | None, active_node_id: str
-) -> _TurnNode:
+) -> TurnNode:
     """The runnable agent node the session is on; ChatbotInputError when it can't run."""
     active_node = None
     if flow_version is not None:
@@ -190,7 +186,7 @@ def _resolve_turn_node(
         )
         raise ChatbotInputError(error_message)
 
-    return _TurnNode(
+    return TurnNode(
         node_id=active_node.id,
         node_type=active_node.type,
         prompt=node_data.prompt,
@@ -219,23 +215,13 @@ def _split_pending_turn(
     return history, pending["content"]
 
 
-class _TurnContext(NamedTuple):
-    chatbot_id: UUID
-    session_status: str
-    collected_fields: dict[str, Any]
-    stored_messages: list[ChatbotSessionMessage]
-    turn_node: _TurnNode
-    model_settings: ChatbotModelSettings
-    openai_client: OpenAI | None
-
-
 def _resolve_turn_runtime(
     *,
     session: Session,
     chatbot_session: ChatbotSession,
     organization_id: int,
     project_id: int,
-) -> tuple[_TurnNode, ChatbotModelSettings, OpenAI | None]:
+) -> tuple[TurnNode, ChatbotModelSettings, OpenAI | None]:
     """The active node, its model settings, and (rag only) the knowledge-base client."""
     flow_version = get_chatbot_flow_version_by_id(
         session, flow_version_id=chatbot_session.flow_version_id
@@ -269,7 +255,7 @@ def _resolve_turn_runtime(
 
 def _load_turn_context(
     *, session_id: UUID, organization_id: int, project_id: int
-) -> _TurnContext | None:
+) -> TurnContext | None:
     """Everything the turn needs, read in one short DB session; None when there is nothing to answer."""
     # The DB session is closed before the LLM call so a slow provider doesn't
     # pin a pooled connection for the whole turn.
@@ -287,7 +273,6 @@ def _load_turn_context(
             raise ChatbotInputError(SUPERSEDED_SESSION_ERROR)
 
         stored_messages = list_chatbot_session_messages(session, session_id=session_id)
-        # Already answered (e.g. a redelivered task); replying again would double-bill.
         if (
             stored_messages
             and stored_messages[-1].role == ChatbotMessageRoleEnum.ASSISTANT
@@ -300,7 +285,7 @@ def _load_turn_context(
             organization_id=organization_id,
             project_id=project_id,
         )
-        return _TurnContext(
+        return TurnContext(
             chatbot_id=chatbot_session.chatbot_id,
             session_status=chatbot_session.status.value,
             collected_fields=dict(chatbot_session.collected_fields),
@@ -311,7 +296,7 @@ def _load_turn_context(
         )
 
 
-def _run_turn(context: _TurnContext) -> ChatbotTurnResult:
+def _run_turn(context: TurnContext) -> ChatbotTurnResult:
     history, user_message = _split_pending_turn(context.stored_messages)
     return asyncio.run(
         run_agent_turn(
@@ -348,7 +333,7 @@ def _persist_turn(
 def _send_success_webhook(
     *,
     session_id: UUID,
-    context: _TurnContext,
+    context: TurnContext,
     turn_result: ChatbotTurnResult,
     webhook_url: str,
     webhook_secret: str | None,
