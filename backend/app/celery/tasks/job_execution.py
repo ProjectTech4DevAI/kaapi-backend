@@ -423,29 +423,14 @@ def run_assessment_api_batch(
 
 @celery_app.task(bind=True, queue="default", priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_assessment_response")
-def run_assessment_response(
-    self,
-    assessment_id: str,
-    config_id: str,
-    config_version: int,
-    callback_url: str,
-    request_metadata: dict | None,
-    trace_id: str,
-    **kwargs,
-):
+def run_assessment_response(self, execution_id: int, trace_id: str, **kwargs):
     """Run a RESPONSE assessment end to end and deliver its result by callback."""
     from app.services.assessment.api.response import run_response_assessment
 
     _set_trace(trace_id)
     return _run_with_otel_parent(
         self,
-        lambda: run_response_assessment(
-            assessment_id=UUID(assessment_id),
-            config_id=UUID(config_id),
-            config_version=config_version,
-            callback_url=callback_url,
-            request_metadata=request_metadata,
-        ),
+        lambda: run_response_assessment(execution_id=execution_id),
     )
 
 

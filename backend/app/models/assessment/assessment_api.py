@@ -112,6 +112,8 @@ class BatchRunState(TypedDict):
     callback_url: str | None  # None when the client polls instead of receiving a push
     request_metadata: dict[str, Any] | None
     error: NotRequired[str]  # only set on failure (_fail)
+    # RESPONSE only: the AssessmentResult as delivered
+    result: NotRequired[dict[str, Any]]
 
 
 def _input_kind(value: Any) -> str:
@@ -172,10 +174,11 @@ class AssessmentSubmitResponse(BaseModel):
 
 
 class PreFilterVerdict(BaseModel):
-    """Structured pre-filter result per item."""
+    """Structured pre-filter result per item; ``error`` is set when the stage's call failed."""
 
     verdict: bool
     reasoning: str = ""
+    error: str | None = None
 
 
 class PreFilter(BaseModel):

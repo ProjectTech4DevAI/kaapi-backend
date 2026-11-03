@@ -138,9 +138,12 @@ On completion the platform POSTs this payload to `callback_url`:
       * `output.assessment` — a dict when the config emits structured output (`json_output_schema`),
         a raw string for free-text output, or `null` for a gated/failed row.
       * `output.pre_filter` — per-item `topic_relevance` / `duplicate_detection` verdicts, each
-        `{ "verdict": bool, "reasoning": str }` or `null` if that pre-filter was not configured.
+        `{ "verdict": bool, "reasoning": str, "error": str | null }` or `null` if that pre-filter was not
+        configured. `error` is set when the pre-filter call itself failed; the row then fails open
+        (`verdict: true`) and the assessment still runs.
       * `error` — a per-row error string, or `null`.
-  * **RESPONSE** — a single item object with the same `output` / `error` shape. If the run cannot
+  * **RESPONSE** — a single item object with the same `output` / `error` shape. `data.status` is
+    `COMPLETED`, `COMPLETED_WITH_ERRORS` (a pre-filter call failed but the assessment ran) or `FAILED`. If the run cannot
     produce a result at all (for example the config version was deleted or a provider credential is
     missing), `status` is `FAILED`, `data` is `null`, and the envelope's `error` carries the message.
 

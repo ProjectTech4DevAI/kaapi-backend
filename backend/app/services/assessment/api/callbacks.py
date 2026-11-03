@@ -2,7 +2,7 @@
 
 POSTs the ``AssessmentCallback`` envelope to the client's callback_url on completion via
 the shared SSRF-guarded ``send_callback`` (HMAC-signed with the project webhook secret) —
-the same transport the response path uses. One inline attempt, no retry.
+the same transport the response path uses. The sender retries up to 4 times with backoff.
 """
 
 import logging

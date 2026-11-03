@@ -218,10 +218,39 @@ def _enqueue(
         ) from exc
 
 
+def _initial_state(
+    *,
+    request: AssessmentCreate,
+    blob: AssessmentConfigBlob,
+    provider: str,
+    model: str,
+    total_items: int,
+) -> BatchRunState:
+    pipeline = batch_service.build_pipeline(blob.pre_filters)
+    return {
+        "pipeline": pipeline,
+        "stage": pipeline[0]["stage"],
+        "stage_status": AssessmentStatus.PENDING.value,
+        "stage_batches": {},
+        "stage_output_urls": {},
+        "verdicts": {},
+        "counters": {},
+        "gate_passed": [True] * total_items,
+        "provider": provider,
+        "model": model,
+        "input_schema": blob.input_columns() or None,
+        "callback_url": str(request.callback_url) if request.callback_url else None,
+        "request_metadata": request.request_metadata,
+    }
+
+
 def _start_response(
     *,
     session: Session,
     request: AssessmentCreate,
+    blob: AssessmentConfigBlob,
+    provider: str,
+    model: str,
     organization_id: int,
     project_id: int,
 ) -> AssessmentSubmitResponse:
@@ -235,6 +264,20 @@ def _start_response(
         organization_id=organization_id,
         project_id=project_id,
     )
+    execution = api.create_execution(
+        session=session,
+        assessment_id=assessment.id,
+        config_id=request.config.id,
+        config_version=request.config.version,
+        total_items=1,
+    )
+    api.save_execution_state(
+        session=session,
+        execution=execution,
+        state=_initial_state(
+            request=request, blob=blob, provider=provider, model=model, total_items=1
+        ),
+    )
     api.update_status(
         session=session, obj=assessment, status=AssessmentStatus.PROCESSING
     )
@@ -242,11 +285,8 @@ def _start_response(
         session=session,
         task=run_assessment_response,
         assessment=assessment,
-        assessment_id=str(assessment.id),
-        config_id=str(request.config.id),
-        config_version=request.config.version,
-        callback_url=str(request.callback_url),
-        request_metadata=request.request_metadata,
+        execution=execution,
+        execution_id=execution.id,
         trace_id=correlation_id.get() or "",
     )
     return AssessmentSubmitResponse(
@@ -315,6 +355,9 @@ def submit(
         return _start_response(
             session=session,
             request=request,
+            blob=blob,
+            provider=provider,
+            model=model,
             organization_id=organization_id,
             project_id=project_id,
         )
@@ -357,22 +400,13 @@ def submit(
         total_items=total_items,
     )
 
-    pipeline = batch_service.build_pipeline(blob.pre_filters)
-    bag: BatchRunState = {
-        "pipeline": pipeline,
-        "stage": pipeline[0]["stage"],
-        "stage_status": AssessmentStatus.PENDING.value,
-        "stage_batches": {},
-        "stage_output_urls": {},
-        "verdicts": {},
-        "counters": {},
-        "gate_passed": [True] * total_items,
-        "provider": provider,
-        "model": model,
-        "input_schema": input_columns or None,
-        "callback_url": str(request.callback_url) if request.callback_url else None,
-        "request_metadata": request.request_metadata,
-    }
+    bag = _initial_state(
+        request=request,
+        blob=blob,
+        provider=provider,
+        model=model,
+        total_items=total_items,
+    )
     api.save_execution_state(session=session, execution=execution, state=bag)
     api.update_status(
         session=session, obj=assessment, status=AssessmentStatus.PROCESSING
@@ -395,7 +429,7 @@ def submit(
         execution.id,
         dispatched.id,
         provider,
-        [s["stage"] for s in pipeline],
+        [s["stage"] for s in bag["pipeline"]],
         total_items,
     )
 
