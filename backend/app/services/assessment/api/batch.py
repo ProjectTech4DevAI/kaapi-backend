@@ -1015,9 +1015,7 @@ def run_batch_stage(
         # invalid/old-shape blob). Route these to _fail so the client gets a terminal
         # callback instead of the run stranding in PROCESSING.
         try:
-            blob = AssessmentConfigBlob.model_validate(
-                _resolve_blob(session, execution, project_id)
-            )
+            blob = load_config_blob(session, execution, project_id)
         except Exception as exc:
             _fail(session, execution, assessment, bag, str(exc))
             return {"requeue": False}
@@ -1144,10 +1142,10 @@ def run_batch_stage(
         )
 
 
-def _resolve_blob(
+def load_config_blob(
     session: Session, execution: AssessmentRun, project_id: int
-) -> dict[str, Any]:
-    """Fetch the execution's stored ASSESSMENT config_blob dict for re-parsing."""
+) -> AssessmentConfigBlob:
+    """The ASSESSMENT config version the run was submitted with, parsed."""
     from app.crud.config.version import ConfigVersionCrud
     from app.models.config.config import ConfigTag
 
@@ -1158,4 +1156,4 @@ def _resolve_blob(
         tag=ConfigTag.ASSESSMENT,
     )
     version = version_crud.exists_or_raise(version_number=execution.config_version)
-    return version.config_blob
+    return AssessmentConfigBlob.model_validate(version.config_blob)

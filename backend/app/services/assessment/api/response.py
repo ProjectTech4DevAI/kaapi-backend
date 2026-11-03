@@ -13,7 +13,6 @@ from sqlmodel import Session
 
 from app.core.db import engine
 from app.crud.assessment import api
-from app.crud.config import ConfigVersionCrud
 from app.models.assessment import (
     Assessment,
     AssessmentOutput,
@@ -27,13 +26,13 @@ from app.models.assessment import (
     StageStatus,
 )
 from app.models.config.assessment_blob import AssessmentConfigBlob
-from app.models.config.config import ConfigTag
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
 from app.services.assessment.api.batch import (
     ApiStage,
     StageKind,
     build_stage_requests,
     column_kinds,
+    load_config_blob,
     parse_one,
     parse_verdict,
     stage_params,
@@ -120,18 +119,6 @@ def _run_stage(
     except Exception as exc:
         raw = {"error": {"message": str(exc)}}
     return parse_one(raw, provider_name)
-
-
-def _load_blob(
-    session: Session, assessment: Assessment, execution: AssessmentRun
-) -> AssessmentConfigBlob:
-    version = ConfigVersionCrud(
-        session=session,
-        config_id=execution.config_id,
-        project_id=assessment.project_id,
-        tag=ConfigTag.ASSESSMENT,
-    ).exists_or_raise(version_number=execution.config_version)
-    return AssessmentConfigBlob.model_validate(version.config_blob)
 
 
 def _begin_stage(
@@ -265,7 +252,7 @@ def run_response_assessment(*, execution_id: int) -> None:
         result: AssessmentResult | None = None
         failure: str | None = None
         try:
-            blob = _load_blob(session, assessment, execution)
+            blob = load_config_blob(session, execution, assessment.project_id)
             result = _assess(
                 session=session,
                 assessment=assessment,
