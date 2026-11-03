@@ -48,7 +48,6 @@ ToolCallingModel = Runnable[LanguageModelInput, BaseMessage]
 
 PREPARE_CONTEXT_NODE = "prepare_context_node"
 AGENT_NODE = "agent_node"
-# tools_condition routes to this exact node name.
 TOOLS_NODE = "tools"
 
 MAX_TOOL_ROUNDS = 3
@@ -66,7 +65,6 @@ def build_rag_system_prompt(*, goal: str, instructions: str | None) -> str:
 
 
 def _count_tool_rounds(messages: list[BaseMessage]) -> int:
-    # Stored history is plain text, so every tool call in state belongs to this turn.
     rounds = 0
     for message in messages:
         if isinstance(message, AIMessage) and message.tool_calls:
