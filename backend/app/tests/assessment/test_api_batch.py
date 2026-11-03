@@ -145,7 +145,7 @@ class TestIsSupportedProvider:
 
 class TestBuildPipeline:
     def test_none_prefilters_is_assessment_only(self) -> None:
-        pipeline = build_pipeline(None)
+        pipeline = build_pipeline(_blob())
         assert pipeline == [
             {
                 "stage": PipelineStage.ASSESSMENT.value,
@@ -155,7 +155,7 @@ class TestBuildPipeline:
 
     def test_gate_precedes_assessment(self) -> None:
         blob = _blob(topic_relevance=True)  # stop_on_fail=True -> GATE
-        pipeline = build_pipeline(blob.pre_filters)
+        pipeline = build_pipeline(blob)
         assert [s["stage"] for s in pipeline] == [
             PipelineStage.TOPIC_RELEVANCE.value,
             PipelineStage.ASSESSMENT.value,
@@ -167,7 +167,7 @@ class TestBuildPipeline:
 
     def test_passthrough_precedes_assessment(self) -> None:
         blob = _blob(topic_relevance=False)  # stop_on_fail=False -> PASS_THROUGH
-        pipeline = build_pipeline(blob.pre_filters)
+        pipeline = build_pipeline(blob)
         assert [s["stage"] for s in pipeline] == [
             PipelineStage.TOPIC_RELEVANCE.value,
             PipelineStage.ASSESSMENT.value,
@@ -180,7 +180,7 @@ class TestBuildPipeline:
 
 class TestNextStageAndKind:
     def test_next_stage_advances_then_none(self) -> None:
-        pipeline = build_pipeline(_blob(topic_relevance=True).pre_filters)
+        pipeline = build_pipeline(_blob(topic_relevance=True))
         assert (
             next_stage(pipeline, PipelineStage.TOPIC_RELEVANCE.value)
             == PipelineStage.ASSESSMENT.value
@@ -188,7 +188,7 @@ class TestNextStageAndKind:
         assert next_stage(pipeline, PipelineStage.ASSESSMENT.value) is None
 
     def test_stage_kind_lookup_and_missing_raises(self) -> None:
-        pipeline = build_pipeline(_blob(topic_relevance=True).pre_filters)
+        pipeline = build_pipeline(_blob(topic_relevance=True))
         assert (
             _stage_kind(pipeline, PipelineStage.TOPIC_RELEVANCE.value)
             == StageKind.GATE.value
@@ -619,7 +619,7 @@ class TestRunBatchStageFullWalk:
             config_blob=blob,
             tag=ConfigTag.ASSESSMENT,
         )
-        pipeline = build_pipeline(blob.pre_filters)
+        pipeline = build_pipeline(blob)
         bag = _bag_for(pipeline, total=2)
         assessment, execution = _seed_assessment(
             db,
@@ -762,7 +762,7 @@ class TestRunBatchStageEarlyReturns:
             config_blob=blob,
             tag=ConfigTag.ASSESSMENT,
         )
-        pipeline = build_pipeline(None)
+        pipeline = build_pipeline(_blob())
         _, execution = _seed_assessment(
             db,
             org_id=auth.organization_id,
@@ -808,7 +808,7 @@ class TestRunBatchStageEarlyReturns:
             config_blob=blob,
             tag=ConfigTag.ASSESSMENT,
         )
-        pipeline = build_pipeline(None)
+        pipeline = build_pipeline(_blob())
         bag = _bag_for(pipeline, total=1, callback="")
         bag["stage_status"] = StageStatus.PROCESSING.value
         bag["stage_batches"] = {}  # no batch job recorded for the stage
@@ -1098,7 +1098,7 @@ class TestSubmitStageEmptySubset:
     def test_all_gated_out_skips_submit(self, db) -> None:
         auth = get_user_test_auth_context(db)
         blob = _blob()
-        pipeline = build_pipeline(None)
+        pipeline = build_pipeline(_blob())
         bag = _bag_for(pipeline, total=2)
         bag["gate_passed"] = [False, False]
         batch_input = BatchInput(data=[{"a": "1"}, {"a": "2"}])
@@ -1152,7 +1152,7 @@ class TestRunBatchStageAllGatedOut:
             config_blob=blob,
             tag=ConfigTag.ASSESSMENT,
         )
-        pipeline = build_pipeline(blob.pre_filters)
+        pipeline = build_pipeline(blob)
         bag = _bag_for(pipeline, total=2)
         assessment, execution = _seed_assessment(
             db,
@@ -1285,7 +1285,7 @@ class TestOptionalStages:
         self, pre_filter, assessment, stages
     ) -> None:
         blob = self._blob_with(pre_filter=pre_filter, assessment=assessment)
-        pipeline = build_pipeline(blob.pre_filters, with_assessment=assessment)
+        pipeline = build_pipeline(blob)
         assert [step["stage"] for step in pipeline] == stages
 
     def test_neither_stage_is_rejected(self) -> None:
@@ -1294,10 +1294,7 @@ class TestOptionalStages:
 
     def test_pre_filter_only_finalizes_on_its_last_stage(self, db) -> None:
         auth = get_user_test_auth_context(db)
-        pipeline = build_pipeline(
-            self._blob_with(pre_filter=True, assessment=False).pre_filters,
-            with_assessment=False,
-        )
+        pipeline = build_pipeline(self._blob_with(pre_filter=True, assessment=False))
         assessment, execution = _seed_assessment(
             db,
             org_id=auth.organization_id,
@@ -1340,10 +1337,7 @@ class TestOptionalStages:
         self, db, errored_rows, expected
     ) -> None:
         auth = get_user_test_auth_context(db)
-        pipeline = build_pipeline(
-            self._blob_with(pre_filter=True, assessment=False).pre_filters,
-            with_assessment=False,
-        )
+        pipeline = build_pipeline(self._blob_with(pre_filter=True, assessment=False))
         assessment, execution = _seed_assessment(
             db,
             org_id=auth.organization_id,
@@ -1375,7 +1369,7 @@ class TestOptionalStages:
 
 class TestFinalizeAndFail:
     def _setup(self, db, auth, callback):
-        pipeline = build_pipeline(None)
+        pipeline = build_pipeline(_blob())
         bag = _bag_for(pipeline, total=1, callback=callback)
         return _seed_assessment(
             db,
@@ -1472,9 +1466,7 @@ class TestRunBatchStageProcessingBranches:
             config_blob=blob,
             tag=ConfigTag.ASSESSMENT,
         )
-        pipeline = build_pipeline(
-            blob.pre_filters if stage_pipeline_prefilter else None
-        )
+        pipeline = build_pipeline(blob if stage_pipeline_prefilter else _blob())
         job = _make_batch_job(
             db, org_id=auth.organization_id, project_id=auth.project_id
         )
@@ -1605,7 +1597,7 @@ class TestRunBatchStageProcessingBranches:
             config_blob=blob,
             tag=ConfigTag.ASSESSMENT,
         )
-        pipeline = build_pipeline(None)
+        pipeline = build_pipeline(_blob())
         _, execution = _seed_assessment(
             db,
             org_id=auth.organization_id,
@@ -1640,7 +1632,7 @@ class TestRunBatchStageProcessingBranches:
             config_blob=blob,
             tag=ConfigTag.ASSESSMENT,
         )
-        pipeline = build_pipeline(None)
+        pipeline = build_pipeline(_blob())
         _, execution = _seed_assessment(
             db,
             org_id=auth.organization_id,
@@ -1680,7 +1672,7 @@ class TestRunBatchStageFailurePaths:
             config_blob=blob,
             tag=ConfigTag.ASSESSMENT,
         )
-        pipeline = build_pipeline(None)
+        pipeline = build_pipeline(_blob())
         return _seed_assessment(
             db,
             org_id=auth.organization_id,
@@ -1773,7 +1765,7 @@ class TestRunBatchStageFailurePaths:
             config_blob=blob,
             tag=ConfigTag.ASSESSMENT,
         )
-        pipeline = build_pipeline(blob.pre_filters)
+        pipeline = build_pipeline(blob)
         job = _make_batch_job(
             db, org_id=auth.organization_id, project_id=auth.project_id
         )
@@ -1842,7 +1834,7 @@ class TestRunBatchStageFailurePaths:
             config_blob=blob,
             tag=ConfigTag.ASSESSMENT,
         )
-        pipeline = build_pipeline(None)
+        pipeline = build_pipeline(_blob())
         job = _make_batch_job(
             db, org_id=auth.organization_id, project_id=auth.project_id
         )

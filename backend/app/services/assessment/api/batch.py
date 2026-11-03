@@ -64,7 +64,6 @@ from app.models.config.assessment_blob import (
     ATTACHMENT_COLUMN_TYPES,
     AssessmentCompletionConfig,
     AssessmentConfigBlob,
-    AssessmentPreFilters,
     TopicRelevanceFilter,
 )
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
@@ -164,16 +163,13 @@ def is_supported_provider(provider_name: str) -> bool:
     return provider_name in _SUPPORTED_PROVIDERS
 
 
-def build_pipeline(
-    pre_filters: AssessmentPreFilters | None, *, with_assessment: bool = True
-) -> list[dict[str, str]]:
-    """Ordered stages: GATE pre-filters, then PASS-THROUGH pre-filters, then assessment (if any)."""
+def build_pipeline(blob: AssessmentConfigBlob) -> list[dict[str, str]]:
+    """Ordered stages the config declares: GATE pre-filters, PASS-THROUGH pre-filters, assessment."""
     pre_filter_stages: list[tuple[PipelineStage, TopicRelevanceFilter]] = []
-    if pre_filters is not None:
-        if pre_filters.topic_relevance is not None:
-            pre_filter_stages.append(
-                (PipelineStage.TOPIC_RELEVANCE, pre_filters.topic_relevance)
-            )
+    if blob.pre_filters is not None and blob.pre_filters.topic_relevance is not None:
+        pre_filter_stages.append(
+            (PipelineStage.TOPIC_RELEVANCE, blob.pre_filters.topic_relevance)
+        )
 
     gates = [
         {"stage": stage.value, "kind": StageKind.GATE.value}
@@ -187,7 +183,7 @@ def build_pipeline(
     ]
     assessment = (
         [{"stage": PipelineStage.ASSESSMENT.value, "kind": StageKind.ASSESSMENT.value}]
-        if with_assessment
+        if blob.assessment is not None
         else []
     )
     return [*gates, *passthrough, *assessment]
@@ -266,7 +262,7 @@ def stage_prompt(blob: AssessmentConfigBlob, stage: str) -> str | None:
 
 
 def _assessment_config(blob: AssessmentConfigBlob) -> AssessmentCompletionConfig:
-    """The assessment block; only an assessment stage asks for it, and the pipeline has one only if it exists."""
+    """The assessment block; the pipeline carries an assessment stage only when it exists."""
     if blob.assessment is None:
         raise ValueError("[_assessment_config] Config has no assessment block")
     return blob.assessment

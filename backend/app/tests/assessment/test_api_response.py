@@ -54,6 +54,13 @@ def _blob(**kwargs) -> AssessmentConfigBlob:
     return AssessmentConfigBlob.model_validate(_blob_dict(**kwargs))
 
 
+def _blob_with(*, pre_filter: bool, assessment: bool) -> AssessmentConfigBlob:
+    raw = _blob_dict(topic_relevance=True if pre_filter else None)
+    if not assessment:
+        raw.pop("assessment")
+    return AssessmentConfigBlob.model_validate(raw)
+
+
 def _seed_response(db, auth, blob):
     config = create_test_config(
         db,
@@ -79,7 +86,7 @@ def _seed_response(db, auth, blob):
     api.save_execution_state(
         session=db,
         execution=execution,
-        state=_bag_for(build_pipeline(blob.pre_filters), total=1),
+        state=_bag_for(build_pipeline(blob), total=1),
     )
     api.update_status(session=db, obj=assessment, status=AssessmentStatus.PROCESSING)
     api.update_status(session=db, obj=execution, status=AssessmentStatus.PROCESSING)
@@ -285,3 +292,72 @@ class TestRunResponseAssessment:
         delivered = _run(db, 10**9, _stage_output)
 
         assert delivered == []
+
+
+class TestOptionalStages:
+    @pytest.mark.parametrize(
+        ("pre_filter", "assessment", "called", "stage"),
+        [
+            (True, False, ["topic_relevance"], "topic_relevance"),
+            (False, True, ["assessment"], "assessment"),
+            (True, True, ["topic_relevance", "assessment"], "assessment"),
+        ],
+        ids=["pre_filter_only", "assessment_only", "both"],
+    )
+    def test_runs_only_the_configured_stages(
+        self, db, pre_filter, assessment, called, stage
+    ) -> None:
+        auth = get_user_test_auth_context(db)
+        parent, execution = _seed_response(
+            db, auth, _blob_with(pre_filter=pre_filter, assessment=assessment)
+        )
+        delivered = _run(db, execution.id, _stage_output)
+
+        db.refresh(parent)
+        db.refresh(execution)
+        assert parent.status == AssessmentStatus.COMPLETED
+        assert execution.execution["stage"] == stage
+        assert list(execution.execution.get("verdicts", {})) == (
+            ["topic_relevance"] if pre_filter else []
+        )
+        (call,) = delivered
+        output = call["result"].output
+        assert (output.assessment is not None) is assessment
+        assert (output.pre_filter is not None) is pre_filter
+        assert sorted(execution.execution.get("counters", {})) == sorted(
+            s for s in called if s != "assessment"
+        )
+
+    def test_pre_filter_only_rejected_row_keeps_its_verdict(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        parent, execution = _seed_response(
+            db, auth, _blob_with(pre_filter=True, assessment=False)
+        )
+        (call,) = _run(
+            db, execution.id, lambda stage: _stage_output(stage, verdict=False)
+        )
+
+        db.refresh(parent)
+        db.refresh(execution)
+        assert parent.status == AssessmentStatus.COMPLETED
+        assert execution.execution["gate_passed"] == [False]
+        output = call["result"].output
+        assert output.assessment is None
+        assert output.pre_filter.topic_relevance.verdict is False
+
+    def test_pre_filter_only_failed_call_is_reported(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        parent, execution = _seed_response(
+            db, auth, _blob_with(pre_filter=True, assessment=False)
+        )
+        (call,) = _run(
+            db, execution.id, lambda stage: _stage_output(stage, error="boom")
+        )
+
+        db.refresh(parent)
+        db.refresh(execution)
+        assert parent.status == AssessmentStatus.COMPLETED_WITH_ERRORS
+        assert execution.error_message == "topic_relevance: boom"
+        verdict = call["result"].output.pre_filter.topic_relevance
+        assert verdict.error == "boom"
+        assert verdict.verdict is True  # fails open, as in BATCH

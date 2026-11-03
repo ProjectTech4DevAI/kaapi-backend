@@ -99,10 +99,8 @@ def build_result(
     verdicts = bag.get("verdicts") or {}
     outputs, load_error = _load_assessment_outputs(session, bag, assessment.project_id)
     # Rows the provider rejected are absent from the output dump; the bag kept their error.
-    # The last stage is the assessment, or the pre-filter when the config has no assessment.
-    last_stage = (bag.get("pipeline") or [{"stage": PipelineStage.ASSESSMENT.value}])[-1][
-        "stage"
-    ]
+    # Errors of the last stage: the assessment, or the pre-filter when there is none.
+    last_stage = (bag.get("pipeline") or [{}])[-1].get("stage")
     row_errors = (bag.get("stage_errors") or {}).get(last_stage, {})
 
     tr_verdicts = verdicts.get(PipelineStage.TOPIC_RELEVANCE.value, {})
