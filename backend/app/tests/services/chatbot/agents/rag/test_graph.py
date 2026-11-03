@@ -6,7 +6,11 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 
 from app.services.chatbot.agents.rag.graph import run_rag_turn
 from app.services.chatbot.agents.rag.prompts import RAG_INSTRUCTION
-from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
+from app.services.chatbot.exceptions import (
+    RAG_MESSAGE_REQUIRED_MESSAGE,
+    ChatbotInputError,
+    ChatbotProviderError,
+)
 from app.services.chatbot.utils import ChatbotModelSettings
 from app.tests.utils.chatbot import (
     FakeOpenAIClient,
@@ -189,6 +193,17 @@ class TestRunRagTurn:
     ) -> None:
         with pytest.raises(ChatbotProviderError, match="EmptyReply"):
             await _run(ScriptedChatModel(replies=["  "]), monkeypatch)
+
+    @pytest.mark.asyncio
+    async def test_first_call_without_message_has_no_greeting(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        chat_model = ScriptedChatModel(replies=["should never be used"])
+
+        with pytest.raises(ChatbotInputError) as exc_info:
+            await _run(chat_model, monkeypatch, user_message=None, history=[])
+        assert str(exc_info.value) == RAG_MESSAGE_REQUIRED_MESSAGE
+        assert chat_model.calls == []
 
     @pytest.mark.asyncio
     async def test_missing_message_with_history_rejected(

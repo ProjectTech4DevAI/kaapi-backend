@@ -10,8 +10,6 @@ logger = logging.getLogger(__name__)
 
 PROVIDER_SERVER_ERROR_STATUS = 500
 
-# ValueError covers langchain_anthropic's client-side rejection of a model config
-# (e.g. thinking/effort the model doesn't support) before any request is sent.
 CHAT_MODEL_ERRORS: tuple[type[Exception], ...] = (
     anthropic.APIConnectionError,
     anthropic.APIStatusError,

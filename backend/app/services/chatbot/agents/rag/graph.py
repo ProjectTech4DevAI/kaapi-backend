@@ -27,11 +27,14 @@ from app.services.chatbot.agents.rag.prompts import (
 )
 from app.services.chatbot.agents.rag.retriever import build_search_tool
 from app.services.chatbot.agents.rag.types import KnowledgeBasePassage, RagState
+from app.services.chatbot.exceptions import (
+    RAG_MESSAGE_REQUIRED_MESSAGE,
+    ChatbotInputError,
+)
 from app.services.chatbot.history import (
     extract_final_reply,
     summarize_if_needed,
     to_langchain_messages,
-    validate_turn_input,
 )
 from app.services.chatbot.provider_errors import CHAT_MODEL_ERRORS, to_provider_error
 from app.services.chatbot.types import (
@@ -144,7 +147,8 @@ async def run_rag_turn(
     collected_fields: dict[str, Any] | None = None,
 ) -> ChatbotTurnResult:
     """Run one stateless turn: answer the user from the configured knowledge bases."""
-    validate_turn_input(history=history, user_message=user_message)
+    if user_message is None:
+        raise ChatbotInputError(RAG_MESSAGE_REQUIRED_MESSAGE)
 
     rag_system_prompt = build_rag_system_prompt(
         goal=system_prompt, instructions=model_settings.instructions

@@ -139,6 +139,23 @@ def get_latest_chatbot_session_summary(
     )
 
 
+def get_active_node_type(
+    session: Session, *, chatbot_session: ChatbotSession
+) -> ChatbotFlowNodeTypeEnum | None:
+    """Type of the node the session's next turn runs on; None if it isn't in the pinned flow."""
+    flow_version = get_chatbot_flow_version_by_id(
+        session, flow_version_id=chatbot_session.flow_version_id
+    )
+    if flow_version is None:
+        return None
+    active_node = find_flow_node(
+        parse_flow_nodes(flow_version.nodes), chatbot_session.active_node_id
+    )
+    if active_node is None:
+        return None
+    return active_node.type
+
+
 def _resolve_turn_node(
     *, flow_version: ChatbotFlowVersion | None, active_node_id: str
 ) -> _TurnNode:

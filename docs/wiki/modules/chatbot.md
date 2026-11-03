@@ -18,7 +18,7 @@ All paths relative to `backend/app/`.
 - `api/routes/chatbot/session.py`
   - `POST /chatbots/{chatbot_id}/sessions` {contact_ref} → 201 {session_id, chatbot_id, flow_version, active_node_id}; 404 unknown/deleted chatbot; 409 no live flow or concurrent create
   - `GET /chatbots/sessions/latest?contact_ref=&chatbot_id=` → `ChatbotSessionSummary` (incl. `chatbot_name`, `flow_version`, `active_node_id`, the active node's `prompt`); `chatbot_id` omitted = newest across the project's non-deleted chatbots
-  - `POST /chatbots/sessions/{session_id}/message` → stores the user message with `node_id = active_node_id`, enqueues the turn → 202; 409 if the session is inactive
+  - `POST /chatbots/sessions/{session_id}/message` → stores the user message with `node_id = active_node_id`, enqueues the turn → 202; 409 if the session is inactive; 422 when `message` is omitted on a started session or on a `rag` active node (rag has no opening greeting)
 
 ## Tables (SQLModel, `models/chatbot.py`, migration `088`)
 - `chatbot` (`Chatbot`) — `name`, org/project FKs (CASCADE), `deleted_at` soft delete (sessions reference it with RESTRICT).
@@ -42,7 +42,7 @@ All paths relative to `backend/app/`.
 2. `agent_node` — chat model with `search_knowledge_base` bound (`tool_choice` auto; forced tool use is rejected with thinking). System prompt = `RAG_INSTRUCTION` + `<config_instructions>` (config `params.instructions`, if set) + `<goal>` (the node's `prompt`). After `MAX_TOOL_ROUNDS` (3) tool-calling AIMessages it is re-bound with `tool_choice={"type": "none"}` so it must answer.
 3. `tools_condition` → `ToolNode` (`tools`) → back to `agent_node`; END once the model stops calling tools. Only bad tool args (`ToolInvocationError`) are fed back to the model; a search failure (`ChatbotProviderError`) fails the turn.
 4. `search_knowledge_base(query)` (`retriever.py`, `content_and_artifact`) — `client.vector_stores.search` on every `knowledge_base_ids` entry (from the node's config), merged, sorted by score, top `max_num_results` (default 5, capped at 50); content is `<source file="...">text</source>` passages, artifact the `KnowledgeBasePassage` list. OpenAI errors → `ChatbotProviderError` (`[OPENAI] Knowledge base search failed ...`; timeouts/connection `[KAAPI]`).
-5. `run_rag_turn(..., openai_client)` → `ChatbotTurnResult{reply, collected_fields (unchanged), is_complete=False, sources}`; `sources` are the retrieved files deduped by `file_id`.
+5. `run_rag_turn(..., openai_client)` — rejects a missing `user_message` (`RAG_MESSAGE_REQUIRED_MESSAGE`; no kickoff greeting) → `ChatbotTurnResult{reply, collected_fields (unchanged), is_complete=False, sources}`; `sources` are the retrieved files deduped by `file_id`.
 
 ## Services / CRUD
 - `services/chatbot/flow.py` — `get_chatbot_flow`, `save_chatbot_flow_draft`, `publish_chatbot_flow` (row-lock the chatbot via `get_chatbot(for_update=True)` to serialize draft saves and publishes), `validate_flow_for_publish`, `resolve_entry_node`, `find_flow_node`, `parse_flow_nodes/edges`, `dump_flow_nodes/edges`, `build_chatbot_flow_version_public`, `get_chatbot_or_raise`
