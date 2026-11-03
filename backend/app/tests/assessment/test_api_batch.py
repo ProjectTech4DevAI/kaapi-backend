@@ -1329,6 +1329,49 @@ class TestOptionalStages:
         assert result.counts.filtered == 1
         assert result.counts.assessed == 0
 
+    @pytest.mark.parametrize(
+        ("errored_rows", "expected"),
+        [
+            ({"0": "provider boom"}, AssessmentStatus.COMPLETED_WITH_ERRORS),
+            ({"0": "boom", "1": "boom"}, AssessmentStatus.FAILED),
+        ],
+    )
+    def test_pre_filter_only_surfaces_a_failed_pre_filter_call(
+        self, db, errored_rows, expected
+    ) -> None:
+        auth = get_user_test_auth_context(db)
+        pipeline = build_pipeline(
+            self._blob_with(pre_filter=True, assessment=False).pre_filters,
+            with_assessment=False,
+        )
+        assessment, execution = _seed_assessment(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            config_id=_make_config_id(db, auth.project_id),
+            bag=_bag_for(pipeline, total=2, callback=""),
+            data=[{"a": "1"}, {"a": "2"}],
+            status=AssessmentStatus.PROCESSING,
+        )
+        bag = dict(execution.execution)
+        # A failed call fails open: the verdict reads "passed" but the error is recorded.
+        bag["verdicts"] = {
+            "topic_relevance": {
+                "0": {"verdict": True, "reasoning": ""},
+                "1": {"verdict": True, "reasoning": ""},
+            }
+        }
+        bag["stage_errors"] = {"topic_relevance": errored_rows}
+
+        _finalize(db, execution, assessment, bag)
+
+        db.refresh(assessment)
+        assert assessment.status == expected
+        result = build_result(session=db, assessment=assessment, execution=execution)
+        assert [bool(item.error) for item in result.items] == [
+            str(i) in errored_rows for i in range(2)
+        ]
+
 
 class TestFinalizeAndFail:
     def _setup(self, db, auth, callback):
