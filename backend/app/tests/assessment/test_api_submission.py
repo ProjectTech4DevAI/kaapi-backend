@@ -290,25 +290,6 @@ class TestSubmit:
             )
         assert exc.value.status_code == 404
 
-    def test_response_input_method_is_501(self, db) -> None:
-        auth = get_user_test_auth_context(db)
-        config = _assessment_config(db, auth.project_id)
-        request = AssessmentCreate.model_validate(
-            {
-                "config": {"id": str(config.id), "version": 1},
-                "input": {"attachments": []},
-                "callback_url": "https://hook.example/cb",
-            }
-        )
-        with pytest.raises(HTTPException) as exc:
-            submission.submit(
-                session=db,
-                request=request,
-                organization_id=auth.organization_id,
-                project_id=auth.project_id,
-            )
-        assert exc.value.status_code == 501
-
     def test_base64_attachment_column_is_422(self, db) -> None:
         auth = get_user_test_auth_context(db)
         config = _assessment_config(
@@ -539,18 +520,3 @@ class TestCreateAssessmentRoute:
         assert data["status"] == "PROCESSING"
         assert data["message"] == "Your assessment is being processed"
         task.delay.assert_called_once()
-
-    def test_response_input_is_501(
-        self, client: TestClient, superuser_api_key_header
-    ) -> None:
-        body = {
-            "config": {"id": "00000000-0000-0000-0000-000000000001", "version": 1},
-            "input": {"attachments": []},
-            "callback_url": "https://hook.example/cb",
-        }
-        resp = client.post(
-            f"{settings.API_V1_STR}/assessments",
-            headers=superuser_api_key_header,
-            json=body,
-        )
-        assert resp.status_code == 501

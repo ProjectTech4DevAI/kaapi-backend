@@ -247,7 +247,7 @@ def build_rows(
     return rows, text_columns, attachments
 
 
-def _stage_prompt(blob: AssessmentConfigBlob, stage: str) -> str | None:
+def stage_prompt(blob: AssessmentConfigBlob, stage: str) -> str | None:
     """Per-row prompt template for a stage, sourced from the config's ``submission``.
 
     The assessment carries a mandatory ``submission``; a pre-filter may carry its own
@@ -274,7 +274,7 @@ def _prefilter_for_stage(
     )
 
 
-def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
+def stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
     """Kaapi params for a stage: the assessment uses its own params + output schema; each
     pre-filter uses ITS own params (criteria in params.instructions), with the verdict
     schema + gate directive layered on.
@@ -301,12 +301,56 @@ def _stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
     return params
 
 
-def _stage_provider_model(blob: AssessmentConfigBlob, stage: str) -> tuple[str, str]:
+def stage_provider_model(blob: AssessmentConfigBlob, stage: str) -> tuple[str, str]:
     """Provider + model for a stage: each pre-filter uses its own; assessment uses the config's."""
     if stage == ApiStage.TOPIC_RELEVANCE:
         flt = _prefilter_for_stage(blob, stage)
         return flt.provider, flt.params["model"]
     return blob.assessment.provider, blob.assessment.params["model"]
+
+
+def build_stage_requests(
+    *,
+    session: Session,
+    provider_name: str,
+    rows: list[dict[str, str]],
+    text_columns: list[str],
+    attachments: list[AssessmentAttachment],
+    prompt: str | None,
+    params: dict[str, Any],
+    organization_id: int,
+    project_id: int,
+    row_indices: list[int] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Provider-wire request per row plus the mapped provider params.
+
+    Shared by batch submission and RESPONSE, so both send identical requests.
+    """
+    # Resolve gs:// attachments to provider-reachable URLs before building the requests.
+    rows = rewrite_gcs_attachment_urls(
+        session=session,
+        rows=rows,
+        attachments=attachments,
+        llm_provider=provider_name,
+        project_id=project_id,
+        organization_id=organization_id,
+    )
+    if provider_name == LLMProvider.OPENAI:
+        mapped, _ = map_kaapi_to_openai_params(session=session, kaapi_params=params)
+        builder = build_openai_jsonl
+    elif provider_name in (
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_AISTUDIO,
+        LLMProvider.GOOGLE_GCP,
+    ):
+        mapped, _ = map_kaapi_to_google_params(params)
+        builder = build_google_jsonl
+    elif provider_name == LLMProvider.ANTHROPIC:
+        mapped, _ = map_kaapi_to_anthropic_params(params)
+        builder = build_anthropic_jsonl
+    else:
+        raise ValueError(f"[build_stage_requests] Unsupported provider {provider_name}")
+    return builder(rows, text_columns, attachments, prompt, mapped, row_indices), mapped
 
 
 def _submit_provider_batch(
@@ -325,21 +369,20 @@ def _submit_provider_batch(
     description: str,
 ) -> BatchJob:
     """Build provider JSONL and submit it via the shared batch infra."""
-    # Resolve gs:// attachments to provider-reachable URLs before building JSONL.
-    rows = rewrite_gcs_attachment_urls(
+    jsonl, mapped = build_stage_requests(
         session=session,
+        provider_name=provider_name,
         rows=rows,
+        text_columns=text_columns,
         attachments=attachments,
-        llm_provider=provider_name,
-        project_id=project_id,
+        prompt=prompt,
+        params=params,
+        row_indices=row_indices,
         organization_id=organization_id,
+        project_id=project_id,
     )
 
     if provider_name == LLMProvider.OPENAI:
-        mapped, _ = map_kaapi_to_openai_params(session=session, kaapi_params=params)
-        jsonl = build_openai_jsonl(
-            rows, text_columns, attachments, prompt, mapped, row_indices
-        )
         provider: BatchProvider = OpenAIBatchProvider(
             client=get_openai_client(
                 session=session, org_id=organization_id, project_id=project_id
@@ -355,10 +398,6 @@ def _submit_provider_batch(
         LLMProvider.GOOGLE_AISTUDIO,
         LLMProvider.GOOGLE_GCP,
     ):
-        mapped, _ = map_kaapi_to_google_params(params)
-        jsonl = build_google_jsonl(
-            rows, text_columns, attachments, prompt, mapped, row_indices
-        )
         if provider_name == LLMProvider.GOOGLE_GCP:
             cred = _google_gcp_credential(
                 session=session,
@@ -377,10 +416,6 @@ def _submit_provider_batch(
             config = {"display_name": description, "model": f"models/{model}"}
 
     elif provider_name == LLMProvider.ANTHROPIC:
-        mapped, _ = map_kaapi_to_anthropic_params(params)
-        jsonl = build_anthropic_jsonl(
-            rows, text_columns, attachments, prompt, mapped, row_indices
-        )
         provider = AnthropicBatchProvider(
             client=get_anthropic_client(
                 session=session, org_id=organization_id, project_id=project_id
@@ -481,7 +516,7 @@ def _openai_output_text(output: Any) -> str:
     return "".join(chunks)
 
 
-def _parse_one(result: dict[str, Any], provider_name: str) -> ParsedResult:
+def parse_one(result: dict[str, Any], provider_name: str) -> ParsedResult:
     error = result.get("error")
     if error:
         return {
@@ -555,11 +590,11 @@ def parse_batch_results(
         idx = _row_index(result.get(BATCH_KEY) or result.get("key"))
         if idx is None:
             continue
-        parsed[idx] = _parse_one(result, provider_name)
+        parsed[idx] = parse_one(result, provider_name)
     return parsed
 
 
-def _parse_verdict(output: str | None) -> Verdict:
+def parse_verdict(output: str | None) -> Verdict:
     """Read a pre-filter verdict. Unparseable output fails open (verdict=True)."""
     if not output:
         return {"verdict": True, "reasoning": ""}
@@ -571,7 +606,7 @@ def _parse_verdict(output: str | None) -> Verdict:
         }
     except (json.JSONDecodeError, TypeError, AttributeError):
         logger.warning(
-            "[_parse_verdict] Unparseable verdict, failing open | output_len=%s",
+            "[parse_verdict] Unparseable verdict, failing open | output_len=%s",
             len(output),
         )
         return {"verdict": True, "reasoning": ""}
@@ -587,7 +622,7 @@ def _record_stage(
     verdicts: dict[str, Verdict] = {}
     passed_count = 0
     for idx, out in parsed.items():
-        verdict = _parse_verdict(out.get("output"))
+        verdict = parse_verdict(out.get("output"))
         verdicts[str(idx)] = verdict
         if verdict["verdict"]:
             passed_count += 1
@@ -645,10 +680,7 @@ def _submit_stage(
     from app.services.assessment.api.submission_store import open_submission_rows
 
     kind = _stage_kind(bag["pipeline"], stage)
-    input_columns = {
-        name: col.model_dump(exclude_none=True)
-        for name, col in blob.input_schema.items()
-    }
+    input_columns = blob.input_columns()
     text_columns, attachments = column_kinds(list(input_columns), input_columns)
     subset = _row_subset(bag, stage, kind, execution.total_items)
 
@@ -669,7 +701,7 @@ def _submit_stage(
     with open_submission_rows(session=session, assessment=assessment) as stream:
         rows = [row for idx, row in enumerate(stream) if idx in wanted]
 
-    provider_name, model = _stage_provider_model(blob, stage)
+    provider_name, model = stage_provider_model(blob, stage)
     batch_job = _submit_provider_batch(
         session=session,
         provider_name=provider_name,
@@ -677,8 +709,8 @@ def _submit_stage(
         rows=rows,
         text_columns=text_columns,
         attachments=attachments,
-        prompt=_stage_prompt(blob, stage),
-        params=_stage_params(blob, stage),
+        prompt=stage_prompt(blob, stage),
+        params=stage_params(blob, stage),
         row_indices=subset,
         organization_id=organization_id,
         project_id=project_id,

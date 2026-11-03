@@ -1,11 +1,12 @@
 """Assessment API-client route.
 
 Run mode is inferred from the input shape:
-    - RESPONSE: single object input (`input` key) — deferred, returns 501.
-    - BATCH: submission-list input (`data` key) — N items over one provider batch series.
+    - RESPONSE: `data` is a single row object — one item, result delivered by `callback_url`.
+    - BATCH: `data` is a list of rows, or a `submission_doc_id` — N items over one provider
+      batch series.
 
-Results are delivered to the request's `callback_url` when one is given, and are always
-readable from `GET /assessments/{assessment_id}`.
+A BATCH result is delivered to the request's `callback_url` when one is given, and is
+always readable from `GET /assessments/{assessment_id}`.
 """
 
 import logging
@@ -24,7 +25,6 @@ from app.models.assessment import (
     AssessmentMethod,
     AssessmentSubmitResponse,
     AssessmentSummary,
-    BatchInput,
 )
 from app.services.assessment.api import results, submission
 from app.utils import APIResponse, load_description
@@ -35,8 +35,6 @@ router = APIRouter(
     prefix="/assessments",
     tags=["Assessment (API)"],
 )
-
-_RESPONSE_NOT_WIRED = "RESPONSE-mode assessment is not wired yet."
 
 
 @router.post(
@@ -52,9 +50,6 @@ def create_assessment(
 ) -> APIResponse[AssessmentSubmitResponse]:
     """Submit an assessment; the method is inferred from the input shape. The result is
     pushed to `callback_url` when one is given, and is polled from GET otherwise."""
-    if not isinstance(request.input, BatchInput):
-        raise HTTPException(status_code=501, detail=_RESPONSE_NOT_WIRED)
-
     result = submission.submit(
         session=session,
         request=request,

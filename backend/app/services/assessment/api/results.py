@@ -6,7 +6,6 @@ output. Pre-filter verdicts live in the execution bag; assessment outputs are
 streamed back from object storage.
 """
 
-import json
 import logging
 from typing import Any, cast
 
@@ -34,24 +33,12 @@ from app.models.assessment import (
     Verdict,
 )
 from app.services.assessment.api.batch import ApiStage, parse_batch_results
-from app.services.assessment.utils.parsing import parse_stored_results
+from app.services.assessment.utils.parsing import (
+    parse_assessment_text,
+    parse_stored_results,
+)
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_assessment(out: ParsedResult) -> dict[str, Any] | str | None:
-    """Stored assessment text as a dict (structured json_schema output) or raw string.
-
-    Null when the row produced no assessment text (gated out or empty/failed call).
-    """
-    text = out.get("output")
-    if not text:
-        return None
-    try:
-        parsed = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        return text
-    return parsed if isinstance(parsed, dict) else text
 
 
 def _verdict_obj(verdict: Verdict | None) -> PreFilterVerdict | None:
@@ -126,7 +113,7 @@ def build_result(
         if gate_passed[idx]:
             if idx in outputs:
                 out = outputs[idx]
-                assessment_output = _parse_assessment(out)
+                assessment_output = parse_assessment_text(out)
                 error = out.get("error")
             elif str(idx) in row_errors:
                 error = row_errors[str(idx)]

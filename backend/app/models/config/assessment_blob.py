@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import Literal, get_args
+from typing import Any, Literal, get_args
 
 from pydantic import JsonValue, model_validator
 from sqlmodel import Field, SQLModel
@@ -191,6 +191,12 @@ class AssessmentConfigBlob(SQLModel):
     )
     pre_filters: AssessmentPreFilters | None = None
     assessment: AssessmentCompletionConfig
+
+    def input_columns(self) -> dict[str, dict[str, Any]]:
+        return {
+            name: column.model_dump(exclude_none=True)
+            for name, column in self.input_schema.items()
+        }
 
     @model_validator(mode="after")
     def _validate_submission_placeholders(self):

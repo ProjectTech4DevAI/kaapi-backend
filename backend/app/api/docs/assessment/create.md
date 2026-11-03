@@ -5,8 +5,8 @@ pre-filters (topic relevance / duplicate detection). The run mode is **inferred 
 shape** — you do not pass a mode flag.
 
 **Key Features:**
-* Method inferred from the input: a `data` list ⇒ **BATCH**, a single `query` (+ optional
-  `attachments`) ⇒ **RESPONSE**.
+* Method inferred from the input: a `data` list (or `submission_doc_id`) ⇒ **BATCH**, a single
+  row object in `data` ⇒ **RESPONSE**.
 * Pins to a saved config **version** (`config.id` + `config.version`); the config must be tagged
   `ASSESSMENT` (see the config-create docs for the `config_blob` assessment shape).
 * Optional pre-filters run before the grading call and can gate it per item.
@@ -14,8 +14,8 @@ shape** — you do not pass a mode flag.
   `callback_url` to have the finished result POSTed to you on completion.
 * `request_metadata` is echoed back unchanged in the callback for correlation.
 
-> **RESPONSE mode is not wired yet** — a single-object input currently returns `501 Not Implemented`.
-> Only BATCH (a `data` list) is processed today.
+> **RESPONSE** answers one row and delivers the result only by webhook, so `callback_url` is
+> **required** for it (a RESPONSE without one fails with `422`). BATCH can still be polled.
 
 ---
 
@@ -60,12 +60,15 @@ shape** — you do not pass a mode flag.
       `submission_doc_id` sheet's undeclared columns are ignored, so the schema selects which
       columns take part), and a non-blank `image`/`pdf` value must be a URL. A row that does not
       match fails with `422` (see Errors).
-  * **RESPONSE** — `{ "query": "<text>", "attachments": [ ... ] }` *(deferred — returns 501)*.
-* `callback_url` (optional) — the webhook the result is POSTed to on completion. Omit it to poll instead.
+  * **RESPONSE** — `{ "data": { <column>: <value>, ... } }` — exactly one row, validated against the
+    config's `input_schema` like a BATCH row. Attachment columns (`image` / `pdf` / `video` / `audio`)
+    carry a URL (`http(s)://` or `gs://`); base64 is not supported.
+* `callback_url` — the webhook the result is POSTed to on completion. Optional for BATCH (omit it to
+  poll instead); **required** for RESPONSE.
 * `request_metadata` (optional) — arbitrary object passed through unchanged in the callback.
 
-The two input shapes are strictly discriminated: a body carrying `data` is BATCH, one carrying
-`attachments` (or query-only) is RESPONSE. Neither accepts the other's distinguishing field.
+The two input shapes are strictly discriminated: `data` as a list (or a `submission_doc_id`) is BATCH,
+`data` as a single object is RESPONSE. Neither accepts the other's distinguishing field.
 
 ---
 
@@ -137,13 +140,15 @@ On completion the platform POSTs this payload to `callback_url`:
       * `output.pre_filter` — per-item `topic_relevance` / `duplicate_detection` verdicts, each
         `{ "verdict": bool, "reasoning": str }` or `null` if that pre-filter was not configured.
       * `error` — a per-row error string, or `null`.
-  * **RESPONSE** — a single item object with the same `output` / `error` shape.
+  * **RESPONSE** — a single item object with the same `output` / `error` shape. If the run cannot
+    produce a result at all (for example the config version was deleted or a provider credential is
+    missing), `status` is `FAILED`, `data` is `null`, and the envelope's `error` carries the message.
 
 ---
 
 ## Errors
 
-* `501 Not Implemented` — RESPONSE-mode input (single object) is not wired yet; send a BATCH `data` list.
+* `422 Unprocessable Entity` for a RESPONSE without a `callback_url`.
 * `422 Unprocessable Entity` — the body failed validation (e.g. `config.id`/`config.version` missing,
   an input shape carrying both `data` and `submission_doc_id`, or neither), or a
   submission row does not match the config's `input_schema` (a strict column absent or blank, an
