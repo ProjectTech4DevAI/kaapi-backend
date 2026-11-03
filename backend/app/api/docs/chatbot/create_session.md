@@ -1,0 +1,5 @@
+Start a conversation between a chatbot and an end user and return `{session_id, chatbot_id, flow_version, active_node_id}` (`201`).
+
+The session is pinned to the chatbot's live flow version and starts on its entry node (the agent node the `input` node leads to, or the flow's only agent node). Every turn runs that pinned version, so publishing a newer flow applies to new sessions only. `contact_ref` is the caller's own identifier for the end user and is stored as-is.
+
+A contact has at most one active session per chatbot. Creating a session marks the contact's previous `active` sessions of this chatbot as `inactive`, in the same transaction; those still `in_progress` become `abandoned`, while `complete` ones stay `complete`. Sessions of other chatbots or other contacts are untouched. Returns 404 if the chatbot doesn't exist in this project or was deleted, 409 if the chatbot has no published flow (publish the flow first) or another session for the same contact was created concurrently (retry).

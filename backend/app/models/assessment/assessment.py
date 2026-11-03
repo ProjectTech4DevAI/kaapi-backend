@@ -9,7 +9,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field
 from sqlalchemy import Column, Index, Text, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
@@ -84,30 +84,10 @@ class AssessmentAttachment(BaseModel):
     """External-dataset attachment column config (RUN / BATCH-by-ref)."""
 
     column: str = Field(..., description="Dataset column holding the attachment")
-    type: AttachmentColumnType | Literal["mixed"] = Field(
-        ...,
-        description=(
-            "'image'/'pdf'/'video' fix the type; 'mixed' resolves per-row via type_column"
-        ),
+    type: AttachmentColumnType = Field(
+        ..., description="'image', 'pdf', 'video' or 'audio'"
     )
     format: Literal["url", "base64"] = Field(..., description="Data format")
-    type_column: str | None = Field(
-        None, description="'mixed' only: column whose value decides each row's type"
-    )
-    type_value_map: dict[str, AttachmentColumnType] | None = Field(
-        None,
-        description="'mixed' only: maps a type_column value to 'image', 'pdf' or 'video'",
-    )
-
-    @model_validator(mode="after")
-    def _validate_mixed(self) -> "AssessmentAttachment":
-        if self.type == "mixed" and (
-            self.type_column is None or not self.type_value_map
-        ):
-            raise ValueError(
-                "type='mixed' requires 'type_column' and a non-empty 'type_value_map'."
-            )
-        return self
 
 
 # NOTE: Only used for UI. The API-client Assessment pipeline does not use this.

@@ -30,6 +30,7 @@ from app.models.assessment import (
     InputBinding,
     StageStatus,
 )
+from app.models.config.assessment_blob import UNSUPPORTED_COLUMN_TYPES_BY_PROVIDER
 from app.models.config.config import ConfigTag
 from app.services.llm.providers.registry import LLMProvider
 
@@ -171,6 +172,23 @@ def start_assessment(
                     f"Config {cfg.id} v{cfg.version} uses provider "
                     f"'{provider}', which is not supported for batch assessment. "
                     f"Supported providers: {sorted(_SUPPORTED_BATCH_PROVIDERS)}"
+                ),
+            )
+        unsupported_types = UNSUPPORTED_COLUMN_TYPES_BY_PROVIDER.get(
+            str(provider).removesuffix("-native"), ()
+        )
+        unsupported_columns = sorted(
+            att.column
+            for att in request.input_binding.attachments
+            if att.type in unsupported_types
+        )
+        if unsupported_columns:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Config {cfg.id} v{cfg.version} uses provider '{provider}', "
+                    f"which does not support {'/'.join(unsupported_types)} "
+                    f"attachments: {', '.join(unsupported_columns)}"
                 ),
             )
         resolved_configs.append(cfg)
