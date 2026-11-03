@@ -1,7 +1,7 @@
 """Assessment API-client route.
 
 Run mode is inferred from the input shape:
-    - RESPONSE: `data` is a single row object — one item, result delivered by `callback_url`.
+    - RESPONSE: `data` is a row object — the assessment response is delivered by `callback_url`.
     - BATCH: `data` is a list of rows, or a `submission_doc_id` — N items over one provider
       batch series.
 

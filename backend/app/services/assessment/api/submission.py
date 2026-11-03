@@ -2,7 +2,7 @@
 
 Resolves the ASSESSMENT config and validates the rows. BATCH persists the parent
 assessment + one execution, seeds the staged-batch runtime bag and hands the pipeline
-off to Celery; RESPONSE persists the parent assessment and hands its single row off.
+off to Celery; RESPONSE persists the parent assessment and hands the row off.
 """
 
 import logging

@@ -1,12 +1,12 @@
 # Module: Assessment
 
-Assessments of datasets/inputs against ASSESSMENT-tagged configs. Three methods, chosen by input shape: **RESPONSE** (single-row object input → `assessment` row only, direct provider calls in one Celery task, result by callback), **BATCH** (list input → assessment_run → batch_job), **RUN** (legacy UI pipeline). No deep-dive doc yet.
+Assessments of datasets/inputs against ASSESSMENT-tagged configs. Three methods, chosen by input shape: **RESPONSE** (row object input → `assessment` row only, direct provider calls in one Celery task, result by callback), **BATCH** (list input → assessment_run → batch_job), **RUN** (legacy UI pipeline). No deep-dive doc yet.
 
 All paths relative to `backend/app/`.
 
 ## Routes
 - `api/routes/assessment/` — legacy UI (assessments, runs, datasets); RUN only, and the results export 422s a BATCH assessment (its rows come from `GET /assessments/{id}`)
-- `api/routes/assessment/api.py` — API-client routes, mounted top-level at `/assessments`: `POST` (submit; method inferred from input shape: a `data` list or `submission_doc_id` ⇒ BATCH, a single-row `data` object ⇒ RESPONSE, which requires `callback_url`), `GET` (list, **BATCH only** so the execution join yields one row per assessment; `config_id` + optional `version` filters), `GET /{assessment_id}` (detail/poll; `include_input=true` echoes the submitted rows at the cost of a storage read, off by default). `callback_url` is optional and adds a webhook push on top of polling.
+- `api/routes/assessment/api.py` — API-client routes, mounted top-level at `/assessments`: `POST` (submit; method inferred from input shape: a `data` list or `submission_doc_id` ⇒ BATCH, a `data` object ⇒ RESPONSE, which requires `callback_url`), `GET` (list, **BATCH only** so the execution join yields one row per assessment; `config_id` + optional `version` filters), `GET /{assessment_id}` (detail/poll; `include_input=true` echoes the submitted rows at the cost of a storage read, off by default). `callback_url` is optional and adds a webhook push on top of polling.
 
 ## Tables (SQLModel)
 `models/assessment/` is a package, split by surface: `assessment.py` holds the shared DB tables + `AssessmentStatus`/`AssessmentMethod` enums + `AssessmentConfigRef` + the legacy RUN (UI) models; `assessment_api.py` holds the API-client request/response models; `submission.py` holds the uploaded-submission table and its response models. All are re-exported from the package `__init__`, so `from app.models.assessment import X` resolves either.

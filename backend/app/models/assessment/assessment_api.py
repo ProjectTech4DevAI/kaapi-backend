@@ -123,7 +123,7 @@ def _input_kind(value: Any) -> str:
     return "response" if isinstance(data, dict) else "batch"
 
 
-# A single row object is a response; a list of rows or a submission reference is a batch.
+# A row object is an assessment response; a list of rows or a submission reference is a batch.
 AssessmentInput = Annotated[
     Annotated[ResponseInput, Tag("response")] | Annotated[BatchInput, Tag("batch")],
     Discriminator(_input_kind),
@@ -159,7 +159,7 @@ class AssessmentCreate(BaseModel):
     @model_validator(mode="after")
     def _response_needs_callback(self) -> "AssessmentCreate":
         if isinstance(self.input, ResponseInput) and self.callback_url is None:
-            raise ValueError("A single-row (response) assessment needs a callback_url.")
+            raise ValueError("An assessment response needs a callback_url.")
         return self
 
 
