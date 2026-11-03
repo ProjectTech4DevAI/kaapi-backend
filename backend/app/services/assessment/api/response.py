@@ -28,7 +28,7 @@ from app.models.assessment import (
 from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
 from app.services.assessment.api.batch import (
-    ApiStage,
+    PipelineStage,
     StageKind,
     build_stage_requests,
     column_kinds,
@@ -177,10 +177,10 @@ def _assess(
     if not state["gate_passed"][0]:
         return AssessmentResult(output=AssessmentOutput(pre_filter=pre_filter))
 
-    _begin_stage(session, execution, state, ApiStage.ASSESSMENT.value)
-    out = run_stage(stage=ApiStage.ASSESSMENT.value)
+    _begin_stage(session, execution, state, PipelineStage.ASSESSMENT.value)
+    out = run_stage(stage=PipelineStage.ASSESSMENT.value)
     if out["error"]:
-        _record_error(state, ApiStage.ASSESSMENT.value, out["error"])
+        _record_error(state, PipelineStage.ASSESSMENT.value, out["error"])
     state["stage_status"] = StageStatus.COMPLETED.value
     return AssessmentResult(
         output=AssessmentOutput(

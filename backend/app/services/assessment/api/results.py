@@ -32,7 +32,7 @@ from app.models.assessment import (
     Submission,
     Verdict,
 )
-from app.services.assessment.api.batch import ApiStage, parse_batch_results
+from app.services.assessment.api.batch import PipelineStage, parse_batch_results
 from app.services.assessment.utils.parsing import (
     parse_assessment_text,
     parse_stored_results,
@@ -59,7 +59,7 @@ def _load_assessment_outputs(
     can flag it per-row instead of mistaking it for a clean run. Missing URL
     (all rows gated) is a legit empty, not an error.
     """
-    url = (bag.get("stage_output_urls") or {}).get(ApiStage.ASSESSMENT.value)
+    url = (bag.get("stage_output_urls") or {}).get(PipelineStage.ASSESSMENT.value)
     if not url:
         return {}, None
     try:
@@ -99,9 +99,9 @@ def build_result(
     verdicts = bag.get("verdicts") or {}
     outputs, load_error = _load_assessment_outputs(session, bag, assessment.project_id)
     # Rows the provider rejected are absent from the output dump; the bag kept their error.
-    row_errors = (bag.get("stage_errors") or {}).get(ApiStage.ASSESSMENT.value, {})
+    row_errors = (bag.get("stage_errors") or {}).get(PipelineStage.ASSESSMENT.value, {})
 
-    tr_verdicts = verdicts.get(ApiStage.TOPIC_RELEVANCE.value, {})
+    tr_verdicts = verdicts.get(PipelineStage.TOPIC_RELEVANCE.value, {})
 
     items: list[AssessmentResult] = []
     counts = AssessmentCounts()

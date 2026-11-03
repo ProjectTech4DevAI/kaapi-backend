@@ -105,8 +105,8 @@ def _google_gcp_credential(
 POLL_COUNTDOWN_SECONDS = settings.CRON_INTERVAL_MINUTES * 60
 
 
-class ApiStage(StrEnum):
-    """Pipeline stage identifiers; names match the pre-filter config + result fields."""
+class PipelineStage(StrEnum):
+    """Stage names of the API-client pipeline; they key the config, the run state and the result."""
 
     TOPIC_RELEVANCE = "topic_relevance"
     ASSESSMENT = "assessment"
@@ -167,25 +167,27 @@ def build_pipeline(
     pre_filters: AssessmentPreFilters | None,
 ) -> list[dict[str, str]]:
     """Ordered stages: GATE pre-filters, then PASS-THROUGH pre-filters, then assessment."""
-    present: list[tuple[ApiStage, TopicRelevanceFilter]] = []
+    pre_filter_stages: list[tuple[PipelineStage, TopicRelevanceFilter]] = []
     if pre_filters is not None:
         if pre_filters.topic_relevance is not None:
-            present.append((ApiStage.TOPIC_RELEVANCE, pre_filters.topic_relevance))
+            pre_filter_stages.append(
+                (PipelineStage.TOPIC_RELEVANCE, pre_filters.topic_relevance)
+            )
 
     gates = [
         {"stage": stage.value, "kind": StageKind.GATE.value}
-        for stage, flt in present
-        if flt.stop_on_fail
+        for stage, pre_filter in pre_filter_stages
+        if pre_filter.stop_on_fail
     ]
     passthrough = [
         {"stage": stage.value, "kind": StageKind.PASS_THROUGH.value}
-        for stage, flt in present
-        if not flt.stop_on_fail
+        for stage, pre_filter in pre_filter_stages
+        if not pre_filter.stop_on_fail
     ]
     return [
         *gates,
         *passthrough,
-        {"stage": ApiStage.ASSESSMENT.value, "kind": StageKind.ASSESSMENT.value},
+        {"stage": PipelineStage.ASSESSMENT.value, "kind": StageKind.ASSESSMENT.value},
     ]
 
 
@@ -254,7 +256,7 @@ def stage_prompt(blob: AssessmentConfigBlob, stage: str) -> str | None:
     optional one (None when it declares none — its criteria then live entirely in
     params.instructions with the item's columns + attachments as the user content).
     """
-    if stage == ApiStage.ASSESSMENT:
+    if stage == PipelineStage.ASSESSMENT:
         return blob.assessment.params["submission"]
     return cast(
         "str | None", _prefilter_for_stage(blob, stage).params.get("submission")
@@ -267,7 +269,7 @@ def _prefilter_for_stage(
     """The pre-filter config object for a pre-filter stage (topic_relevance)."""
     pre = blob.pre_filters
     if pre is not None:
-        if stage == ApiStage.TOPIC_RELEVANCE and pre.topic_relevance is not None:
+        if stage == PipelineStage.TOPIC_RELEVANCE and pre.topic_relevance is not None:
             return pre.topic_relevance
     raise ValueError(
         f"[_prefilter_for_stage] No pre-filter configured for stage {stage}"
@@ -279,7 +281,7 @@ def stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
     pre-filter uses ITS own params (criteria in params.instructions), with the verdict
     schema + gate directive layered on.
     """
-    if stage == ApiStage.ASSESSMENT:
+    if stage == PipelineStage.ASSESSMENT:
         params = dict(blob.assessment.params)
         json_schema = params.pop("json_output_schema", None)
         # submission is a prompt concern, not a provider param.
@@ -290,8 +292,8 @@ def stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
         params["instructions"] = normalize_llm_text(params.get("instructions") or "")
         return params
 
-    flt = _prefilter_for_stage(blob, stage)
-    params = dict(flt.params)
+    pre_filter = _prefilter_for_stage(blob, stage)
+    params = dict(pre_filter.params)
     params.pop("submission", None)  # prompt template, not a provider param
     params["output_schema"] = PREFILTER_VERDICT_SCHEMA
     # The config's criteria (mandatory params.instructions) is the system prompt;
@@ -303,9 +305,9 @@ def stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
 
 def stage_provider_model(blob: AssessmentConfigBlob, stage: str) -> tuple[str, str]:
     """Provider + model for a stage: each pre-filter uses its own; assessment uses the config's."""
-    if stage == ApiStage.TOPIC_RELEVANCE:
-        flt = _prefilter_for_stage(blob, stage)
-        return flt.provider, flt.params["model"]
+    if stage == PipelineStage.TOPIC_RELEVANCE:
+        pre_filter = _prefilter_for_stage(blob, stage)
+        return pre_filter.provider, pre_filter.params["model"]
     return blob.assessment.provider, blob.assessment.params["model"]
 
 
@@ -808,7 +810,7 @@ def _finalize(
     from app.services.assessment.api.result_files import finalize_result_files
     from app.services.assessment.api.results import build_result
 
-    bag["stage"] = ApiStage.ASSESSMENT.value
+    bag["stage"] = PipelineStage.ASSESSMENT.value
     bag["stage_status"] = StageStatus.COMPLETED.value
     api.save_execution_state(session=session, execution=execution, state=bag)
 
@@ -964,7 +966,7 @@ def run_batch_stage(
     Idempotent: keyed off ``stage_status`` in the bag — a redelivery either re-polls
     the in-flight batch or re-submits a stage that was never dispatched.
     """
-    # Lazy (like callbacks/results below): result_files imports ApiStage from this module.
+    # Lazy (like callbacks/results below): result_files imports PipelineStage from this module.
     from app.services.assessment.api.result_files import record_stage_dump
     from app.services.assessment.api.submission_store import SubmissionUnavailableError
 
