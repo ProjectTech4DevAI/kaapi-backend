@@ -1288,6 +1288,37 @@ class TestOptionalStages:
         pipeline = build_pipeline(blob)
         assert [step["stage"] for step in pipeline] == stages
 
+    def test_pass_through_only_pipeline_never_gates(self, db) -> None:
+        raw = _blob_dict(topic_relevance=False)
+        raw.pop("assessment")
+        blob = AssessmentConfigBlob.model_validate(raw)
+        pipeline = build_pipeline(blob)
+        assert pipeline == [{"stage": "topic_relevance", "kind": "PASS_THROUGH"}]
+
+        auth = get_user_test_auth_context(db)
+        assessment, execution = _seed_assessment(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            config_id=_make_config_id(db, auth.project_id),
+            bag=_bag_for(pipeline, total=1, callback=""),
+            data=[{"a": "1"}],
+            status=AssessmentStatus.PROCESSING,
+        )
+        bag = dict(execution.execution)
+        bag["verdicts"] = {
+            "topic_relevance": {"0": {"verdict": False, "reasoning": ""}}
+        }
+
+        _finalize(db, execution, assessment, bag)
+
+        db.refresh(assessment)
+        assert assessment.status == AssessmentStatus.COMPLETED
+        result = build_result(session=db, assessment=assessment, execution=execution)
+        assert result.items[0].output.assessment is None
+        assert result.items[0].output.pre_filter.topic_relevance.verdict is False
+        assert result.counts.filtered == 0
+
     def test_neither_stage_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="at least one of"):
             self._blob_with(pre_filter=False, assessment=False)
