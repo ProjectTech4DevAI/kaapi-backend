@@ -1,4 +1,3 @@
-import logging
 from typing import Any
 
 from openai import OpenAI
@@ -9,8 +8,6 @@ from app.services.chatbot.agents.rag.graph import run_rag_turn
 from app.services.chatbot.exceptions import ChatbotInputError
 from app.services.chatbot.types import ChatbotMessageDict, ChatbotTurnResult
 from app.services.chatbot.utils import ChatbotModelSettings
-
-logger = logging.getLogger(__name__)
 
 
 async def run_agent_turn(
@@ -39,7 +36,6 @@ async def run_agent_turn(
                 "[KAAPI] The rag agent needs an OpenAI client to search its "
                 "knowledge bases."
             )
-            logger.error(f"[run_agent_turn] {error_message}")
             raise ChatbotInputError(error_message)
         return await run_rag_turn(
             system_prompt=system_prompt,
@@ -51,5 +47,4 @@ async def run_agent_turn(
         )
 
     error_message = f"[KAAPI] Unsupported chatbot node type '{node_type}'."
-    logger.error(f"[run_agent_turn] {error_message}")
     raise ChatbotInputError(error_message)
