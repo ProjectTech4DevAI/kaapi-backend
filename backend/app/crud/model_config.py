@@ -165,7 +165,8 @@ def validate_blob_completion_models(
     completion = (
         blob.assessment if isinstance(blob, AssessmentConfigBlob) else blob.completion
     )
-    _validate_completion_model_or_raise(session, completion)
+    if completion is not None:
+        _validate_completion_model_or_raise(session, completion)
 
     if isinstance(blob, AssessmentConfigBlob) and blob.pre_filters is not None:
         topic_relevance = blob.pre_filters.topic_relevance

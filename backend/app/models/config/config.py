@@ -171,10 +171,6 @@ class ConfigCreate(ConfigBase):
         tag = raw_tag.value if isinstance(raw_tag, ConfigTag) else raw_tag
         is_assessment = tag == ConfigTag.ASSESSMENT.value
 
-        if is_assessment and "assessment" not in blob:
-            raise ValueError(
-                "An ASSESSMENT config requires an 'assessment' block in config_blob."
-            )
         if not is_assessment and "completion" not in blob:
             raise ValueError(
                 "A default config requires a 'completion' block in config_blob."
