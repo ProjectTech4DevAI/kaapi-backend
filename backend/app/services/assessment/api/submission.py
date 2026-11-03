@@ -176,9 +176,7 @@ def _resolve_config(
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
     # The last stage (the assessment when present) names the run's provider and model.
-    last_stage = batch_service.build_pipeline(
-        blob.pre_filters, with_assessment=blob.assessment is not None
-    )[-1]["stage"]
+    last_stage = batch_service.build_pipeline(blob)[-1]["stage"]
     provider, model = batch_service.stage_provider_model(blob, last_stage)
     if not batch_service.is_supported_provider(provider):
         raise HTTPException(
@@ -226,7 +224,7 @@ def _initial_state(
     model: str,
     total_items: int,
 ) -> BatchRunState:
-    pipeline = batch_service.build_pipeline(blob.pre_filters)
+    pipeline = batch_service.build_pipeline(blob)
     return {
         "pipeline": pipeline,
         "stage": pipeline[0]["stage"],
