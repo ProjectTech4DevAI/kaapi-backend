@@ -3,10 +3,13 @@ import logging
 from typing import List
 
 from fastapi import HTTPException
-from sqlmodel import Session, select
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, col, select
 
 from app.models.collection_job import (
+    CollectionActionType,
     CollectionJob,
+    CollectionJobStatus,
     CollectionJobUpdate,
     CollectionJobCreate,
 )
@@ -94,3 +97,45 @@ class CollectionJobCrud:
             raise
 
         return job
+
+    def read_in_flight_create(self, name: str) -> CollectionJob | None:
+        """Return the PENDING/PROCESSING CREATE job holding this name, if any."""
+        statement = select(CollectionJob).where(
+            CollectionJob.project_id == self.project_id,
+            CollectionJob.name == name,
+            CollectionJob.action_type == CollectionActionType.CREATE,
+            col(CollectionJob.status).in_(
+                [CollectionJobStatus.PENDING, CollectionJobStatus.PROCESSING]
+            ),
+        )
+        return self.session.exec(statement).first()
+
+    def create_or_get_in_flight(
+        self, collection_job: CollectionJobCreate
+    ) -> tuple[CollectionJob, bool]:
+        """Create a CREATE job, or return the in-flight job with the same name.
+
+        The bool is True only when a new row was inserted, so callers enqueue work once.
+        """
+        if collection_job.name:
+            existing = self.read_in_flight_create(collection_job.name)
+            if existing:
+                return existing, False
+
+        try:
+            job = CollectionJob(**collection_job.model_dump())
+            self.session.add(job)
+            self.session.commit()
+        except IntegrityError:
+            self.session.rollback()
+            existing = (
+                self.read_in_flight_create(collection_job.name)
+                if collection_job.name
+                else None
+            )
+            if existing is None:
+                raise
+            return existing, False
+
+        self.session.refresh(job)
+        return job, True

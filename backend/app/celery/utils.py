@@ -344,6 +344,27 @@ def start_evaluation_iteration_round(
     return task_id
 
 
+def start_chatbot_session_message(
+    session_id: str,
+    organization_id: int,
+    project_id: int,
+    webhook_url: str,
+    trace_id: str,
+) -> str:
+    from app.celery.tasks.job_execution import run_chatbot_session_message
+
+    task_id = run_chatbot_session_message.apply_async(
+        kwargs={
+            "session_id": session_id,
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "webhook_url": webhook_url,
+            "trace_id": trace_id,
+        }
+    ).id
+    return task_id
+
+
 def get_task_status(task_id: str) -> Dict[str, Any]:
     result = AsyncResult(task_id)
     return {

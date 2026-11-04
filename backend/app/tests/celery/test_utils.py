@@ -99,6 +99,24 @@ JOB_KWARGS = {"project_id": 1, "job_id": "job-1", "trace_id": "trace-1"}
                 "trace_id": "N/A",
             },
         ),
+        (
+            "start_chatbot_session_message",
+            "run_chatbot_session_message",
+            {
+                "session_id": "session-1",
+                "organization_id": 2,
+                "project_id": 3,
+                "webhook_url": "https://hooks.example.com/chatbot",
+                "trace_id": "trace-1",
+            },
+            {
+                "session_id": "session-1",
+                "organization_id": 2,
+                "project_id": 3,
+                "webhook_url": "https://hooks.example.com/chatbot",
+                "trace_id": "trace-1",
+            },
+        ),
     ],
 )
 def test_start_helper_enqueues_task_and_returns_its_id(

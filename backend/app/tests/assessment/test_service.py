@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from app.crud.assessment import core as assessment_core
 from app.crud.assessment.core import _read_exec
 from app.models.assessment import (
+    AssessmentAttachment,
     AssessmentConfigRef,
     AssessmentRunCreate,
     AssessmentStatus,
@@ -144,6 +145,42 @@ class TestStartAssessment:
                     organization_id=1,
                     project_id=1,
                 )
+        create_assessment.assert_not_called()
+
+    @pytest.mark.parametrize("provider", ["openai", "openai-native", "anthropic"])
+    def test_rejects_audio_attachment_for_unsupported_provider(
+        self, provider: str
+    ) -> None:
+        request = _make_request(UUID("00000000-0000-0000-0000-000000000001"))
+        request.input_binding.attachments = [
+            AssessmentAttachment(column="clip", type="audio", format="url")
+        ]
+        config_blob = SimpleNamespace(completion=SimpleNamespace(provider=provider))
+
+        with (
+            patch(
+                "app.services.assessment.service.get_submission_by_id",
+                return_value=_make_dataset(),
+            ),
+            patch(
+                "app.services.assessment.service.resolve_evaluation_config",
+                return_value=(config_blob, None),
+            ),
+            patch(
+                "app.services.assessment.service.create_assessment"
+            ) as create_assessment,
+            _assessment_config_crud_patch(),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                start_assessment(
+                    session=MagicMock(),
+                    request=request,
+                    organization_id=1,
+                    project_id=1,
+                )
+
+        assert exc.value.status_code == 422
+        assert "clip" in exc.value.detail
         create_assessment.assert_not_called()
 
     def test_google_provider_is_supported(self) -> None:

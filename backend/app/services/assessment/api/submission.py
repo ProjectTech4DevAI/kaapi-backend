@@ -6,7 +6,6 @@ BATCH method is wired here; RESPONSE stays a route-level 501 stub (deferred).
 """
 
 import logging
-from urllib.parse import urlparse
 from uuid import UUID, uuid4
 
 from asgi_correlation_id import correlation_id
@@ -36,40 +35,16 @@ from app.services.assessment.api.submission_store import (
     open_uploaded_rows,
     upload_submission_rows,
 )
+from app.services.assessment.utils.attachments import (
+    attachment_type_from_url,
+    split_attachment_urls,
+)
 from app.utils import validate_callback_url
 
 logger = logging.getLogger(__name__)
 
 # Attachment cell values are provided as URLs (base64 is unsupported for batch).
 _URL_PREFIXES = ("http://", "https://", "gs://")
-_EXTENSION_TYPES = {
-    ".pdf": "pdf",
-    ".png": "image",
-    ".jpg": "image",
-    ".jpeg": "image",
-    ".gif": "image",
-    ".webp": "image",
-    ".mp4": "video",
-    ".mov": "video",
-    ".mpeg": "video",
-    ".mpg": "video",
-    ".avi": "video",
-    ".wmv": "video",
-    ".flv": "video",
-    ".webm": "video",
-    ".3gp": "video",
-}
-
-
-def _url_attachment_type(url: str) -> str | None:
-    """The kind a URL's own extension implies, or None when it names no extension.
-
-    Presigned URLs carry a query string, so only the path is read.
-    """
-    path = urlparse(url).path.lower()
-    return next(
-        (kind for ext, kind in _EXTENSION_TYPES.items() if path.endswith(ext)), None
-    )
 
 
 def _validate_rows_against_schema(
@@ -104,8 +79,11 @@ def _validate_rows_against_schema(
         for column, spec in input_schema.items():
             column_type = (spec or {}).get("type")
             value = (row.get(column) or "").strip()
-            if value and column_type in ATTACHMENT_COLUMN_TYPES:
-                if not value.startswith(_URL_PREFIXES):
+            if not value or column_type not in ATTACHMENT_COLUMN_TYPES:
+                continue
+            # A cell may hold several URLs; the builder sends each one separately.
+            for url in split_attachment_urls(value):
+                if not url.startswith(_URL_PREFIXES):
                     raise HTTPException(
                         status_code=422,
                         detail=(
@@ -114,7 +92,7 @@ def _validate_rows_against_schema(
                         ),
                     )
                 # The provider only reports a mistyped column later, as an opaque format error.
-                actual = _url_attachment_type(value)
+                actual = attachment_type_from_url(url)
                 if actual is not None and actual != column_type:
                     raise HTTPException(
                         status_code=422,

@@ -20,6 +20,7 @@ from app.models import (
     CollectionJobStatus,
     CollectionActionType,
     CollectionJobCreate,
+    CollectionJobUpdate,
     CollectionJobPublic,
     CollectionJobImmediatePublic,
     CollectionWithDocsPublic,
@@ -113,23 +114,36 @@ def create_collection(
         unique_documents = list(dict.fromkeys(request.documents))
 
         collection_job_crud = CollectionJobCrud(session, current_user.project_.id)
-        collection_job = collection_job_crud.create(
+        collection_job, created = collection_job_crud.create_or_get_in_flight(
             CollectionJobCreate(
                 action_type=CollectionActionType.CREATE,
                 project_id=current_user.project_.id,
                 status=CollectionJobStatus.PENDING,
+                name=request.name,
                 docs_num=len(unique_documents),
                 documents=[str(doc_id) for doc_id in unique_documents],
             )
         )
 
-        create_service.start_job(
-            db=session,
-            request=request,
-            collection_job_id=collection_job.id,
-            project_id=current_user.project_.id,
-            organization_id=current_user.organization_.id,
-        )
+        if created:
+            try:
+                create_service.start_job(
+                    db=session,
+                    request=request,
+                    collection_job_id=collection_job.id,
+                    project_id=current_user.project_.id,
+                    organization_id=current_user.organization_.id,
+                )
+            except Exception as err:
+                # A PENDING job that never reached the queue would hold its name forever.
+                collection_job_crud.update(
+                    collection_job.id,
+                    CollectionJobUpdate(
+                        status=CollectionJobStatus.FAILED,
+                        error_message=f"Failed to enqueue collection job: {err}",
+                    ),
+                )
+                raise
 
         return APIResponse[CollectionJobImmediatePublic].success_response(
             CollectionJobImmediatePublic.model_validate(collection_job),
