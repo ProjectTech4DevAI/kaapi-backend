@@ -104,6 +104,9 @@ def _google_gcp_credential(
 # Re-poll cadence for a stage's provider batch, mirroring the assessment cron interval.
 POLL_COUNTDOWN_SECONDS = settings.CRON_INTERVAL_MINUTES * 60
 
+# Row error when a provider batch returns neither an output nor an error line for a row.
+MISSING_RESULT_ERROR = "No result returned by the provider"
+
 
 class PipelineStage(StrEnum):
     """Stage names of the API-client pipeline; they key the config, the run state and the result."""
@@ -1128,6 +1131,10 @@ def run_batch_stage(
             error = out.get("error")
             if error:
                 stage_errors[str(idx)] = error
+        # A row absent from both the output and the error file would otherwise look clean.
+        for idx in _row_subset(bag, stage, kind, execution.total_items):
+            if idx not in parsed:
+                stage_errors[str(idx)] = MISSING_RESULT_ERROR
         bag.setdefault("stage_errors", {})[stage] = stage_errors
 
         bag.setdefault("stage_output_urls", {})[stage] = batch_job.raw_output_url
