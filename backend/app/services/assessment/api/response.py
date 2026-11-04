@@ -9,7 +9,8 @@ from functools import partial
 from http import HTTPStatus
 from typing import Any, cast
 
-from sqlmodel import Session
+from gevent import Timeout
+from sqlmodel import Session, col, select
 
 from app.core.db import engine
 from app.crud.assessment import api
@@ -233,7 +234,12 @@ def _finish(
 def run_response_assessment(*, execution_id: int) -> None:
     """Assess one row, record the run and deliver the result or the failure by callback."""
     with Session(engine) as session:
-        execution = session.get(AssessmentRun, execution_id)
+        # Row lock claims the run: a redelivered task skips one another worker still holds.
+        execution = session.exec(
+            select(AssessmentRun)
+            .where(col(AssessmentRun.id) == execution_id)
+            .with_for_update(skip_locked=True)
+        ).first()
         assessment = (
             session.get(Assessment, execution.assessment_id) if execution else None
         )
@@ -259,7 +265,7 @@ def run_response_assessment(*, execution_id: int) -> None:
                 state=state,
                 blob=blob,
             )
-        except Exception as exc:
+        except (Exception, Timeout) as exc:  # gevent's Timeout is a BaseException
             failure = str(exc)
 
         _finish(session, assessment, execution, state, result, failure)

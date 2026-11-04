@@ -25,7 +25,6 @@ shape** — you do not pass a mode flag.
 {
   "config": { "id": "3f9b2c10-0000-4a11-8c22-1a2b3c4d5e6f", "version": 1 },
   "input": {
-    "query": "Grade the answer sheet for roll number {roll_number}, student {student_name}.",
     "data": [
       {
         "roll_number": "1",
@@ -50,8 +49,7 @@ shape** — you do not pass a mode flag.
   * `id` (UUID, required) — the config id.
   * `version` (int ≥ 1, required) — the config version. Must reference a config tagged `ASSESSMENT`.
 * `input` (required) — one of two shapes; the shape selects the method:
-  * **BATCH** — `{ "query": "<template>", "data": [ {<column>: <value>}, ... ] }`
-    * `query` (required, non-empty) — a template with `{column}` placeholders substituted per row.
+  * **BATCH** — `{ "data": [ {<column>: <value>}, ... ] }`
     * `data` (required, ≥ 1 row) — submission rows. Each row is a flat `column -> string` map. The
       config's `input_schema` is **mandatory** and defines every column: its `type` (`text` / `image` /
       `pdf`, with an attachment `format`) and `strict` (default `false`). Every row is validated
@@ -139,8 +137,8 @@ On completion the platform POSTs this payload to `callback_url`:
         a raw string for free-text output, or `null` for a gated/failed row.
       * `output.pre_filter` — per-item `topic_relevance` / `duplicate_detection` verdicts, each
         `{ "verdict": bool, "reasoning": str, "error": str | null }` or `null` if that pre-filter was not
-        configured. `error` is set when the pre-filter call itself failed; the row then fails open
-        (`verdict: true`) and the assessment still runs.
+        configured. A failed pre-filter call fails open (`verdict: true`) and the assessment still
+        runs; RESPONSE reports that failure in `error`, BATCH leaves it `null`.
       * `error` — a per-row error string, or `null`.
   * **RESPONSE** — a single item object with the same `output` / `error` shape. `data.status` is
     `COMPLETED`, `COMPLETED_WITH_ERRORS` (a pre-filter call failed but the assessment ran) or `FAILED`. If the run cannot

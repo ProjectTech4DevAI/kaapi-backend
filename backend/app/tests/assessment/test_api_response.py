@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from gevent import Timeout
 
 from app.crud.assessment import api
 from app.models.assessment import AssessmentMethod, AssessmentStatus
@@ -241,6 +242,20 @@ class TestRunResponseAssessment:
         assert execution.execution["error"] == "assessment: kaboom"
         assert call["result"] is None
         assert call["failure_message"] == "kaboom"
+
+    def test_gevent_timeout_is_a_failure_with_a_callback(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        parent, execution = _seed_response(db, auth, _blob())
+
+        def time_out(stage):
+            raise Timeout(600)
+
+        (call,) = _run(db, execution.id, time_out)
+
+        db.refresh(parent)
+        assert parent.status == AssessmentStatus.FAILED
+        assert execution.error_message == "assessment: 600 seconds"
+        assert call["result"] is None
 
     def test_missing_config_version_fails_before_any_stage(self, db) -> None:
         auth = get_user_test_auth_context(db)
