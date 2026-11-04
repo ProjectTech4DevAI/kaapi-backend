@@ -1,21 +1,28 @@
 """Celery task definitions, split across two priority queues.
 
-`default` (every task below except the two fast-eval ones), ordered by the
+`default` (every task below except the `evaluations` ones), ordered by the
 per-task `priority`:
 
     9  LLM call + LLM chain (run_llm_job, run_llm_chain_job, run_response_job,
        run_guardrails_job, run_chatbot_session_message)
     6  Prompt improvement + iteration graph (run_prompt_improvement,
        run_evaluation_iteration_graph_step)
-    2  Everything else (doctransform, collections, STT/TTS evaluation, assessment)
+    2  Everything else (doctransform, collections, assessment)
     1  Notifications (send_eval_completion_notification)
 
-`evaluations` (priority 9, top band of this queue; later eval tasks pick lower
-bands): run_evaluation_fast_chunk and
-run_evaluation_fast_aggregate only. A fast eval fans out into many chunk tasks
-at once; priority only reorders messages still waiting in a queue, so on a
-shared queue that burst occupies every worker slot and delays priority-9 LLM
-jobs. A separate queue with its own worker pool makes the isolation physical.
+`evaluations`, ordered the same way:
+
+    9  Fast evaluation (run_evaluation_fast_chunk, run_evaluation_fast_aggregate)
+    2  STT evaluation (run_stt_batch_submission, run_stt_metric_computation) and
+       TTS evaluation (run_tts_batch_submission, run_tts_sync_generation,
+       run_tts_result_processing)
+
+A fast eval fans out into many chunk tasks at once, and STT/TTS evaluation
+holds worker slots for long stretches (synthesizing every row, downloading and
+uploading every batch result, computing metrics over a whole run); priority
+only reorders messages still waiting in a queue, so on a shared queue that work
+occupies every worker slot and delays priority-9 LLM jobs. A separate queue
+with its own worker pool makes the isolation physical.
 
 Both queues are declared with `x-max-priority=10`. Higher priority drains first;
 within the same priority, delivery is FIFO.
@@ -288,7 +295,7 @@ def run_prompt_improvement(self, project_id: int, job_id: str, trace_id: str, **
     )
 
 
-@celery_app.task(bind=True, queue="default", priority=2)
+@celery_app.task(bind=True, queue=EVALUATIONS_QUEUE, priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_stt_batch_submission")
 def run_stt_batch_submission(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
@@ -308,7 +315,7 @@ def run_stt_batch_submission(
     )
 
 
-@celery_app.task(bind=True, queue="default", priority=2)
+@celery_app.task(bind=True, queue=EVALUATIONS_QUEUE, priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_stt_metric_computation")
 def run_stt_metric_computation(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
@@ -328,7 +335,7 @@ def run_stt_metric_computation(
     )
 
 
-@celery_app.task(bind=True, queue="default", priority=2)
+@celery_app.task(bind=True, queue=EVALUATIONS_QUEUE, priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_batch_submission")
 def run_tts_batch_submission(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
@@ -421,7 +428,7 @@ def run_assessment_api_batch(
     return result
 
 
-@celery_app.task(bind=True, queue="default", priority=2)
+@celery_app.task(bind=True, queue=EVALUATIONS_QUEUE, priority=2)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_result_processing")
 def run_tts_result_processing(
     self, project_id: int, job_id: str, trace_id: str, **kwargs
@@ -434,6 +441,28 @@ def run_tts_result_processing(
     return _run_with_otel_parent(
         self,
         lambda: execute_tts_result_processing(
+            project_id=project_id,
+            job_id=job_id,
+            task_id=current_task.request.id,
+            task_instance=self,
+            **kwargs,
+        ),
+    )
+
+
+@celery_app.task(bind=True, queue=EVALUATIONS_QUEUE, priority=2)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_tts_sync_generation")
+def run_tts_sync_generation(
+    self, project_id: int, job_id: str, trace_id: str, **kwargs
+):
+    from app.services.tts_evaluations.sync_generation import (
+        execute_tts_sync_generation,
+    )
+
+    _set_trace(trace_id)
+    return _run_with_otel_parent(
+        self,
+        lambda: execute_tts_sync_generation(
             project_id=project_id,
             job_id=job_id,
             task_id=current_task.request.id,

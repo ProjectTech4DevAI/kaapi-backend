@@ -1,8 +1,11 @@
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 from asgi_correlation_id import correlation_id
+from celery import Task
 
+from app.celery.celery_app import EVALUATIONS_QUEUE
 from app.celery.tasks import job_execution
 from app.celery.utils import start_tts_sync_generation
 
@@ -62,3 +65,18 @@ def test_run_tts_sync_generation_forwards_kwargs_and_trace() -> None:
     }
     assert {k: seen[k] for k in SYNC_KWARGS} == SYNC_KWARGS
     assert seen["correlation_id"] == "trace-abc"
+
+
+@pytest.mark.parametrize(
+    "task",
+    [
+        job_execution.run_stt_batch_submission,
+        job_execution.run_stt_metric_computation,
+        job_execution.run_tts_batch_submission,
+        job_execution.run_tts_result_processing,
+        job_execution.run_tts_sync_generation,
+    ],
+    ids=lambda task: task.name.rsplit(".", 1)[-1],
+)
+def test_stt_tts_tasks_route_to_evaluations_queue(task: Task) -> None:
+    assert (task.queue, task.priority) == (EVALUATIONS_QUEUE, 2)
