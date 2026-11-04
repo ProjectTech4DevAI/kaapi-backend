@@ -4,7 +4,7 @@
 per-task `priority`:
 
     9  LLM call + LLM chain (run_llm_job, run_llm_chain_job, run_response_job,
-       run_guardrails_job)
+       run_guardrails_job, run_chatbot_session_message)
     6  Prompt improvement + iteration graph (run_prompt_improvement,
        run_evaluation_iteration_graph_step)
     2  Everything else (doctransform, collections, STT/TTS evaluation, assessment)
@@ -24,6 +24,7 @@ within the same priority, delivery is FIFO.
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, TypeVar
+from uuid import UUID
 
 from asgi_correlation_id import correlation_id
 from celery import Task, current_task
@@ -576,3 +577,29 @@ def send_eval_completion_callback(
     )
 
     return execute_eval_completion_callback(evaluation_id=evaluation_id)
+
+
+@celery_app.task(bind=True, queue="default", priority=9)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_chatbot_session_message")
+def run_chatbot_session_message(
+    self: Task,
+    session_id: str,
+    organization_id: int,
+    project_id: int,
+    webhook_url: str,
+    trace_id: str,
+) -> None:
+    """Idempotency: the service skips the turn if the transcript already ends
+    on an assistant reply, so a redelivery doesn't re-bill or double-reply."""
+    from app.services.chatbot.session import process_chatbot_session_message
+
+    _set_trace(trace_id)
+    return _run_with_otel_parent(
+        self,
+        lambda: process_chatbot_session_message(
+            session_id=UUID(session_id),
+            organization_id=organization_id,
+            project_id=project_id,
+            webhook_url=webhook_url,
+        ),
+    )
