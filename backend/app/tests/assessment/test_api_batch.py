@@ -27,6 +27,7 @@ from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.config.config import ConfigTag
 from app.services.assessment.api import batch as batch_service
 from app.services.assessment.api.batch import (
+    MISSING_RESULT_ERROR,
     PipelineStage,
     StageKind,
     _build_batch_provider,
@@ -1522,6 +1523,71 @@ class TestRunBatchStageProcessingBranches:
             organization_id=auth.organization_id,
             project_id=auth.project_id,
         )
+
+    def test_row_without_a_provider_result_gets_an_error(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        raw = _blob_dict(topic_relevance=True)
+        raw.pop("assessment")
+        blob = AssessmentConfigBlob.model_validate(raw)
+        config = create_test_config(
+            db,
+            project_id=auth.project_id,
+            name=f"assess-{random_lower_string()}",
+            config_blob=blob,
+            tag=ConfigTag.ASSESSMENT,
+        )
+        pipeline = build_pipeline(blob)
+        job = _make_batch_job(
+            db, org_id=auth.organization_id, project_id=auth.project_id
+        )
+        bag = _bag_for(pipeline, total=2, callback="")
+        bag["stage_status"] = StageStatus.PROCESSING.value
+        bag["stage_batches"] = {"topic_relevance": job.id}
+        assessment, execution = _seed_assessment(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            config_id=config.id,
+            bag=bag,
+            data=[{"a": "one"}, {"a": "two"}],
+            status=AssessmentStatus.PROCESSING,
+        )
+        only_row_0 = [
+            {
+                "custom_id": "row_0",
+                "response": {
+                    "status_code": 200,
+                    "body": {
+                        "output_text": json.dumps({"verdict": True, "reasoning": ""})
+                    },
+                },
+            }
+        ]
+        with (
+            patch(
+                "app.services.assessment.api.batch.Session",
+                lambda _e: _SessionCtx(db),
+            ),
+            patch("app.services.assessment.api.batch._build_batch_provider"),
+            patch(
+                "app.services.assessment.api.batch._poll_outcome",
+                return_value=("completed", only_row_0),
+            ),
+            patch("app.services.assessment.api.result_files.record_stage_dump"),
+            patch("app.services.assessment.api.result_files.finalize_result_files"),
+        ):
+            assert self._tick(db, execution, auth) == {"requeue": False}
+
+        db.refresh(execution)
+        db.refresh(assessment)
+        assert execution.execution["stage_errors"]["topic_relevance"] == {
+            "1": MISSING_RESULT_ERROR
+        }
+        assert assessment.status == AssessmentStatus.COMPLETED_WITH_ERRORS
+        result = build_result(session=db, assessment=assessment, execution=execution)
+        assert result.items[0].error is None
+        assert result.items[1].error == MISSING_RESULT_ERROR
+        assert result.counts.errors == 1
 
     def test_poll_processing_requeues(self, db) -> None:
         auth = get_user_test_auth_context(db)
