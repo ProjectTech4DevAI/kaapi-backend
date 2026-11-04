@@ -1603,7 +1603,7 @@ class TestRunBatchStageFailurePaths:
                 lambda _e: _SessionCtx(db),
             ),
             patch(
-                "app.services.assessment.api.batch.load_config_blob",
+                "app.services.assessment.api.batch.api.get_config_blob",
                 side_effect=HTTPException(
                     status_code=404, detail="config version deleted"
                 ),

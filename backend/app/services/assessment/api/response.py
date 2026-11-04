@@ -32,7 +32,6 @@ from app.services.assessment.api.batch import (
     StageKind,
     build_stage_requests,
     column_kinds,
-    load_config_blob,
     parse_one,
     parse_verdict,
     stage_params,
@@ -250,7 +249,9 @@ def run_response_assessment(*, execution_id: int) -> None:
         result: AssessmentResult | None = None
         failure: str | None = None
         try:
-            blob = load_config_blob(session, execution, assessment.project_id)
+            blob = api.get_config_blob(
+                session=session, execution=execution, project_id=assessment.project_id
+            )
             result = _assess(
                 session=session,
                 assessment=assessment,
