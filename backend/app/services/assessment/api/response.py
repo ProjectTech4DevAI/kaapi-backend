@@ -129,10 +129,6 @@ def _begin_stage(
     api.save_execution_state(session=session, execution=execution, state=state)
 
 
-def _record_error(state: BatchRunState, stage: str, error: str) -> None:
-    state.setdefault("stage_errors", {})[stage] = {ROW: error}
-
-
 def _assess(
     *,
     session: Session,
@@ -168,7 +164,7 @@ def _assess(
             "rejected": int(not verdict["verdict"]),
         }
         if out["error"]:
-            _record_error(state, stage, out["error"])
+            state.setdefault("stage_errors", {})[stage] = {ROW: out["error"]}
         elif step["kind"] == StageKind.GATE and not verdict["verdict"]:
             state["gate_passed"][0] = False
         state["stage_status"] = StageStatus.COMPLETED.value
@@ -180,7 +176,9 @@ def _assess(
     _begin_stage(session, execution, state, PipelineStage.ASSESSMENT.value)
     out = run_stage(stage=PipelineStage.ASSESSMENT.value)
     if out["error"]:
-        _record_error(state, PipelineStage.ASSESSMENT.value, out["error"])
+        state.setdefault("stage_errors", {})[PipelineStage.ASSESSMENT.value] = {
+            ROW: out["error"]
+        }
     state["stage_status"] = StageStatus.COMPLETED.value
     return AssessmentResult(
         output=AssessmentOutput(
