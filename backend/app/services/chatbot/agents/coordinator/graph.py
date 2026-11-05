@@ -6,9 +6,7 @@ No LangGraph here — a single model call doesn't need a graph.
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import NamedTuple
 
-import anthropic
 from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
@@ -19,14 +17,18 @@ from app.services.chatbot.agents.coordinator.prompts import (
     ROUTES_TEMPLATE,
     ROUTING_INSTRUCTION,
 )
-from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
-from app.services.chatbot.history import summarize_if_needed, to_langchain_messages
-from app.services.chatbot.types import ChatbotMessageDict
+from app.services.chatbot.exceptions import ChatbotProviderError
+from app.services.chatbot.history import (
+    summarize_if_needed,
+    to_langchain_messages,
+    validate_turn_input,
+)
+from app.services.chatbot.provider_errors import CHAT_MODEL_ERRORS, to_provider_error
+from app.services.chatbot.types import ChatbotMessageDict, CoordinatorRoute
 from app.services.chatbot.utils import (
     STRUCTURED_OUTPUT_METHOD,
     ChatbotModelSettings,
     get_chat_model,
-    to_provider_error,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,12 +43,6 @@ class RouteDecision(BaseModel):
         default=None,
         description="Question to ask the user when intent is null; otherwise null.",
     )
-
-
-class CoordinatorRoute(NamedTuple):
-    intent: str
-    description: str | None
-    target_node_id: str
 
 
 @dataclass(frozen=True)
@@ -121,11 +117,7 @@ async def run_coordinator_turn(
     model_settings: ChatbotModelSettings,
 ) -> CoordinatorDecision:
     """Classify the latest user message against `routes`, or return a clarifying question."""
-    if user_message is None and history:
-        raise ChatbotInputError(
-            "[KAAPI] `message` is required once `history` is non-empty; omit it only "
-            "on the first call to get the opening greeting."
-        )
+    validate_turn_input(history=history, user_message=user_message)
 
     messages = to_langchain_messages(
         system_prompt=_build_routing_prompt(system_prompt=system_prompt, routes=routes),
@@ -141,7 +133,7 @@ async def run_coordinator_turn(
             messages,
             history_token_limit=model_settings.history_token_limit,
         )
-    except (anthropic.APIConnectionError, anthropic.APIStatusError, ValueError) as e:
+    except CHAT_MODEL_ERRORS as e:
         raise to_provider_error(e, model=model_settings.model) from e
 
     # The opening turn has only the synthetic kickoff message, so it must never hand off.

@@ -4,7 +4,6 @@ import asyncio
 import json
 from typing import Any
 
-import anthropic
 from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -27,20 +26,21 @@ from app.services.chatbot.agents.onboarding.types import (
     FieldExtraction,
     OnboardingState,
 )
-from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
+from app.services.chatbot.exceptions import ChatbotProviderError
 from app.services.chatbot.history import (
     extract_final_reply,
     has_user_turn,
     insert_after_leading_system,
     summarize_if_needed,
     to_langchain_messages,
+    validate_turn_input,
 )
+from app.services.chatbot.provider_errors import CHAT_MODEL_ERRORS, to_provider_error
 from app.services.chatbot.types import ChatbotMessageDict, ChatbotTurnResult
 from app.services.chatbot.utils import (
     STRUCTURED_OUTPUT_METHOD,
     ChatbotModelSettings,
     get_chat_model,
-    to_provider_error,
 )
 
 ExtractionModel = Runnable[LanguageModelInput, dict | BaseModel]
@@ -181,11 +181,7 @@ async def run_chatbot_turn(
     collected_fields: dict[str, Any] | None = None,
 ) -> ChatbotTurnResult:
     """Run one stateless turn: update the collected fields, then reply."""
-    if user_message is None and history:
-        raise ChatbotInputError(
-            "[KAAPI] `message` is required once `history` is non-empty; omit it only "
-            "on the first call to get the opening greeting."
-        )
+    validate_turn_input(history=history, user_message=user_message)
 
     messages = to_langchain_messages(
         system_prompt=system_prompt, history=history, user_message=user_message
@@ -206,7 +202,7 @@ async def run_chatbot_turn(
         )
         # ChatAnthropic.invoke is sync; keep it off the event loop.
         result = await asyncio.to_thread(graph.invoke, initial_state)
-    except (anthropic.APIConnectionError, anthropic.APIStatusError, ValueError) as e:
+    except CHAT_MODEL_ERRORS as e:
         raise to_provider_error(e, model=model_settings.model) from e
 
     return ChatbotTurnResult(
