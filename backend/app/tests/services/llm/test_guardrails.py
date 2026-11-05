@@ -542,6 +542,32 @@ class TestApplyGuardrails:
             {"type": "pii_remover", "on_fail": "exception", "stage": "input"},
         ]
 
+    def test_content_safety_inline_spec_forwards_params(
+        self, mock_fetch, mock_run
+    ) -> None:
+        mock_run.return_value = _PASS_RESPONSE
+
+        _apply(
+            [
+                InlineValidator(
+                    type="content_safety",
+                    on_fail="rephrase",
+                    threshold=0.5,
+                    fallback_message="Please rephrase without abusive language.",
+                )
+            ]
+        )
+
+        assert mock_run.call_args.args[1] == [
+            {
+                "type": "content_safety",
+                "on_fail": "rephrase",
+                "threshold": 0.5,
+                "fallback_message": "Please rephrase without abusive language.",
+                "stage": "input",
+            }
+        ]
+
     def test_output_path_sets_output_stage(self, mock_fetch, mock_run) -> None:
         ref, row = _ref()
         mock_fetch.return_value = ([], [row])
