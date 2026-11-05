@@ -272,6 +272,9 @@ class TestSentryBodySizeMetric:
             def is_active(self) -> bool:
                 return True
 
+            def get_integration(self, _: object) -> None:
+                return None
+
         monkeypatch.setattr(sentry_sdk, "get_client", lambda: ActiveClient())
         monkeypatch.setattr(
             sentry_sdk.metrics,
@@ -306,6 +309,9 @@ class TestSentryBodySizeMetric:
         class InactiveClient:
             def is_active(self) -> bool:
                 return False
+
+            def get_integration(self, _: object) -> None:
+                return None
 
         monkeypatch.setattr(sentry_sdk, "get_client", lambda: InactiveClient())
         monkeypatch.setattr(

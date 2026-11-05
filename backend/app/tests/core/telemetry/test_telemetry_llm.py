@@ -101,7 +101,7 @@ class TestGenAiSpanAttributes:
         telemetry.set_gen_ai_response_attributes(span, response=response)
         set_calls = {c.args[0]: c.args[1] for c in span.set_attribute.call_args_list}
         assert set_calls["gen_ai.usage.total_tokens"] == 3
-        assert set_calls["gen_ai.usage.output_tokens.reasoning"] == 4
+        assert set_calls["gen_ai.usage.reasoning.output_tokens"] == 4
         assert set_calls["gen_ai.response.model"] == "gpt-4o-2024"
 
     def test_response_attributes_without_usage(self) -> None:

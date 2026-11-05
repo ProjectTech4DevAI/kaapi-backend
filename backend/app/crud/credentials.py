@@ -2,10 +2,9 @@ import logging
 from typing import Any
 
 from sqlalchemy import delete
-from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from app.core.exception_handlers import HTTPException
+from fastapi import HTTPException
 from app.core.providers import parse_provider_credentials, validate_provider
 from app.core.security import decrypt_credentials, encrypt_credentials
 from app.core.util import now
@@ -39,29 +38,10 @@ def set_creds_for_org(
             credential=encrypted_credentials,
         )
         credential.inserted_at = now()
-        try:
-            session.add(credential)
-            session.commit()
-            session.refresh(credential)
-            created_credentials.append(credential)
-        except IntegrityError as e:
-            session.rollback()
-            logger.error(
-                f"[set_creds_for_org] Integrity error while adding credentials | organization_id {organization_id}, project_id {project_id}, provider {provider}: {str(e)}",
-                exc_info=True,
-            )
-            # Check if it's a duplicate constraint violation
-            if (
-                "uq_credential_org_project_provider" in str(e)
-                or "unique constraint" in str(e).lower()
-            ):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Credentials for provider '{provider}' already exist for this organization and project combination",
-                )
-            raise ValueError(
-                f"Error while adding credentials for provider {provider}: {str(e)}"
-            )
+        session.add(credential)
+        session.commit()
+        session.refresh(credential)
+        created_credentials.append(credential)
     logger.info(
         f"[set_creds_for_org] Successfully created credentials | organization_id {organization_id}, project_id {project_id}"
     )
@@ -179,7 +159,9 @@ def update_creds_for_org(
 ) -> list[Credential]:
     """Updates credentials for a specific provider of an organization."""
     if not creds_in.provider or not creds_in.credential:
-        raise ValueError("Provider and credential must be provided")
+        raise HTTPException(
+            status_code=400, detail="Provider and credential must be provided"
+        )
 
     provider = creds_in.provider.value
     credential_data = creds_in.credential_payload()
@@ -272,12 +254,11 @@ def remove_provider_credential(
     rows_deleted = result.rowcount
     if rows_deleted == 0:
         session.rollback()
-        logger.error(
-            f"[remove_provider_credential] Failed to delete credential | organization_id {org_id}, provider {provider}, project_id {project_id}"
+        logger.warning(
+            f"[remove_provider_credential] Credential not found | organization_id {org_id}, provider {provider}, project_id {project_id}"
         )
         raise HTTPException(
-            status_code=500,
-            detail="Failed to delete provider credential",
+            status_code=404, detail=f"No credentials found for provider '{provider}'."
         )
     session.commit()
     logger.info(
@@ -309,6 +290,16 @@ def remove_creds_for_org(*, session: Session, org_id: int, project_id: int) -> N
     result = session.exec(statement)
 
     rows_deleted = result.rowcount
+
+    if rows_deleted == 0:
+        session.rollback()
+        logger.warning(
+            f"[remove_creds_for_org] No credentials to delete | organization_id {org_id}, project_id {project_id}"
+        )
+        raise HTTPException(
+            status_code=404,
+            detail="No credentials found for this organization and project.",
+        )
 
     if rows_deleted < expected_count:
         logger.error(
