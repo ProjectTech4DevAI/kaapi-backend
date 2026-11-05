@@ -13,6 +13,9 @@ DEFAULT_THINKING: dict[str, Any] = {"type": "adaptive"}
 DEFAULT_HISTORY_TOKEN_LIMIT = 4000
 FLOW_KEEP_RECENT_MESSAGES = 6
 
+# Forced tool use is rejected with thinking on, and Opus 5.5 can't disable thinking.
+STRUCTURED_OUTPUT_METHOD = "json_schema"
+
 
 def default_thinking() -> dict[str, Any]:
     return dict(DEFAULT_THINKING)

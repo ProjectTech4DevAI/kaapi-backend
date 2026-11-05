@@ -10,6 +10,7 @@ from app.services.chatbot.flow import resolve_entry_node, validate_flow_for_publ
 from app.tests.utils.chatbot import (
     ONBOARDING_NODE_ID,
     add_test_config_version,
+    build_coordinator_flow,
     build_flow_edge,
     build_flow_node,
     build_onboarding_node,
@@ -283,3 +284,19 @@ class TestValidateFlowForPublish:
         assert "at most 1 output node allowed (found 2)" in message
         assert "Anthropic credentials are not configured for this project" in message
         assert message.count("[KAAPI]") == 1
+
+    def test_intents_differing_only_by_case_are_duplicates(
+        self, db: Session, config: Config
+    ) -> None:
+        nodes, edges = build_coordinator_flow(
+            config_id=config.id, routes={"Enroll": "first", "enroll": "second"}
+        )
+
+        with pytest.raises(ChatbotFlowValidationError, match="duplicate intent"):
+            validate_flow_for_publish(
+                session=db,
+                organization_id=_organization_id(db, config),
+                project_id=config.project_id,
+                nodes=[ChatbotFlowNode.model_validate(n) for n in nodes],
+                edges=[ChatbotFlowEdge.model_validate(e) for e in edges],
+            )

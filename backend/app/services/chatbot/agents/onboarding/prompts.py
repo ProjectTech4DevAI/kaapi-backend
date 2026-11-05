@@ -1,5 +1,3 @@
-EXTRACTION_METHOD = "json_schema"
-
 EXTRACTION_INSTRUCTION = (
     "You extract data from a chatbot conversation. You do not talk to the user.\n"
     "The admin flow prompt below defines the goal, the fields to collect, and the rules.\n"
