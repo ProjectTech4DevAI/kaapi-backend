@@ -12,18 +12,15 @@ from app.core.batch import (
     start_batch_job,
 )
 from app.models.batch_job import BatchJobType
-from app.crud.tts_evaluations.result import (
-    get_pending_results_for_run,
-    update_tts_result,
-)
+from app.crud.tts_evaluations.result import fail_pending_tts_results
 from app.crud.tts_evaluations.run import update_tts_run
 from app.models import EvaluationRun
-from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
 from app.services.tts_evaluations.constants import (
     DEFAULT_STYLE_PROMPT,
     DEFAULT_TTS_MODEL,
     DEFAULT_VOICE_NAME,
+    DEPRECATED_GEMINI_TTS_MODELS,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,13 +84,16 @@ def start_tts_evaluation_batch(
 
         texts = [r.sample_text for r in model_results]
         keys = [str(r.id) for r in model_results]
+        # One batch carries one voice; rows of a model share it (NULL on pre-voice rows).
+        voice_name = model_results[0].voice or DEFAULT_VOICE_NAME
 
         # Create JSONL batch requests for TTS
         jsonl_data = create_tts_batch_requests(
             texts=texts,
-            voice_name=DEFAULT_VOICE_NAME,
+            voice_name=voice_name,
             style_prompt=DEFAULT_STYLE_PROMPT,
             keys=keys,
+            legacy_prompting=model in DEPRECATED_GEMINI_TTS_MODELS,
         )
 
         model_path = f"models/{model}"
@@ -114,7 +114,7 @@ def start_tts_evaluation_batch(
                     "model": model,
                     "tts_provider": model,
                     "evaluation_run_id": run.id,
-                    "voice_name": DEFAULT_VOICE_NAME,
+                    "voice_name": voice_name,
                     "style_prompt": DEFAULT_STYLE_PROMPT,
                 },
             )
@@ -129,7 +129,7 @@ def start_tts_evaluation_batch(
 
             logger.info(
                 f"[start_tts_evaluation_batch] Batch job created | "
-                f"run_id: {run.id}, model: {model}, "
+                f"run_id: {run.id}, model: {model}, voice: {voice_name}, "
                 f"batch_job_id: {batch_job.id}"
             )
 
@@ -138,17 +138,12 @@ def start_tts_evaluation_batch(
                 f"[start_tts_evaluation_batch] Failed to submit batch | "
                 f"model: {model}, error: {str(e)}"
             )
-            pending = get_pending_results_for_run(
-                session=session, run_id=run.id, provider=model
+            fail_pending_tts_results(
+                session=session,
+                run_id=run.id,
+                provider=model,
+                error_message=f"Batch submission failed for {model}: {str(e)}",
             )
-            for result in pending:
-                update_tts_result(
-                    session=session,
-                    result_id=result.id,
-                    status=JobStatus.FAILED.value,
-                    error_message=f"Batch submission failed for {model}: {str(e)}",
-                )
-            session.commit()
 
     if not batch_jobs:
         raise Exception("Batch submission failed for all models")

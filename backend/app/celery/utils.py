@@ -270,6 +270,24 @@ def start_tts_result_processing(
     return task_id
 
 
+def start_tts_sync_generation(
+    project_id: int, job_id: str, trace_id: str = "N/A", **kwargs: Any
+) -> str:
+    from app.celery.tasks.job_execution import run_tts_sync_generation
+
+    task_id = _enqueue_with_trace_context(
+        run_tts_sync_generation,
+        project_id=project_id,
+        job_id=job_id,
+        trace_id=trace_id,
+        **kwargs,
+    )
+    logger.info(
+        f"[start_tts_sync_generation] Started job {job_id} with Celery task {task_id}"
+    )
+    return task_id
+
+
 def start_fast_evaluation_chunk(
     eval_run_id: int, chunk_index: int, trace_id: str = "N/A"
 ) -> str:

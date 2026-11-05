@@ -1,7 +1,5 @@
 import base64
-import io
 import logging
-import wave
 from typing import Any
 
 from google import genai
@@ -18,6 +16,7 @@ from app.core.audio_utils import (
     convert_pcm_to_mp3,
     convert_pcm_to_ogg,
     pcm_to_wav,
+    strip_wav_header,
 )
 from app.models.llm import (
     ImageContent,
@@ -413,12 +412,11 @@ class GoogleAIProvider(BaseProvider):
             )
             return None, error_message
 
-        raw_audio_bytes = base64.b64decode(interaction.output_audio.data)
-        # Preview TTS models return headerless 24 kHz PCM (and reject audio/l16),
-        # while 3.8+ return a full WAV; normalise to PCM for pcm_to_wav / convert_pcm_to_*.
-        if raw_audio_bytes.startswith(b"RIFF"):
-            with wave.open(io.BytesIO(raw_audio_bytes), "rb") as wav_file:
-                raw_audio_bytes = wav_file.readframes(wav_file.getnframes())
+        # Preview TTS models reject audio/l16, so the WAV that 3.8+ returns is
+        # unwrapped here instead of requested as PCM.
+        raw_audio_bytes = strip_wav_header(
+            base64.b64decode(interaction.output_audio.data)
+        )
 
         actual_format = "wav"
         if response_format == "mp3":
