@@ -62,7 +62,7 @@ jobs:
 
             const prompt = `You are rewriting the body of a GitHub pull request.
 
-            Follow the skill below exactly. Keep the repository PR template's sections (## Issue, ## Checklist, ## Notes) and fill them from the current body; replace the template's ## Summary with the skill's three sections (## Summary, ## Evidence, ## Merge Danger) in that order, between ## Issue and ## Checklist. Keep any "Closes ..." issue reference verbatim; if none, write "Closes #PLEASE_TYPE_ISSUE_NUMBER". Preserve checklist [x]/[ ] states from the current body. Do not invent evidence: only cite tests, numbers or screenshots present in the current body or diff. Output ONLY the markdown body.
+            Follow the skill below exactly. Keep the repository PR template's sections (## Issue, ## Checklist, ## Notes) and fill them from the current body; replace the template's ## Summary with the skill's four sections (## What Changed, ## Summary, ## Evidence, ## Merge Danger) in that order, between ## Issue and ## Checklist. Keep any "Closes ..." issue reference verbatim; if none, write "Closes #PLEASE_TYPE_ISSUE_NUMBER". Preserve checklist [x]/[ ] states from the current body. Do not invent evidence: only cite tests, numbers or screenshots present in the current body or diff. Output ONLY the markdown body.
 
             <skill>
             ${skill}
