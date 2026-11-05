@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
@@ -328,12 +335,24 @@ class TTSModelVoice(BaseModel):
         return self
 
 
+def _model_item_from_name(item: object) -> object:
+    """Accept a plain model name (the original request shape) as `{model}`."""
+    return {"model": item} if isinstance(item, str) else item
+
+
+# The schema advertises both item shapes so plain-name clients stay valid in OpenAPI.
+TTSModelItem = Annotated[
+    TTSModelVoice,
+    BeforeValidator(_model_item_from_name, json_schema_input_type=str | TTSModelVoice),
+]
+
+
 class TTSEvaluationRunCreate(BaseModel):
     """Request model for starting a TTS evaluation run."""
 
     run_name: str = Field(..., description="Name for this evaluation run", min_length=1)
     dataset_id: int = Field(..., description="ID of the TTS dataset to evaluate")
-    models: list[TTSModelVoice] = Field(
+    models: list[TTSModelItem] = Field(
         default_factory=lambda: [TTSModelVoice(model=DEFAULT_TTS_MODEL)],
         description="TTS models to use; each item is a model name or "
         "{model, voice}. Voices are resolved to the model's default when omitted.",
@@ -346,20 +365,6 @@ class TTSEvaluationRunCreate(BaseModel):
             ]
         },
     )
-
-    @field_validator("models", mode="before")
-    @classmethod
-    def normalize_models(cls, models: object) -> object:
-        """Accept plain model strings (the original request shape) as `{model}`."""
-        if not isinstance(models, list):
-            return models
-        normalized: list[object] = []
-        for item in models:
-            if isinstance(item, str):
-                normalized.append({"model": item})
-            else:
-                normalized.append(item)
-        return normalized
 
     @field_validator("models")
     @classmethod

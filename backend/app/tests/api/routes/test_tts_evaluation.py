@@ -12,7 +12,7 @@ from app.crud.tts_evaluations import create_tts_run
 from app.models import EvaluationDataset
 from app.models.job import JobStatus
 from app.models.stt_evaluation import EvaluationType
-from app.models.tts_evaluation import TTSResult
+from app.models.tts_evaluation import TTSEvaluationRunCreate, TTSResult
 from app.services.tts_evaluations.constants import DEPRECATED_GEMINI_TTS_MODELS
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.tts_evaluation import (
@@ -1712,3 +1712,13 @@ class TestTTSResultFeedback:
         )
 
         assert response.status_code == 401
+
+
+def test_run_create_schema_accepts_model_name_or_object() -> None:
+    # Plain names stay valid in OpenAPI so the API-diff gate sees no breaking change.
+    items = TTSEvaluationRunCreate.model_json_schema()["properties"]["models"]["items"]
+
+    assert items["anyOf"] == [
+        {"type": "string"},
+        {"$ref": "#/$defs/TTSModelVoice"},
+    ]
