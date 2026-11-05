@@ -113,6 +113,18 @@ def pcm_to_wav(
     return output.getvalue()
 
 
+def strip_wav_header(audio: bytes) -> bytes:
+    """Return the PCM frames of a WAV payload; non-WAV bytes are returned as-is.
+
+    Preview Gemini TTS models return headerless 24 kHz PCM while 3.8+ return a
+    full WAV, so callers normalise to PCM before `pcm_to_wav` / `convert_pcm_to_*`.
+    """
+    if not audio.startswith(b"RIFF"):
+        return audio
+    with wave.open(io.BytesIO(audio), "rb") as wav_file:
+        return wav_file.readframes(wav_file.getnframes())
+
+
 def calculate_duration(
     pcm_size: int,
     sample_rate: int = 24000,

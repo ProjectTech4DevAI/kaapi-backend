@@ -33,16 +33,18 @@ from app.crud.tts_evaluations.result import (
 )
 from app.models.job import JobStatus
 from app.models.llm.constants import BCP47_TO_ELEVENLABS_LANG
+from app.services.llm.mappers import voice_to_id
 from app.services.llm.providers.eleven_ai import ElevenlabsAIProvider
 from app.services.llm.providers.sarvam_ai import SarvamAIProvider
 from app.services.tts_evaluations.constants import (
+    DEFAULT_ELEVENLABS_VOICE,
     ELEVENLABS_TTS_MODELS,
-    ELEVENLABS_VOICE_ID,
     SARVAM_SPEAKER,
     SARVAM_TTS_MODELS,
     TTS_AUDIO_SUBDIRECTORY,
     TTS_SYNC_MAX_WORKERS,
 )
+from app.services.tts_evaluations.voices import default_voice_for_model
 
 logger = logging.getLogger(__name__)
 
@@ -60,14 +62,19 @@ class TTSResultFields(TypedDict, total=False):
 
 
 def synthesize_sarvam(
-    client: SarvamAI, text: str, model: str, language_code: str
+    client: SarvamAI,
+    text: str,
+    model: str,
+    language_code: str,
+    *,
+    voice: str = SARVAM_SPEAKER,
 ) -> bytes:
-    """Synthesize text with Sarvam; returns raw 24 kHz mono 16-bit PCM."""
+    """Synthesize text with Sarvam speaker `voice`; returns raw 24 kHz mono 16-bit PCM."""
     response = client.text_to_speech.convert(
         text=text,
         model=model,
         target_language_code=language_code,
-        speaker=SARVAM_SPEAKER,
+        speaker=voice,
         speech_sample_rate=TTS_SAMPLE_RATE,
     )
     if not response.audios:
@@ -83,11 +90,24 @@ def synthesize_sarvam(
 
 
 def synthesize_elevenlabs(
-    client: ElevenLabs, text: str, model: str, language_code: str
+    client: ElevenLabs,
+    text: str,
+    model: str,
+    language_code: str,
+    *,
+    voice: str = DEFAULT_ELEVENLABS_VOICE,
 ) -> bytes:
-    """Synthesize text with ElevenLabs; returns raw 24 kHz mono 16-bit PCM."""
+    """Synthesize text with the ElevenLabs voice named `voice`; returns raw 24 kHz mono 16-bit PCM.
+
+    Raises:
+        ValueError: If `voice` has no known ElevenLabs voice ID.
+    """
+    voice_id = voice_to_id(voice)
+    if not voice_id:
+        raise ValueError(f"Unsupported ElevenLabs voice '{voice}'")
+
     chunks = client.text_to_speech.convert(
-        voice_id=ELEVENLABS_VOICE_ID,
+        voice_id=voice_id,
         text=text,
         model_id=model,
         output_format=f"pcm_{TTS_SAMPLE_RATE}",
@@ -154,9 +174,11 @@ def execute_tts_sync_generation(
                 session=session, run_id=run_id, provider=model
             )
             # Plain tuples: the ORM rows detach when this session closes.
-            pending_rows: list[tuple[int, str]] = []
+            pending_rows: list[tuple[int, str, str]] = []
             for result in pending:
-                pending_rows.append((result.id, result.sample_text))
+                # NULL voice: row predates per-model voices and used the default.
+                voice = result.voice or default_voice_for_model(model)
+                pending_rows.append((result.id, result.sample_text, voice))
 
             credentials = get_provider_credential(
                 session=session,
@@ -177,13 +199,19 @@ def execute_tts_sync_generation(
         # keep the function local to use it easily with
         # internal threadpool exuector
 
-        def synthesize_and_upload(result_id: int, text: str) -> TTSResultFields:
+        def synthesize_and_upload(
+            result_id: int, text: str, voice: str
+        ) -> TTSResultFields:
             """Return `update_tts_result` fields; never raises, so one row can't stop the rest."""
             try:
                 if model in SARVAM_TTS_MODELS:
-                    pcm = synthesize_sarvam(client, text, model, language_code)
+                    pcm = synthesize_sarvam(
+                        client, text, model, language_code, voice=voice
+                    )
                 else:
-                    pcm = synthesize_elevenlabs(client, text, model, language_code)
+                    pcm = synthesize_elevenlabs(
+                        client, text, model, language_code, voice=voice
+                    )
                 wav = pcm_to_wav(pcm)
                 audio_url = upload_to_object_store(
                     storage=storage,
@@ -196,7 +224,7 @@ def execute_tts_sync_generation(
                 logger.warning(
                     f"[execute_tts_sync_generation] Synthesis failed | "
                     f"run_id={run_id}, model={model}, result_id={result_id}, "
-                    f"error={str(e)}"
+                    f"voice={voice}, error={str(e)}"
                 )
                 return {
                     "status": JobStatus.FAILED.value,
@@ -223,8 +251,8 @@ def execute_tts_sync_generation(
         executor = ThreadPoolExecutor(max_workers=TTS_SYNC_MAX_WORKERS)
         try:
             futures: dict[Future[TTSResultFields], int] = {}
-            for result_id, text in pending_rows:
-                future = executor.submit(synthesize_and_upload, result_id, text)
+            for result_id, text, voice in pending_rows:
+                future = executor.submit(synthesize_and_upload, result_id, text, voice)
                 futures[future] = result_id
 
             for future in as_completed(futures):

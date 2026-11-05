@@ -23,11 +23,87 @@ SUPPORTED_TTS_MODELS = GEMINI_TTS_MODELS + SYNC_TTS_MODELS
 # Default TTS model
 DEFAULT_TTS_MODEL = "gemini-3.8-flash-tts"
 
-# Default voice configuration
+# Gemini prebuilt voices; names are case-sensitive.
+GEMINI_TTS_VOICES = [
+    "Zephyr",
+    "Puck",
+    "Charon",
+    "Kore",
+    "Fenrir",
+    "Leda",
+    "Orus",
+    "Aoede",
+    "Callirrhoe",
+    "Autonoe",
+    "Enceladus",
+    "Iapetus",
+    "Umbriel",
+    "Algieba",
+    "Despina",
+    "Erinome",
+    "Algenib",
+    "Rasalgethi",
+    "Laomedeia",
+    "Achernar",
+    "Alnilam",
+    "Schedar",
+    "Gacrux",
+    "Pulcherrima",
+    "Achird",
+    "Zubenelgenubi",
+    "Vindemiatrix",
+    "Sadachbia",
+    "Sadaltager",
+    "Sulafat",
+]
+# bulbul:v3 speakers; Sarvam matches speaker names case-sensitively in lowercase.
+SARVAM_TTS_VOICES = [
+    "shubh",
+    "aditya",
+    "ritu",
+    "priya",
+    "neha",
+    "rahul",
+    "pooja",
+    "rohan",
+    "simran",
+    "kavya",
+    "amit",
+    "dev",
+    "ishita",
+    "shreya",
+    "ratan",
+    "varun",
+    "manan",
+    "sumit",
+    "roopa",
+    "kabir",
+    "aayan",
+    "ashutosh",
+    "advait",
+    "anand",
+    "tanya",
+    "tarun",
+    "sunny",
+    "mani",
+    "gokul",
+    "vijay",
+    "shruti",
+    "suhani",
+    "mohit",
+    "kavitha",
+    "rehan",
+    "soham",
+    "rupali",
+]
+
+# Default voice per provider, used when a request omits `voice` and for rows created
+# before `tts_result.voice` existed.
 DEFAULT_VOICE_NAME = "Kore"
 SARVAM_SPEAKER = "shubh"
-# "Rahul S - Hindi Conversational": closest match to Sarvam's male speaker for side-by-side review.
-ELEVENLABS_VOICE_ID = "2cdvnKJ5TZi631y5PN1s"
+# ElevenLabs voices are names mapped to IDs via `ELEVENLABS_VOICE_TO_ID` in
+# app/models/llm/constants.py. "Rahul" is closest to Sarvam's default male speaker.
+DEFAULT_ELEVENLABS_VOICE = "Rahul"
 
 # Default style prompt for TTS synthesis
 DEFAULT_STYLE_PROMPT = "Read in a calm, professional customer service tone"

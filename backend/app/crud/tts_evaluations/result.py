@@ -23,6 +23,7 @@ def create_tts_results(
     org_id: int,
     project_id: int,
     models: list[str],
+    voices: dict[str, str] | None = None,
 ) -> list[TTSResult]:
     """Create TTS result records for all sample texts and models.
 
@@ -35,6 +36,8 @@ def create_tts_results(
         org_id: Organization ID
         project_id: Project ID
         models: List of TTS models
+        voices: Voice per model; a model missing here gets a NULL voice, which
+            readers treat as the model's default
 
     Returns:
         list[TTSResult]: Created results
@@ -45,21 +48,24 @@ def create_tts_results(
         f"model_count: {len(models)}"
     )
 
+    model_voices = voices or {}
     timestamp = now()
-    results = [
-        TTSResult(
-            sample_text=text,
-            evaluation_run_id=evaluation_run_id,
-            organization_id=org_id,
-            project_id=project_id,
-            provider=model,
-            status=JobStatus.PENDING.value,
-            inserted_at=timestamp,
-            updated_at=timestamp,
-        )
-        for text in sample_texts
-        for model in models
-    ]
+    results: list[TTSResult] = []
+    for text in sample_texts:
+        for model in models:
+            results.append(
+                TTSResult(
+                    sample_text=text,
+                    evaluation_run_id=evaluation_run_id,
+                    organization_id=org_id,
+                    project_id=project_id,
+                    provider=model,
+                    voice=model_voices.get(model),
+                    status=JobStatus.PENDING.value,
+                    inserted_at=timestamp,
+                    updated_at=timestamp,
+                )
+            )
 
     session.add_all(results)
     session.flush()
@@ -236,6 +242,51 @@ def fail_pending_tts_results(
         )
 
     return failed_count
+
+
+def save_processed_tts_results(
+    *,
+    session: Session,
+    results: list[TTSResult],
+) -> int:
+    """Write rows finished in memory back to the DB, skipping any no longer PENDING.
+
+    The cron re-dispatches result processing while a batch still has PENDING rows,
+    so two tasks can process the same batch at once; the PENDING guard stops the
+    later writer from overwriting a row the other already finished.
+
+    Returns:
+        int: Number of rows written
+    """
+    written = 0
+    for result in results:
+        statement = (
+            update(TTSResult)
+            .where(
+                col(TTSResult.id) == result.id,
+                col(TTSResult.status) == JobStatus.PENDING.value,
+            )
+            .values(
+                {
+                    TTSResult.status: result.status,
+                    TTSResult.object_store_url: result.object_store_url,
+                    TTSResult.metadata_: result.metadata_,
+                    TTSResult.error_message: result.error_message,
+                    TTSResult.updated_at: result.updated_at,
+                }
+            )
+        )
+        written += session.exec(statement).rowcount
+    session.commit()
+
+    skipped = len(results) - written
+    if skipped:
+        logger.warning(
+            f"[save_processed_tts_results] Skipped rows already finished by another "
+            f"writer | count={skipped}"
+        )
+
+    return written
 
 
 def update_tts_human_feedback(

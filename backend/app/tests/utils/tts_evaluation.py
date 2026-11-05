@@ -141,11 +141,13 @@ def create_test_tts_result_row(
     status: JobStatus = JobStatus.PENDING,
     sample_text: str | None = None,
     object_store_url: str | None = None,
+    voice: str | None = None,
 ) -> TTSResult:
     result = TTSResult(
         sample_text=sample_text or f"text {random_lower_string()}",
         object_store_url=object_store_url,
         provider=provider,
+        voice=voice,
         status=status.value,
         evaluation_run_id=run.id,
         organization_id=run.organization_id,

@@ -15,6 +15,10 @@ from app.models.stt_evaluation import EvaluationType
 from app.models.tts_evaluation import TTSResult
 from app.services.tts_evaluations.constants import DEPRECATED_GEMINI_TTS_MODELS
 from app.tests.utils.auth import TestAuthContext
+from app.tests.utils.tts_evaluation import (
+    create_test_tts_result_row,
+    create_test_tts_run_with_dataset,
+)
 
 
 def create_test_tts_dataset(
@@ -632,11 +636,129 @@ class TestTTSEvaluationRun:
         assert data["run_metadata"]["voices"] == {
             "gemini-3.8-flash-tts": "Kore",
             "bulbul:v3": "shubh",
-            "eleven_v3": "2cdvnKJ5TZi631y5PN1s",
+            "eleven_v3": "Rahul",
         }
         # legacy single-voice key kept for existing clients
         assert data["run_metadata"]["voice_name"] == "Kore"
         assert mock_start_job.call_args.kwargs["models"] == models
+
+    @patch("app.api.routes.tts_evaluations.evaluation.start_tts_batch_submission")
+    def test_start_evaluation_accepts_mixed_model_and_voice_items(
+        self,
+        mock_start_job: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        test_dataset_with_samples: EvaluationDataset,
+    ) -> None:
+        mock_start_job.return_value = "mock-celery-task-id"
+        expected_voices = {
+            "gemini-3.8-flash-tts": "Puck",
+            "gemini-3.8-flash-lite-tts": "Kore",
+            "bulbul:v3": "priya",
+            "eleven_v3": "Sarah",
+            "eleven_v4": "Rahul",
+        }
+
+        response = client.post(
+            "/api/v1/evaluations/tts/runs",
+            json={
+                "run_name": "voices_run",
+                "dataset_id": test_dataset_with_samples.id,
+                "models": [
+                    {"model": "gemini-3.8-flash-tts", "voice": "Puck"},
+                    {"model": "gemini-3.8-flash-lite-tts"},
+                    {"model": "bulbul:v3", "voice": "PRIYA"},
+                    {"model": "eleven_v3", "voice": "Sarah"},
+                    "eleven_v4",
+                ],
+            },
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["models"] == list(expected_voices)
+        assert data["total_items"] == 15
+        assert data["run_metadata"]["voices"] == expected_voices
+        assert data["run_metadata"]["voice_name"] == "Kore"
+        queued = mock_start_job.call_args.kwargs
+        assert (queued["models"], queued["voices"]) == (
+            list(expected_voices),
+            expected_voices,
+        )
+
+    @pytest.mark.parametrize(
+        ("models", "expected_fragments"),
+        [
+            (
+                [{"model": "gemini-3.8-flash-tts", "voice": "kore"}],
+                [
+                    "Unsupported voice 'kore' for model 'gemini-3.8-flash-tts'",
+                    "Zephyr, Puck, Charon, Kore",
+                ],
+            ),
+            (
+                [{"model": "bulbul:v3", "voice": "Kore"}],
+                ["Unsupported voice 'Kore' for model 'bulbul:v3'", "shubh, aditya"],
+            ),
+            (
+                [{"model": "eleven_v3", "voice": "sarah"}],
+                [
+                    "Unsupported voice 'sarah' for model 'eleven_v3'",
+                    "Allowed voices are: Sarah, George, Callum, Liam, Rahul",
+                ],
+            ),
+            (
+                [
+                    "bulbul:v3",
+                    {"model": "gemini-3.8-flash-tts"},
+                    {"model": "bulbul:v3", "voice": "priya"},
+                ],
+                ["Duplicate model(s): bulbul:v3"],
+            ),
+            (
+                [{"model": "gemini-3.1-flash-tts-preview", "voice": "Kore"}],
+                ["Unsupported model: gemini-3.1-flash-tts-preview"],
+            ),
+            (
+                [{"model": "gemini-3.8-flash-tts", "speaker": "Puck"}],
+                ["Extra inputs are not permitted"],
+            ),
+        ],
+        ids=[
+            "gemini_voice_case_sensitive",
+            "voice_of_other_provider",
+            "elevenlabs_voice_case_sensitive",
+            "duplicate_model",
+            "deprecated_model_object",
+            "extra_key",
+        ],
+    )
+    @patch("app.api.routes.tts_evaluations.evaluation.start_tts_batch_submission")
+    def test_start_evaluation_rejects_invalid_model_items(
+        self,
+        mock_start_job: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        test_dataset_with_samples: EvaluationDataset,
+        models: list[object],
+        expected_fragments: list[str],
+    ) -> None:
+        response = client.post(
+            "/api/v1/evaluations/tts/runs",
+            json={
+                "run_name": "invalid_voice_run",
+                "dataset_id": test_dataset_with_samples.id,
+                "models": models,
+            },
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 422, response.text
+        messages = " | ".join(e["message"] for e in response.json()["errors"])
+        for fragment in expected_fragments:
+            assert fragment in messages
+        mock_start_job.assert_not_called()
 
     @patch("app.api.routes.tts_evaluations.evaluation.start_tts_batch_submission")
     def test_start_evaluation_celery_failure(
@@ -1278,6 +1400,40 @@ class TestTTSResultGet:
         """Test getting a TTS result without authentication fails."""
         response = client.get("/api/v1/evaluations/tts/results/1")
         assert response.status_code == 401
+
+    def test_run_and_result_endpoints_expose_voice(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        run = create_test_tts_run_with_dataset(
+            db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            models=["bulbul:v3"],
+        )
+        voiced = create_test_tts_result_row(
+            db, run=run, provider="bulbul:v3", voice="priya"
+        )
+        # NULL: row created before per-model voices existed.
+        legacy = create_test_tts_result_row(db, run=run, provider="bulbul:v3")
+
+        run_response = client.get(
+            f"/api/v1/evaluations/tts/runs/{run.id}", headers=user_api_key_header
+        )
+        result_response = client.get(
+            f"/api/v1/evaluations/tts/results/{voiced.id}",
+            headers=user_api_key_header,
+        )
+
+        assert run_response.status_code == 200, run_response.text
+        assert {
+            r["id"]: r["voice"] for r in run_response.json()["data"]["results"]
+        } == {voiced.id: "priya", legacy.id: None}
+        assert result_response.status_code == 200, result_response.text
+        assert result_response.json()["data"]["voice"] == "priya"
 
 
 class TestTTSResultFeedback:

@@ -21,10 +21,11 @@ from app.core.util import now
 from app.crud.tts_evaluations.result import (
     fail_pending_tts_results,
     get_pending_results_for_run,
+    save_processed_tts_results,
 )
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
-from app.core.audio_utils import calculate_duration, pcm_to_wav
+from app.core.audio_utils import calculate_duration, pcm_to_wav, strip_wav_header
 from app.services.tts_evaluations.constants import TTS_AUDIO_SUBDIRECTORY
 
 logger = logging.getLogger(__name__)
@@ -147,7 +148,10 @@ def execute_tts_result_processing(
                         continue
 
                     # Without validate=True, garbage decodes to b"" and is stored as a 0s "success".
-                    pcm_data = base64.b64decode(audio_b64, validate=True)
+                    # Requests ask for raw PCM; unwrap in case a model still sends WAV.
+                    pcm_data = strip_wav_header(
+                        base64.b64decode(audio_b64, validate=True)
+                    )
 
                     wav_data = pcm_to_wav(pcm_data)
                     duration = calculate_duration(len(pcm_data))
@@ -218,8 +222,9 @@ def execute_tts_result_processing(
             failed_count += missing_count
 
         with Session(engine) as session:
-            session.add_all(list(result_map.values()))
-            session.commit()
+            save_processed_tts_results(
+                session=session, results=list(result_map.values())
+            )
 
         logger.info(
             f"[execute_tts_result_processing] Completed | "
@@ -244,8 +249,7 @@ def execute_tts_result_processing(
             r for r in result_map.values() if r.status != JobStatus.PENDING.value
         ]
         with Session(engine) as session:
-            session.add_all(finished)
-            session.commit()
+            save_processed_tts_results(session=session, results=finished)
             fail_pending_tts_results(
                 session=session,
                 run_id=evaluation_run_id,

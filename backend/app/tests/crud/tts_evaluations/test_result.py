@@ -1,6 +1,10 @@
+import pytest
 from sqlmodel import Session
 
-from app.crud.tts_evaluations.result import fail_pending_tts_results
+from app.crud.tts_evaluations.result import (
+    create_tts_results,
+    fail_pending_tts_results,
+)
 from app.models.job import JobStatus
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.tts_evaluation import (
@@ -56,3 +60,41 @@ def test_fail_pending_tts_results_only_touches_pending_rows_of_run_and_provider(
     assert already_failed.error_message == "original error"
     assert other_provider.status == JobStatus.PENDING.value
     assert other_run_row.status == JobStatus.PENDING.value
+
+
+@pytest.mark.parametrize(
+    ("voices", "expected"),
+    [
+        ({GEMINI: "Puck", SARVAM: "priya"}, {GEMINI: "Puck", SARVAM: "priya"}),
+        ({GEMINI: "Puck"}, {GEMINI: "Puck", SARVAM: None}),
+        (None, {GEMINI: None, SARVAM: None}),
+    ],
+    ids=["all_models", "model_missing_from_voices", "voices_omitted"],
+)
+def test_create_tts_results_stamps_voice_per_model(
+    db: Session,
+    user_api_key: TestAuthContext,
+    voices: dict[str, str] | None,
+    expected: dict[str, str | None],
+) -> None:
+    run = create_test_tts_run_with_dataset(
+        db,
+        organization_id=user_api_key.organization_id,
+        project_id=user_api_key.project_id,
+        models=[GEMINI, SARVAM],
+    )
+
+    results = create_tts_results(
+        session=db,
+        sample_texts=["one", "two"],
+        evaluation_run_id=run.id,
+        org_id=user_api_key.organization_id,
+        project_id=user_api_key.project_id,
+        models=[GEMINI, SARVAM],
+        voices=voices,
+    )
+
+    assert len(results) == 4
+    for row in results:
+        db.refresh(row)
+        assert row.voice == expected[row.provider]

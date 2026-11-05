@@ -114,7 +114,11 @@ def boundaries(db: Session) -> Iterator[SimpleNamespace]:
         patch(f"{MODULE}.upload_to_object_store", side_effect=_fake_upload) as upload,
     ):
         yield SimpleNamespace(
-            sarvam=sarvam, credentials=credentials, storage=storage, upload=upload
+            sarvam=sarvam,
+            eleven=eleven,
+            credentials=credentials,
+            storage=storage,
+            upload=upload,
         )
 
 
@@ -134,9 +138,10 @@ def _row(
     model: str = SARVAM,
     status: JobStatus = JobStatus.PENDING,
     text: str | None = None,
+    voice: str | None = None,
 ) -> TTSResult:
     return create_test_tts_result_row(
-        db, run=run, provider=model, status=status, sample_text=text
+        db, run=run, provider=model, status=status, sample_text=text, voice=voice
     )
 
 
@@ -213,6 +218,55 @@ class TestExecuteTTSSyncGeneration:
             JobStatus.FAILED.value,
             "sarvamai synthesis failed: bad request",
         )
+
+    @pytest.mark.parametrize(
+        ("model", "row_voice", "client", "param", "expected"),
+        [
+            (SARVAM, "priya", "sarvam", "speaker", "priya"),
+            (SARVAM, None, "sarvam", "speaker", "shubh"),
+            (ELEVEN, "Sarah", "eleven", "voice_id", "EXAVITQu4vr4xnSDxMaL"),
+            (ELEVEN, None, "eleven", "voice_id", "2cdvnKJ5TZi631y5PN1s"),
+        ],
+        ids=["sarvam", "sarvam_null", "elevenlabs", "elevenlabs_null"],
+    )
+    def test_provider_is_called_with_row_voice(
+        self,
+        db: Session,
+        run: EvaluationRun,
+        boundaries: SimpleNamespace,
+        model: str,
+        row_voice: str | None,
+        client: str,
+        param: str,
+        expected: str,
+    ) -> None:
+        row = _row(db, run, model, voice=row_voice)
+
+        _execute(run, model)
+
+        convert = getattr(boundaries, client).text_to_speech.convert
+        assert convert.call_args.kwargs[param] == expected
+        _refresh(db, row)
+        assert row.status == JobStatus.SUCCESS.value
+
+    def test_unmappable_elevenlabs_voice_fails_only_that_row(
+        self, db: Session, run: EvaluationRun, boundaries: SimpleNamespace
+    ) -> None:
+        ok = _row(db, run, ELEVEN, voice="George")
+        # Not reachable via the API; guards rows whose voice was retired from the map.
+        unmappable = _row(db, run, ELEVEN, voice="Bogus")
+
+        outcome = _execute(run, ELEVEN)
+
+        assert (outcome["processed"], outcome["failed"]) == (1, 1)
+        _refresh(db, ok, unmappable)
+        assert ok.status == JobStatus.SUCCESS.value
+        assert unmappable.status == JobStatus.FAILED.value
+        assert "Unsupported ElevenLabs voice 'Bogus'" in unmappable.error_message
+        assert [
+            c.kwargs["voice_id"]
+            for c in boundaries.eleven.text_to_speech.convert.call_args_list
+        ] == ["JBFqnCBsd6RMkjVDRZzb"]
 
     def test_upload_failure_fails_row(
         self, db: Session, run: EvaluationRun, boundaries: SimpleNamespace

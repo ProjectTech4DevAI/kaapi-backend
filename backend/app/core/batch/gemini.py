@@ -564,6 +564,7 @@ def create_tts_batch_requests(
     voice_name: str,
     style_prompt: str | None = None,
     keys: list[str] | None = None,
+    legacy_prompting: bool = False,
 ) -> list[dict[str, Any]]:
     """Create batch API requests for Gemini TTS.
 
@@ -573,9 +574,12 @@ def create_tts_batch_requests(
     Args:
         texts: List of text strings to synthesize
         voice_name: Prebuilt voice name (e.g., "Kore")
-        style_prompt: Optional style/tone instructions prepended to text
+        style_prompt: Optional style/tone instructions
         keys: Optional list of custom IDs for tracking results. If not provided,
               uses 0-indexed integers as strings.
+        legacy_prompting: Pre-3.8 request shape, for models without
+              `speechMetadata` or `responseFormat`: style is prepended to the
+              text and the model's default raw PCM output is used.
 
     Returns:
         List of batch request dicts in Gemini JSONL format
@@ -597,28 +601,33 @@ def create_tts_batch_requests(
     for i, text in enumerate(texts):
         key = keys[i] if keys is not None else str(i)
 
-        # Prepend style prompt if provided
-        content_text = f"{style_prompt}: {text}" if style_prompt else text
+        generation_config: dict[str, Any] = {
+            "responseModalities": ["AUDIO"],
+            "speechConfig": {
+                "voiceConfig": {
+                    "prebuiltVoiceConfig": {
+                        "voiceName": voice_name,
+                    }
+                }
+            },
+        }
+        if legacy_prompting:
+            part: dict[str, Any] = {
+                "text": f"{style_prompt}: {text}" if style_prompt else text
+            }
+        else:
+            # 3.8+ speaks `text` verbatim, so style goes in speechMetadata; and it
+            # returns WAV by default, so ask for raw PCM like the older models.
+            part = {"text": text}
+            if style_prompt:
+                part["speechMetadata"] = {"style": style_prompt}
+            generation_config["responseFormat"] = {"audio": {"mimeType": "AUDIO_L16"}}
 
         request = {
             "key": key,
             "request": {
-                "contents": [
-                    {
-                        "parts": [{"text": content_text}],
-                        "role": "user",
-                    }
-                ],
-                "generationConfig": {
-                    "responseModalities": ["AUDIO"],
-                    "speechConfig": {
-                        "voiceConfig": {
-                            "prebuiltVoiceConfig": {
-                                "voiceName": voice_name,
-                            }
-                        }
-                    },
-                },
+                "contents": [{"parts": [part], "role": "user"}],
+                "generationConfig": generation_config,
             },
         }
         requests.append(request)

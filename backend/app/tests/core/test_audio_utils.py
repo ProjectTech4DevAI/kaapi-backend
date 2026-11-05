@@ -1,7 +1,12 @@
 """Tests for audio utility functions."""
 import subprocess
 import pytest
-from app.core.audio_utils import convert_pcm_to_mp3, convert_pcm_to_ogg
+from app.core.audio_utils import (
+    convert_pcm_to_mp3,
+    convert_pcm_to_ogg,
+    pcm_to_wav,
+    strip_wav_header,
+)
 
 
 def _is_ffmpeg_available() -> bool:
@@ -106,3 +111,15 @@ def test_convert_pcm_to_ogg_short_audio() -> None:
 
     assert error is None
     assert result is not None
+
+
+def test_strip_wav_header_returns_pcm_frames() -> None:
+    pcm = b"\x00\x01" * 100
+
+    assert strip_wav_header(pcm_to_wav(pcm)) == pcm
+
+
+def test_strip_wav_header_leaves_raw_pcm_untouched() -> None:
+    pcm = b"\x00\x01" * 100
+
+    assert strip_wav_header(pcm) == pcm

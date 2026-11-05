@@ -25,10 +25,6 @@ from app.models.tts_evaluation import (
 from app.services.tts_evaluations.constants import (
     DEFAULT_STYLE_PROMPT,
     DEFAULT_VOICE_NAME,
-    ELEVENLABS_TTS_MODELS,
-    ELEVENLABS_VOICE_ID,
-    SARVAM_SPEAKER,
-    SARVAM_TTS_MODELS,
 )
 from app.utils import APIResponse, load_description
 
@@ -53,7 +49,7 @@ def start_tts_evaluation(
     logger.info(
         f"[start_tts_evaluation] Starting TTS evaluation | "
         f"run_name: {run_create.run_name}, dataset_id: {run_create.dataset_id}, "
-        f"models: {run_create.models}"
+        f"voices: {run_create.voices}"
     )
 
     # Validate dataset exists
@@ -82,7 +78,7 @@ def start_tts_evaluation(
         dataset_name=dataset.name,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
-        models=run_create.models,
+        models=run_create.model_names,
         language_id=language_id,
         total_items=sample_count * len(run_create.models),
     )
@@ -96,7 +92,8 @@ def start_tts_evaluation(
             trace_id=trace_id,
             organization_id=auth_context.organization_.id,
             dataset_id=run_create.dataset_id,
-            models=run_create.models,
+            models=run_create.model_names,
+            voices=run_create.voices,
         )
         logger.info(
             f"[start_tts_evaluation] Batch submission queued | "
@@ -118,22 +115,13 @@ def start_tts_evaluation(
             detail=f"Failed to queue batch submission: {e}",
         )
 
-    voices: dict[str, str] = {}
-    for model in run_create.models:
-        if model in SARVAM_TTS_MODELS:
-            voices[model] = SARVAM_SPEAKER
-        elif model in ELEVENLABS_TTS_MODELS:
-            voices[model] = ELEVENLABS_VOICE_ID
-        else:
-            voices[model] = DEFAULT_VOICE_NAME
-
     return APIResponse.success_response(
         data=TTSEvaluationRunPublic.from_model(
             run,
             run_metadata={
                 # Legacy key kept for existing clients; `voices` is per model.
                 "voice_name": DEFAULT_VOICE_NAME,
-                "voices": voices,
+                "voices": run_create.voices,
                 "style_prompt": DEFAULT_STYLE_PROMPT,
             },
         )

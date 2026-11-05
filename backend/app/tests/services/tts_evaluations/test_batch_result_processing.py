@@ -9,6 +9,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from gevent import Timeout
 from sqlmodel import Session
 
+from app.core.audio_utils import pcm_to_wav
 from app.models import EvaluationRun
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
@@ -27,6 +28,7 @@ GEMINI = "gemini-3.8-flash-tts"
 SARVAM = "bulbul:v3"
 # 24 kHz / 16-bit / mono: 48000 bytes is one second; the WAV adds a 44-byte header.
 ONE_SECOND_PCM_B64 = base64.b64encode(b"\x00\x01" * 24000).decode()
+ONE_SECOND_WAV_B64 = base64.b64encode(pcm_to_wav(b"\x00\x01" * 24000)).decode()
 
 
 def _audio_response(
@@ -130,6 +132,21 @@ class TestExecuteTTSResultProcessing:
             assert row.object_store_url.startswith("s3://bucket/evaluations/tts/audio/")
             assert row.metadata_ == {"duration_seconds": 1.0, "size_bytes": 48044}
         assert run.status == "pending"
+
+    def test_wav_response_is_not_double_wrapped(
+        self, db: Session, run: EvaluationRun, boundaries: Boundaries
+    ) -> None:
+        row = create_test_tts_result_row(db, run=run)
+        boundaries.download.return_value = [_ok(row.id, data=ONE_SECOND_WAV_B64)]
+
+        _execute(run)
+
+        _refresh(db, row)
+        assert row.status == JobStatus.SUCCESS.value
+        # One 44-byte header: the model's WAV is unwrapped before re-wrapping.
+        assert row.metadata_ == {"duration_seconds": 1.0, "size_bytes": 48044}
+        uploaded = boundaries.upload.call_args.kwargs["content"]
+        assert uploaded.count(b"RIFF") == 1
 
     def test_only_this_models_pending_rows_are_processed(
         self, db: Session, run: EvaluationRun, boundaries: Boundaries
@@ -289,6 +306,43 @@ class TestExecuteTTSResultProcessing:
             JobStatus.FAILED.value,
             "Result processing exceeded soft time limit",
         )
+
+    def test_overlapping_task_does_not_overwrite_finished_row(
+        self, db: Session, run: EvaluationRun, boundaries: Boundaries
+    ) -> None:
+        # Regression: the cron re-dispatches while rows are PENDING, so a second
+        # task's write-back used to overwrite a row the first had already finished.
+        finished_elsewhere, still_pending = (
+            create_test_tts_result_row(db, run=run) for _ in range(2)
+        )
+        finished_id, pending_id = finished_elsewhere.id, still_pending.id
+
+        def download(_batch_id: str) -> list[dict[str, Any]]:
+            db.expunge_all()
+            other_writer_row = db.get(TTSResult, finished_id)
+            other_writer_row.status = JobStatus.SUCCESS.value
+            other_writer_row.object_store_url = "s3://bucket/other-task.wav"
+            db.add(other_writer_row)
+            db.commit()
+            db.expunge_all()
+            return [
+                {"custom_id": str(finished_id), "error": "late failure"},
+                _ok(pending_id),
+            ]
+
+        boundaries.download.side_effect = download
+
+        _execute(run)
+
+        db.expunge_all()
+        kept = db.get(TTSResult, finished_id)
+        written = db.get(TTSResult, pending_id)
+        assert (kept.status, kept.object_store_url, kept.error_message) == (
+            JobStatus.SUCCESS.value,
+            "s3://bucket/other-task.wav",
+            None,
+        )
+        assert written.status == JobStatus.SUCCESS.value
 
     def test_unexpected_error_fails_only_this_models_pending_rows(
         self, db: Session, run: EvaluationRun, boundaries: Boundaries

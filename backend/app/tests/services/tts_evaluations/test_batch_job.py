@@ -67,7 +67,11 @@ def _run(
     )
 
 
-def _execute(run: EvaluationRun, dataset_id: int | None = None) -> dict[str, Any]:
+def _execute(
+    run: EvaluationRun,
+    dataset_id: int | None = None,
+    voices: dict[str, str] | None = None,
+) -> dict[str, Any]:
     return execute_batch_submission(
         project_id=run.project_id,
         job_id=str(run.id),
@@ -76,6 +80,7 @@ def _execute(run: EvaluationRun, dataset_id: int | None = None) -> dict[str, Any
         organization_id=run.organization_id,
         dataset_id=dataset_id or run.dataset_id,
         models=run.providers,
+        voices=voices,
     )
 
 
@@ -119,6 +124,40 @@ class TestExecuteBatchSubmission:
         ] == [(SARVAM, str(run.id), "en-IN"), (ELEVEN, str(run.id), "en-IN")]
         db.refresh(run)
         assert run.status == "processing"
+
+    @pytest.mark.parametrize(
+        ("voices", "expected"),
+        [
+            (
+                {GEMINI: "Puck", SARVAM: "priya", ELEVEN: "Sarah"},
+                {GEMINI: "Puck", SARVAM: "priya", ELEVEN: "Sarah"},
+            ),
+            # Partial/absent voices: tasks queued before per-model voices existed.
+            ({SARVAM: "priya"}, {GEMINI: "Kore", SARVAM: "priya", ELEVEN: "Rahul"}),
+            (None, {GEMINI: "Kore", SARVAM: "shubh", ELEVEN: "Rahul"}),
+        ],
+        ids=["requested", "partial", "omitted"],
+    )
+    def test_rows_and_gemini_payload_carry_model_voice(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        voices: dict[str, str] | None,
+        expected: dict[str, str],
+    ) -> None:
+        run = _run(db, user_api_key, [GEMINI, SARVAM, ELEVEN])
+
+        with fake_gemini_batch(CRUD_BATCH) as gemini:
+            _execute(run, voices=voices)
+
+        for model, voice in expected.items():
+            assert {r.voice for r in _results(db, run, model)} == {voice}
+        assert {
+            r["request"]["generationConfig"]["speechConfig"]["voiceConfig"][
+                "prebuiltVoiceConfig"
+            ]["voiceName"]
+            for r in gemini.submitted[f"models/{GEMINI}"]
+        } == {expected[GEMINI]}
 
     @pytest.mark.parametrize(
         ("locale", "expected_language"),

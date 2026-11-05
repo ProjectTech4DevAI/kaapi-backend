@@ -35,6 +35,7 @@ from app.services.tts_evaluations.constants import (
     LOCALE_TO_BCP47,
 )
 from app.services.tts_evaluations.dataset import get_sample_texts_from_dataset
+from app.services.tts_evaluations.voices import default_voice_for_model
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ def execute_batch_submission(
     organization_id: int,
     dataset_id: int,
     models: list[str],
+    voices: dict[str, str] | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """Execute TTS evaluation submission in a Celery worker.
@@ -63,6 +65,8 @@ def execute_batch_submission(
         organization_id: Organization ID
         dataset_id: Dataset ID
         models: List of TTS model names to evaluate
+        voices: Validated voice per model; missing models (e.g. tasks queued before
+            per-model voices) get the model's default voice
 
     Returns:
         dict: Result summary with batch job info
@@ -70,11 +74,17 @@ def execute_batch_submission(
     run_id = int(job_id)
     batch_models = [model for model in models if model in GEMINI_BATCH_TTS_MODELS]
     sync_models = [model for model in models if model in SYNC_TTS_MODELS]
+    requested_voices = voices or {}
+    model_voices: dict[str, str] = {}
+    for model in models:
+        model_voices[model] = requested_voices.get(model) or default_voice_for_model(
+            model
+        )
 
     logger.info(
         f"[execute_batch_submission] Starting | "
         f"run_id: {run_id}, project_id: {project_id}, "
-        f"celery_task_id: {task_id}"
+        f"voices: {model_voices}, celery_task_id: {task_id}"
     )
 
     try:
@@ -140,6 +150,7 @@ def execute_batch_submission(
                 org_id=organization_id,
                 project_id=project_id,
                 models=models,
+                voices=model_voices,
             )
             result_count = len(results)
             update_tts_run(session=session, run_id=run_id, status="processing")

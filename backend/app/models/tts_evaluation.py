@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
@@ -16,6 +16,10 @@ from app.models.job import JobStatus
 from app.services.tts_evaluations.constants import (
     DEFAULT_TTS_MODEL,
     SUPPORTED_TTS_MODELS,
+)
+from app.services.tts_evaluations.voices import (
+    default_voice_for_model,
+    resolve_voice,
 )
 
 if TYPE_CHECKING:
@@ -63,6 +67,18 @@ class TTSResult(SQLModel, table=True):
         description="TTS provider used (e.g., gemini-3.8-flash-tts)",
         sa_column_kwargs={
             "comment": "TTS provider used (e.g., gemini-2.5-pro-preview-tts)"
+        },
+    )
+
+    voice: str | None = SQLField(
+        default=None,
+        max_length=100,
+        nullable=True,
+        description="Voice the sample was synthesized with",
+        sa_column_kwargs={
+            "comment": "Voice used for synthesis (Gemini voice, Sarvam speaker or "
+            "ElevenLabs voice name); NULL for rows created before per-model voices, "
+            "which used the model's default voice"
         },
     )
 
@@ -223,6 +239,7 @@ class TTSResultPublic(BaseModel):
     duration_seconds: float | None = None
     size_bytes: int | None = None
     provider: str
+    voice: str | None = None
     status: str
     score: dict[str, Any] | None
     is_correct: bool | None
@@ -250,6 +267,7 @@ class TTSResultPublic(BaseModel):
             duration_seconds=(result.metadata_ or {}).get("duration_seconds"),
             size_bytes=(result.metadata_ or {}).get("size_bytes"),
             provider=result.provider,
+            voice=result.voice,
             status=result.status,
             score=result.score,
             is_correct=result.is_correct,
@@ -282,30 +300,94 @@ class TTSFeedbackUpdate(BaseModel):
     )
 
 
+class TTSModelVoice(BaseModel):
+    """One model of a TTS evaluation run and the voice to synthesize it with."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(..., description="TTS model to evaluate")
+    voice: str | None = Field(
+        default=None,
+        description="Voice from the model's predefined set; omitted uses the "
+        "model's default voice",
+    )
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, model: str) -> str:
+        if model not in SUPPORTED_TTS_MODELS:
+            raise ValueError(
+                f"Unsupported model: {model}. "
+                f"Supported models are: {', '.join(SUPPORTED_TTS_MODELS)}"
+            )
+        return model
+
+    @model_validator(mode="after")
+    def validate_voice(self) -> TTSModelVoice:
+        self.voice = resolve_voice(self.model, self.voice)
+        return self
+
+
 class TTSEvaluationRunCreate(BaseModel):
     """Request model for starting a TTS evaluation run."""
 
     run_name: str = Field(..., description="Name for this evaluation run", min_length=1)
     dataset_id: int = Field(..., description="ID of the TTS dataset to evaluate")
-    models: list[str] = Field(
-        default_factory=lambda: [DEFAULT_TTS_MODEL],
-        description="List of TTS models to use",
+    models: list[TTSModelVoice] = Field(
+        default_factory=lambda: [TTSModelVoice(model=DEFAULT_TTS_MODEL)],
+        description="TTS models to use; each item is a model name or "
+        "{model, voice}. Voices are resolved to the model's default when omitted.",
         min_length=1,
+        json_schema_extra={
+            "example": [
+                {"model": "gemini-3.8-flash-tts", "voice": "Puck"},
+                {"model": "bulbul:v3", "voice": "priya"},
+                "eleven_v3",
+            ]
+        },
     )
+
+    @field_validator("models", mode="before")
+    @classmethod
+    def normalize_models(cls, models: object) -> object:
+        """Accept plain model strings (the original request shape) as `{model}`."""
+        if not isinstance(models, list):
+            return models
+        normalized: list[object] = []
+        for item in models:
+            if isinstance(item, str):
+                normalized.append({"model": item})
+            else:
+                normalized.append(item)
+        return normalized
 
     @field_validator("models")
     @classmethod
-    def validate_models(cls, models: list[str]) -> list[str]:
-        """Validate that all models are supported."""
-        if not models:
-            raise ValueError("At least one model must be specified")
-        unsupported = [m for m in models if m not in SUPPORTED_TTS_MODELS]
-        if unsupported:
+    def validate_unique_models(cls, models: list[TTSModelVoice]) -> list[TTSModelVoice]:
+        """Reject repeated models: result rows are keyed by model, not by voice."""
+        seen: set[str] = set()
+        duplicates: list[str] = []
+        for item in models:
+            if item.model in seen and item.model not in duplicates:
+                duplicates.append(item.model)
+            seen.add(item.model)
+        if duplicates:
             raise ValueError(
-                f"Unsupported model(s): {', '.join(unsupported)}. "
-                f"Supported models are: {', '.join(SUPPORTED_TTS_MODELS)}"
+                f"Duplicate model(s): {', '.join(duplicates)}. "
+                f"Each model can appear only once per run"
             )
         return models
+
+    @property
+    def model_names(self) -> list[str]:
+        return [item.model for item in self.models]
+
+    @property
+    def voices(self) -> dict[str, str]:
+        resolved: dict[str, str] = {}
+        for item in self.models:
+            resolved[item.model] = item.voice or default_voice_for_model(item.model)
+        return resolved
 
 
 class TTSEvaluationRunPublic(BaseModel):
