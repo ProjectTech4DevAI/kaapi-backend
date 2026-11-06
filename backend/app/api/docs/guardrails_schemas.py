@@ -449,17 +449,16 @@ VALIDATOR_TYPES: tuple[ValidatorType, ...] = (
         runs_on="input and output",
         notes=(
             _NO_PARTIAL_FIX,
-            "If you want slurs redacted *and* profanity checked, use "
-            "`content_safety` instead of running both — it orders them so a "
-            "redacted slur does not then trip the profanity check.",
+            "English-only model: common Hinglish (`kaise ho`) can score as "
+            "profane. For Hindi/Hinglish users prefer `content_safety`.",
         ),
     ),
     ValidatorType(
         type="content_safety",
         summary=(
-            "Slur redaction followed by a profanity check, as one validator. "
-            "The slur pass runs first, so text it has already cleaned is not "
-            "blanked by the profanity pass."
+            "Slur redaction plus a multilingual toxicity classifier, as one "
+            "validator. Catches abuse in English, Hindi and Romanised "
+            "Hinglish, including abuse the slur list misses."
         ),
         runs_on="input and output",
         config=(
@@ -469,13 +468,45 @@ VALIDATOR_TYPES: tuple[ValidatorType, ...] = (
                 "Lowest slur severity to redact.",
             ),
             ConfigKey(
-                "profanity_threshold",
-                {"type": "number", "minimum": 0, "maximum": 1, "default": 0.9},
+                "threshold",
+                {"type": "number", "minimum": 0, "maximum": 1, "default": 0.5},
                 (
-                    "Profanity probability at or above which the text fails "
-                    "and is blanked. Lower it to be stricter."
+                    "Toxicity probability at or above which the whole message "
+                    "is replaced. Lower it to be stricter."
                 ),
             ),
+            ConfigKey(
+                "fallback_message",
+                {"type": "string", "minLength": 1, "default": None},
+                (
+                    "Returned in place of a toxic message, with either `fix` "
+                    "or `rephrase`. Not translated."
+                ),
+            ),
+            ConfigKey(
+                "model_name",
+                {
+                    "type": "string",
+                    "default": "textdetox/bert-multilingual-toxicity-classifier",
+                },
+                "Any HuggingFace text-classification model.",
+            ),
+            ConfigKey(
+                "toxic_label",
+                {"type": "string", "default": "LABEL_1"},
+                (
+                    "Label `model_name` emits for toxic text. Change it "
+                    "together with `model_name`."
+                ),
+            ),
+        ),
+        notes=(
+            "With `fix`, a message whose only problem is a listed slur keeps "
+            "its redacted form (`[REDACTED_SLUR]`); a message the classifier "
+            "scores toxic is replaced whole by `fallback_message`. With "
+            "`rephrase`, any failure returns `fallback_message`.",
+            "Without `fallback_message`, `fix` returns an empty `safe_text` "
+            "for a toxic message, and `metadata.reason` names this validator.",
         ),
     ),
     ValidatorType(
