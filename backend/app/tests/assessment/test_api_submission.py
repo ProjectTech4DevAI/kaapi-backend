@@ -39,7 +39,13 @@ def _serving(rows):
 
 
 def _assessment_config(
-    db, project_id, *, provider="openai", model="gpt-4o", input_schema=None
+    db,
+    project_id,
+    *,
+    provider="openai",
+    model="gpt-4o",
+    input_schema=None,
+    pre_filter_only=False,
 ):
     """ASSESSMENT config with the mandatory typed ``input_schema`` (default one text
     column ``a``); callers pass ``input_schema`` to exercise row-validation branches."""
@@ -51,12 +57,19 @@ def _assessment_config(
         },
         "submission": "Assess this submission.",
     }
-    blob = AssessmentConfigBlob.model_validate(
-        {
-            "input_schema": input_schema or {"a": {"type": "text"}},
-            "assessment": {"provider": provider, "type": "text", "params": params},
+    raw = {
+        "input_schema": input_schema or {"a": {"type": "text"}},
+        "assessment": {"provider": provider, "type": "text", "params": params},
+    }
+    if pre_filter_only:
+        raw.pop("assessment")
+        raw["pre_filters"] = {
+            "topic_relevance": {
+                "provider": provider,
+                "params": {"model": model, "instructions": "On topic?"},
+            }
         }
-    )
+    blob = AssessmentConfigBlob.model_validate(raw)
     return create_test_config(
         db,
         project_id=project_id,
@@ -162,6 +175,28 @@ class TestSubmit:
                     "input": {"data": {"a": "one"}},
                 }
             )
+
+    def test_pre_filter_only_config_runs_just_the_pre_filter(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        config = _assessment_config(db, auth.project_id, pre_filter_only=True)
+        request = _request(config, [{"a": "one"}])
+
+        with patch("app.celery.tasks.job_execution.run_assessment_api_batch") as task:
+            response = submission.submit(
+                session=db,
+                request=request,
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
+            )
+
+        task.delay.assert_called_once()
+        (execution,) = api.list_executions(
+            session=db, assessment_id=response.assessment_id
+        )
+        bag = execution.execution
+        assert [step["stage"] for step in bag["pipeline"]] == ["topic_relevance"]
+        assert bag["stage"] == "topic_relevance"
+        assert bag["model"] == "gpt-4o"
 
     def test_immediate_dispatch_keeps_trace_propagation(self, db) -> None:
         auth = get_user_test_auth_context(db)

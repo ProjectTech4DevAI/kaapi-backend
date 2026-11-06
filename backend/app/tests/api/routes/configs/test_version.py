@@ -1,5 +1,6 @@
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -8,6 +9,9 @@ from app.models import ConfigBlob
 from app.models.config.config import ConfigTag
 from app.models.llm.request import NativeCompletionConfig
 from app.tests.utils.auth import TestAuthContext
+from app.models.config.assessment_blob import AssessmentConfigBlob
+from app.models.config.config import ConfigTag
+from app.tests.api.routes.configs.test_config import _ASSESSMENT, _PRE_FILTERS
 from app.tests.utils.test_data import (
     create_test_config,
     create_test_project,
@@ -901,3 +905,40 @@ def test_create_config_with_kaapi_provider_success(
     assert data["data"]["name"] == config_data["name"]
     assert data["data"]["version"]["config_blob"]["completion"]["provider"] == "openai"
     assert data["data"]["version"]["config_blob"]["completion"]["type"] == "text"
+
+
+@pytest.mark.parametrize(
+    ("stages", "expected_status"),
+    [
+        ({"pre_filters": _PRE_FILTERS}, 201),
+        ({}, 422),
+    ],
+    ids=["pre_filter_only", "neither"],
+)
+def test_create_assessment_version_needs_a_stage(
+    db: Session,
+    client: TestClient,
+    user_api_key: TestAuthContext,
+    stages: dict,
+    expected_status: int,
+) -> None:
+    """A new ASSESSMENT version is held to the same at-least-one-stage rule as create."""
+    config = create_test_config(
+        db=db,
+        project_id=user_api_key.project_id,
+        name="assessment-config",
+        config_blob=AssessmentConfigBlob.model_validate(
+            {"input_schema": {"q": {"type": "text"}}, "assessment": _ASSESSMENT}
+        ),
+        tag=ConfigTag.ASSESSMENT,
+    )
+
+    response = client.post(
+        f"{settings.API_V1_STR}/configs/{config.id}/versions",
+        headers={"X-API-KEY": user_api_key.key},
+        json={"config_blob": {"input_schema": {"q": {"type": "text"}}, **stages}},
+    )
+
+    assert response.status_code == expected_status, response.text
+    if expected_status == 201:
+        assert response.json()["data"]["config_blob"]["assessment"] is None
