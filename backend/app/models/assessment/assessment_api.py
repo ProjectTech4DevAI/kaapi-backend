@@ -8,7 +8,16 @@ from datetime import datetime
 from typing import Annotated, Any, NotRequired, TypedDict
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, JsonValue, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    HttpUrl,
+    JsonValue,
+    Tag,
+    model_validator,
+)
 from sqlmodel import SQLModel
 
 from app.models.assessment.assessment import (
@@ -16,18 +25,6 @@ from app.models.assessment.assessment import (
     AssessmentMethod,
     AssessmentStatus,
 )
-from app.models.llm.request import ImageInput, PDFInput
-
-Attachment = Annotated[ImageInput | PDFInput, Field(discriminator="type")]
-
-
-class ResponseInput(SQLModel):
-    """RESPONSE input — optional attachments (no columns). The prompt lives in the config."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    attachments: list[Attachment] = Field(default_factory=list)
-
 
 # One BATCH submission row: column -> string value (text, or a url/base64 value for
 # attachment columns). Column type/strict/format live in the config's input_schema.
@@ -60,6 +57,17 @@ class BatchInput(SQLModel):
                 "Provide exactly one of 'data' (inline rows) or 'submission_doc_id'."
             )
         return self
+
+
+class ResponseInput(SQLModel):
+    """RESPONSE input — one submission row; the prompt lives in the config."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    data: Submission
+
+    def as_batch(self) -> BatchInput:
+        return BatchInput(data=[self.data])
 
 
 class Verdict(TypedDict):
@@ -104,25 +112,28 @@ class BatchRunState(TypedDict):
     callback_url: str | None  # None when the client polls instead of receiving a push
     request_metadata: dict[str, Any] | None
     error: NotRequired[str]  # only set on failure (_fail)
+    # RESPONSE only: the AssessmentResult as delivered
+    result: NotRequired[dict[str, Any]]
 
 
-# Strict, tagless discrimination via extra=forbid: an input carrying `data` is a
-# BatchInput, one carrying only `attachments` is a ResponseInput. The two cannot be
-# confused — neither accepts the other's distinguishing field.
-AssessmentInput = ResponseInput | BatchInput
+def _input_kind(value: Any) -> str:
+    data = (
+        value.get("data") if isinstance(value, dict) else getattr(value, "data", None)
+    )
+    return "response" if isinstance(data, dict) else "batch"
 
 
-def derive_method(
-    input_: AssessmentInput | None, submission_id: UUID | None
-) -> AssessmentMethod:
-    """Infer method: ResponseInput ⇒ RESPONSE, BatchInput ⇒ BATCH, else submission_id ⇒ RUN."""
+# A row object is an assessment response; a list of rows or a submission reference is a batch.
+AssessmentInput = Annotated[
+    Annotated[ResponseInput, Tag("response")] | Annotated[BatchInput, Tag("batch")],
+    Discriminator(_input_kind),
+]
+
+
+def derive_method(input_: AssessmentInput) -> AssessmentMethod:
     if isinstance(input_, ResponseInput):
         return AssessmentMethod.RESPONSE
-    if isinstance(input_, BatchInput):
-        return AssessmentMethod.BATCH
-    if submission_id is not None:
-        return AssessmentMethod.RUN
-    raise ValueError("[derive_method] Provide inline `input` or `submission_id`")
+    return AssessmentMethod.BATCH
 
 
 class AssessmentCreate(BaseModel):
@@ -145,6 +156,12 @@ class AssessmentCreate(BaseModel):
         description="Passed through unchanged in the callback for correlation",
     )
 
+    @model_validator(mode="after")
+    def _response_needs_callback(self) -> "AssessmentCreate":
+        if isinstance(self.input, ResponseInput) and self.callback_url is None:
+            raise ValueError("An assessment response needs a callback_url.")
+        return self
+
 
 class AssessmentSubmitResponse(BaseModel):
     """Flat API-client submit ack (one config, so one execution) — mirrors the llm-call ack."""
@@ -157,10 +174,11 @@ class AssessmentSubmitResponse(BaseModel):
 
 
 class PreFilterVerdict(BaseModel):
-    """Structured pre-filter result per item."""
+    """Structured pre-filter result per item; ``error`` is set when the stage's call failed."""
 
     verdict: bool
     reasoning: str = ""
+    error: str | None = None
 
 
 class PreFilter(BaseModel):

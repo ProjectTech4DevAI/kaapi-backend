@@ -59,6 +59,21 @@ class TestAssessmentApiBatchReenqueue:
         apply_async.assert_not_called()
 
 
+class TestRunAssessmentResponse:
+    def test_runs_the_service_for_the_execution(self):
+        received: list[int] = []
+        with (
+            patch.object(job_execution, "_set_trace", lambda trace_id: None),
+            patch(
+                "app.services.assessment.api.response.run_response_assessment",
+                lambda *, execution_id: received.append(execution_id),
+            ),
+        ):
+            job_execution.run_assessment_response(execution_id=7, trace_id="trace-1")
+
+        assert received == [7]
+
+
 class TestRunChatbotSessionMessage:
     def test_hands_service_a_uuid_session_id(self):
         session_id = uuid4()
