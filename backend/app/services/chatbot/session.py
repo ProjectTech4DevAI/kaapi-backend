@@ -1,8 +1,8 @@
 import asyncio
-from typing import NamedTuple
 from uuid import UUID
 
 from fastapi import HTTPException
+from openai import OpenAI
 from sqlmodel import Session
 
 from app.core.db import engine
@@ -26,21 +26,30 @@ from app.models import (
     ChatbotSessionStatusEnum,
     ChatbotSessionSummary,
 )
-from app.services.chatbot.agents.onboarding.graph import run_chatbot_turn
-from app.services.chatbot.config import resolve_chatbot_model_settings
+from app.services.chatbot.agents.registry import run_agent_turn
+from app.services.chatbot.config import (
+    prepare_rag_search_client,
+    resolve_chatbot_model_settings,
+)
 from app.services.chatbot.exceptions import (
     ChatbotFlowConflictError,
     ChatbotInputError,
     ChatbotProviderError,
 )
 from app.services.chatbot.flow import (
+    SUPPORTED_AGENT_NODE_TYPES,
     find_flow_node,
     get_chatbot_or_raise,
     parse_flow_edges,
     parse_flow_nodes,
     resolve_entry_node,
 )
-from app.services.chatbot.types import ChatbotMessageDict
+from app.services.chatbot.types import (
+    ChatbotMessageDict,
+    ChatbotTurnResult,
+    TurnContext,
+    TurnNode,
+)
 from app.services.chatbot.utils import ChatbotModelSettings
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
@@ -48,13 +57,6 @@ SUPERSEDED_SESSION_ERROR = (
     "[KAAPI] Chatbot session was superseded by a newer session; start a new session."
 )
 NO_LIVE_FLOW_MESSAGE = "[KAAPI] Chatbot has no published flow; publish the flow first."
-
-
-class _TurnNode(NamedTuple):
-    node_id: str
-    prompt: str
-    config_id: UUID
-    config_version: int | None
 
 
 def start_chatbot_session(
@@ -133,10 +135,27 @@ def get_latest_chatbot_session_summary(
     )
 
 
+def get_active_node_type(
+    session: Session, *, chatbot_session: ChatbotSession
+) -> ChatbotFlowNodeTypeEnum | None:
+    """Type of the node the session's next turn runs on; None if it isn't in the pinned flow."""
+    flow_version = get_chatbot_flow_version_by_id(
+        session, flow_version_id=chatbot_session.flow_version_id
+    )
+    if flow_version is None:
+        return None
+    active_node = find_flow_node(
+        parse_flow_nodes(flow_version.nodes), chatbot_session.active_node_id
+    )
+    if active_node is None:
+        return None
+    return active_node.type
+
+
 def _resolve_turn_node(
     *, flow_version: ChatbotFlowVersion | None, active_node_id: str
-) -> _TurnNode:
-    """The runnable onboarding node the session is on; ChatbotInputError when it can't run."""
+) -> TurnNode:
+    """The runnable agent node the session is on; ChatbotInputError when it can't run."""
     active_node = None
     if flow_version is not None:
         active_node = find_flow_node(
@@ -149,11 +168,13 @@ def _resolve_turn_node(
         )
         raise ChatbotInputError(error_message)
 
-    if active_node.type != ChatbotFlowNodeTypeEnum.ONBOARDING:
+    if active_node.type not in SUPPORTED_AGENT_NODE_TYPES:
+        supported = ", ".join(
+            sorted(node_type.value for node_type in SUPPORTED_AGENT_NODE_TYPES)
+        )
         error_message = (
             f"[KAAPI] Active node '{active_node_id}' has type '{active_node.type.value}', "
-            f"which the chatbot runtime does not support yet; only "
-            f"'{ChatbotFlowNodeTypeEnum.ONBOARDING.value}' nodes can run."
+            f"which the chatbot runtime does not support yet; only {supported} nodes can run."
         )
         raise ChatbotInputError(error_message)
 
@@ -165,8 +186,9 @@ def _resolve_turn_node(
         )
         raise ChatbotInputError(error_message)
 
-    return _TurnNode(
+    return TurnNode(
         node_id=active_node.id,
+        node_type=active_node.type,
         prompt=node_data.prompt,
         config_id=node_data.config_id,
         config_version=node_data.config_version,
@@ -187,10 +209,146 @@ def _split_pending_turn(
     if not history:
         return history, None
     if history[-1]["role"] != ChatbotMessageRoleEnum.USER:
-        # No pending user turn; run_chatbot_turn rejects this with ChatbotInputError.
+        # No pending user turn; the agent runner rejects this with ChatbotInputError.
         return history, None
     pending = history.pop()
     return history, pending["content"]
+
+
+def _resolve_turn_runtime(
+    *,
+    session: Session,
+    chatbot_session: ChatbotSession,
+    organization_id: int,
+    project_id: int,
+) -> tuple[TurnNode, ChatbotModelSettings, OpenAI | None]:
+    """The active node, its model settings, and (rag only) the knowledge-base client."""
+    flow_version = get_chatbot_flow_version_by_id(
+        session, flow_version_id=chatbot_session.flow_version_id
+    )
+    turn_node = _resolve_turn_node(
+        flow_version=flow_version, active_node_id=chatbot_session.active_node_id
+    )
+    openai_client: OpenAI | None = None
+    try:
+        model_settings = resolve_chatbot_model_settings(
+            session=session,
+            organization_id=organization_id,
+            project_id=project_id,
+            config_id=turn_node.config_id,
+            config_version=turn_node.config_version,
+        )
+        if turn_node.node_type == ChatbotFlowNodeTypeEnum.RAG:
+            openai_client = prepare_rag_search_client(
+                session=session,
+                organization_id=organization_id,
+                project_id=project_id,
+                model_settings=model_settings,
+            )
+    except HTTPException as e:
+        # Config lookups raise HTTP-shaped 404s; the worker reports them as a failure webhook.
+        raise ChatbotInputError(str(e.detail)) from e
+    return turn_node, model_settings, openai_client
+
+
+def _load_turn_context(
+    *, session_id: UUID, organization_id: int, project_id: int
+) -> TurnContext | None:
+    """Everything the turn needs, read in one short DB session; None when there is nothing to answer."""
+    # The DB session is closed before the LLM call so a slow provider doesn't
+    # pin a pooled connection for the whole turn.
+    with Session(engine) as session:
+        chatbot_session = get_chatbot_session(
+            session,
+            session_id=session_id,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
+        if chatbot_session is None:
+            return None
+        # The turn may have been queued before a newer session (or a chatbot delete) deactivated this one.
+        if chatbot_session.status == ChatbotSessionStatusEnum.INACTIVE:
+            raise ChatbotInputError(SUPERSEDED_SESSION_ERROR)
+
+        stored_messages = list_chatbot_session_messages(session, session_id=session_id)
+        if (
+            stored_messages
+            and stored_messages[-1].role == ChatbotMessageRoleEnum.ASSISTANT
+        ):
+            return None
+
+        turn_node, model_settings, openai_client = _resolve_turn_runtime(
+            session=session,
+            chatbot_session=chatbot_session,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
+        return TurnContext(
+            chatbot_id=chatbot_session.chatbot_id,
+            session_status=chatbot_session.status.value,
+            collected_fields=dict(chatbot_session.collected_fields),
+            stored_messages=stored_messages,
+            turn_node=turn_node,
+            model_settings=model_settings,
+            openai_client=openai_client,
+        )
+
+
+def _run_turn(context: TurnContext) -> ChatbotTurnResult:
+    history, user_message = _split_pending_turn(context.stored_messages)
+    return asyncio.run(
+        run_agent_turn(
+            node_type=context.turn_node.node_type,
+            system_prompt=context.turn_node.prompt,
+            history=history,
+            user_message=user_message,
+            model_settings=context.model_settings,
+            collected_fields=context.collected_fields,
+            openai_client=context.openai_client,
+        )
+    )
+
+
+def _persist_turn(
+    *, session_id: UUID, node_id: str, turn_result: ChatbotTurnResult
+) -> None:
+    with Session(engine) as session:
+        create_chatbot_session_message(
+            session,
+            session_id=session_id,
+            role=ChatbotMessageRoleEnum.ASSISTANT,
+            content=turn_result.reply,
+            node_id=node_id,
+        )
+        update_chatbot_session_progress(
+            session,
+            session_id=session_id,
+            collected_fields=turn_result.collected_fields,
+            completion_status=turn_result.completion_status,
+        )
+
+
+def _send_success_webhook(
+    *,
+    session_id: UUID,
+    context: TurnContext,
+    turn_result: ChatbotTurnResult,
+    webhook_url: str,
+    webhook_secret: str | None,
+) -> None:
+    envelope = APIResponse.success_response(
+        data={
+            "session_id": str(session_id),
+            "chatbot_id": str(context.chatbot_id),
+            "node_id": context.turn_node.node_id,
+            "reply": turn_result.reply,
+            "status": context.session_status,
+            "completion_status": turn_result.completion_status.value,
+            "collected_fields": turn_result.collected_fields,
+            "sources": turn_result.sources,
+        }
+    )
+    send_callback(webhook_url, envelope.model_dump(exclude_none=True), webhook_secret)
 
 
 def _send_failure_webhook(
@@ -213,80 +371,18 @@ def process_chatbot_session_message(
     project_id: int,
     webhook_url: str,
 ) -> None:
-    """Run the pending chatbot turn for a session and POST the reply to `webhook_url`."""
+    """Run the pending chatbot turn (load -> resolve -> run -> persist -> notify) and POST the reply to `webhook_url`."""
     webhook_secret = get_webhook_secret(project_id, organization_id)
 
-    # The DB session is closed before the LLM call so a slow provider doesn't
-    # pin a pooled connection for the whole turn.
-    with Session(engine) as session:
-        chatbot_session = get_chatbot_session(
-            session,
+    try:
+        context = _load_turn_context(
             session_id=session_id,
             organization_id=organization_id,
             project_id=project_id,
         )
-        if chatbot_session is None:
+        if context is None:
             return
-        # The turn may have been queued before a newer session (or a chatbot delete) deactivated this one.
-        if chatbot_session.status == ChatbotSessionStatusEnum.INACTIVE:
-            _send_failure_webhook(
-                session_id=session_id,
-                webhook_url=webhook_url,
-                webhook_secret=webhook_secret,
-                error=SUPERSEDED_SESSION_ERROR,
-            )
-            return
-
-        stored_messages = list_chatbot_session_messages(session, session_id=session_id)
-        if (
-            stored_messages
-            and stored_messages[-1].role == ChatbotMessageRoleEnum.ASSISTANT
-        ):
-            return
-
-        chatbot_id = chatbot_session.chatbot_id
-        session_status = chatbot_session.status.value
-        collected_fields = dict(chatbot_session.collected_fields)
-        flow_version = get_chatbot_flow_version_by_id(
-            session, flow_version_id=chatbot_session.flow_version_id
-        )
-
-        try:
-            turn_node = _resolve_turn_node(
-                flow_version=flow_version,
-                active_node_id=chatbot_session.active_node_id,
-            )
-            model_settings: ChatbotModelSettings = resolve_chatbot_model_settings(
-                session=session,
-                organization_id=organization_id,
-                project_id=project_id,
-                config_id=turn_node.config_id,
-                config_version=turn_node.config_version,
-                max_tokens=None,
-                history_token_limit=None,
-            )
-        except (HTTPException, ChatbotInputError) as e:
-            error = str(e.detail) if isinstance(e, HTTPException) else str(e)
-            _send_failure_webhook(
-                session_id=session_id,
-                webhook_url=webhook_url,
-                webhook_secret=webhook_secret,
-                error=error,
-            )
-            return
-
-    history, user_message = _split_pending_turn(stored_messages)
-
-    try:
-        turn_result = asyncio.run(
-            run_chatbot_turn(
-                system_prompt=turn_node.prompt,
-                history=history,
-                user_message=user_message,
-                model_settings=model_settings,
-                collected_fields=collected_fields,
-            )
-        )
+        turn_result = _run_turn(context)
     except (ChatbotInputError, ChatbotProviderError) as e:
         _send_failure_webhook(
             session_id=session_id,
@@ -296,32 +392,15 @@ def process_chatbot_session_message(
         )
         return
 
-    reply = turn_result.reply
-    completion_status = turn_result.completion_status
-    with Session(engine) as session:
-        create_chatbot_session_message(
-            session,
-            session_id=session_id,
-            role=ChatbotMessageRoleEnum.ASSISTANT,
-            content=reply,
-            node_id=turn_node.node_id,
-        )
-        update_chatbot_session_progress(
-            session,
-            session_id=session_id,
-            collected_fields=turn_result.collected_fields,
-            completion_status=completion_status,
-        )
-
-    envelope = APIResponse.success_response(
-        data={
-            "session_id": str(session_id),
-            "chatbot_id": str(chatbot_id),
-            "node_id": turn_node.node_id,
-            "reply": reply,
-            "status": session_status,
-            "completion_status": completion_status.value,
-            "collected_fields": turn_result.collected_fields,
-        }
+    _persist_turn(
+        session_id=session_id,
+        node_id=context.turn_node.node_id,
+        turn_result=turn_result,
     )
-    send_callback(webhook_url, envelope.model_dump(exclude_none=True), webhook_secret)
+    _send_success_webhook(
+        session_id=session_id,
+        context=context,
+        turn_result=turn_result,
+        webhook_url=webhook_url,
+        webhook_secret=webhook_secret,
+    )

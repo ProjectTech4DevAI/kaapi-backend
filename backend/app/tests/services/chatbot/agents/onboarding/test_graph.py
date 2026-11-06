@@ -64,6 +64,7 @@ class TestRunChatbotTurn:
         result = await _run_turn(history=[], user_message=None)
 
         assert result.reply == "Hi! What's your name?"
+        assert result.sources == []
         # Anthropic rejects a conversation that doesn't open with a user turn.
         sent = chat_model.calls[0]
         assert isinstance(sent[0], SystemMessage)
@@ -210,7 +211,7 @@ class TestHistorySummarization:
             "bot 3",
             "user 4",
         ]
-        # The reply is the turn's answer, not the summary text.
+        # The reply is the turn's answer, never the summary text.
         assert result.reply == "Got it."
 
     @pytest.mark.asyncio
