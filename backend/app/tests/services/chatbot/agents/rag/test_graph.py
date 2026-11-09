@@ -57,7 +57,7 @@ def _fees_client() -> FakeOpenAIClient:
     )
 
 
-async def _run(
+def _run(
     chat_model: ScriptedChatModel,
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -68,7 +68,7 @@ async def _run(
     collected_fields: dict[str, str] | None = None,
 ):
     patch_chat_model(monkeypatch, chat_model)
-    return await run_rag_turn(
+    return run_rag_turn(
         system_prompt=GOAL,
         history=history or [],
         user_message=user_message,
@@ -79,14 +79,11 @@ async def _run(
 
 
 class TestRunRagTurn:
-    @pytest.mark.asyncio
-    async def test_answers_without_searching(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_answers_without_searching(self, monkeypatch: pytest.MonkeyPatch) -> None:
         client = _fees_client()
         chat_model = ScriptedChatModel(replies=["Hello! Ask me about fees."])
 
-        result = await _run(
+        result = _run(
             chat_model,
             monkeypatch,
             client=client,
@@ -101,8 +98,7 @@ class TestRunRagTurn:
         assert client.vector_stores.calls == []
         assert chat_model.bound_tool_names[0] == ["search_knowledge_base"]
 
-    @pytest.mark.asyncio
-    async def test_tool_round_feeds_passages_back_and_returns_deduped_sources(
+    def test_tool_round_feeds_passages_back_and_returns_deduped_sources(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         client = _fees_client()
@@ -113,7 +109,7 @@ class TestRunRagTurn:
             ]
         )
 
-        result = await _run(chat_model, monkeypatch, client=client)
+        result = _run(chat_model, monkeypatch, client=client)
 
         assert result.reply == "Tuition is 100 per term."
         # Both searches hit the same two files; each file is reported once.
@@ -132,8 +128,7 @@ class TestRunRagTurn:
             in tool_results[0].content
         )
 
-    @pytest.mark.asyncio
-    async def test_fourth_agent_call_is_forced_to_answer_after_three_tool_rounds(
+    def test_fourth_agent_call_is_forced_to_answer_after_three_tool_rounds(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         client = _fees_client()
@@ -146,14 +141,13 @@ class TestRunRagTurn:
             ]
         )
 
-        result = await _run(chat_model, monkeypatch, client=client)
+        result = _run(chat_model, monkeypatch, client=client)
 
         assert result.reply == "Tuition is 100 per term."
         assert chat_model.call_tool_choices == [None, None, None, {"type": "none"}]
         assert len(client.vector_stores.calls) == 3
 
-    @pytest.mark.asyncio
-    async def test_invalid_tool_args_are_handed_back_to_the_model(
+    def test_invalid_tool_args_are_handed_back_to_the_model(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         client = _fees_client()
@@ -161,7 +155,7 @@ class TestRunRagTurn:
             replies=[tool_call_reply(""), "Could you rephrase that?"]
         )
 
-        result = await _run(chat_model, monkeypatch, client=client)
+        result = _run(chat_model, monkeypatch, client=client)
 
         assert result.reply == "Could you rephrase that?"
         assert result.sources == []
@@ -169,8 +163,7 @@ class TestRunRagTurn:
         [tool_result] = [m for m in chat_model.calls[1] if isinstance(m, ToolMessage)]
         assert tool_result.status == "error"
 
-    @pytest.mark.asyncio
-    async def test_search_failure_fails_the_turn_instead_of_reaching_the_model(
+    def test_search_failure_fails_the_turn_instead_of_reaching_the_model(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         client = FakeOpenAIClient(
@@ -183,36 +176,33 @@ class TestRunRagTurn:
         )
 
         with pytest.raises(ChatbotProviderError, match="search timed out"):
-            await _run(chat_model, monkeypatch, client=client)
+            _run(chat_model, monkeypatch, client=client)
 
         assert len(chat_model.calls) == 1
 
-    @pytest.mark.asyncio
-    async def test_empty_final_reply_is_a_provider_error(
+    def test_empty_final_reply_is_a_provider_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         with pytest.raises(ChatbotProviderError, match="EmptyReply"):
-            await _run(ScriptedChatModel(replies=["  "]), monkeypatch)
+            _run(ScriptedChatModel(replies=["  "]), monkeypatch)
 
-    @pytest.mark.asyncio
-    async def test_first_call_without_message_has_no_greeting(
+    def test_first_call_without_message_has_no_greeting(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = ScriptedChatModel(replies=["should never be used"])
 
         with pytest.raises(ChatbotInputError) as exc_info:
-            await _run(chat_model, monkeypatch, user_message=None, history=[])
+            _run(chat_model, monkeypatch, user_message=None, history=[])
         assert str(exc_info.value) == RAG_MESSAGE_REQUIRED_MESSAGE
         assert chat_model.calls == []
 
-    @pytest.mark.asyncio
-    async def test_missing_message_with_history_rejected(
+    def test_missing_message_with_history_rejected(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = ScriptedChatModel()
 
         with pytest.raises(ChatbotInputError, match="`message` is required"):
-            await _run(
+            _run(
                 chat_model,
                 monkeypatch,
                 user_message=None,
@@ -222,13 +212,12 @@ class TestRunRagTurn:
 
 
 class TestRagSystemPrompt:
-    @pytest.mark.asyncio
-    async def test_config_instructions_and_goal_follow_the_rag_instruction(
+    def test_config_instructions_and_goal_follow_the_rag_instruction(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = ScriptedChatModel(replies=["Namaste!"])
 
-        await _run(
+        _run(
             chat_model,
             monkeypatch,
             model_settings=_model_settings(instructions="Answer in Hindi."),
@@ -242,21 +231,19 @@ class TestRagSystemPrompt:
             f"\n\n<goal>\n{GOAL}\n</goal>"
         )
 
-    @pytest.mark.asyncio
-    async def test_without_config_instructions_only_goal_is_added(
+    def test_without_config_instructions_only_goal_is_added(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = ScriptedChatModel(replies=["Hello!"])
 
-        await _run(chat_model, monkeypatch)
+        _run(chat_model, monkeypatch)
 
         system_message = chat_model.calls[0][0]
         assert system_message.content == f"{RAG_INSTRUCTION}\n\n<goal>\n{GOAL}\n</goal>"
 
 
 class TestRagHistorySummarization:
-    @pytest.mark.asyncio
-    async def test_history_over_budget_is_summarized_before_the_tool_loop(
+    def test_history_over_budget_is_summarized_before_the_tool_loop(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         history: list[dict[str, str]] = []
@@ -268,7 +255,7 @@ class TestRagHistorySummarization:
             token_count=5000,
         )
 
-        result = await _run(
+        result = _run(
             chat_model,
             monkeypatch,
             history=history,
@@ -320,15 +307,14 @@ class TestRagProviderErrorMapping:
         ],
         ids=["timeout", "connection", "value_error", "status"],
     )
-    @pytest.mark.asyncio
-    async def test_anthropic_errors_become_provider_errors(
+    def test_anthropic_errors_become_provider_errors(
         self,
         monkeypatch: pytest.MonkeyPatch,
         error: Exception,
         expected_message: str,
     ) -> None:
         with pytest.raises(ChatbotProviderError) as exc_info:
-            await _run(ScriptedChatModel(error=error), monkeypatch)
+            _run(ScriptedChatModel(error=error), monkeypatch)
 
         assert expected_message in str(exc_info.value)
         assert exc_info.value.__cause__ is error

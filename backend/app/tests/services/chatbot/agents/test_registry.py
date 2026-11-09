@@ -20,15 +20,14 @@ _MODEL_SETTINGS = ChatbotModelSettings(
 
 
 class TestRunAgentTurn:
-    @pytest.mark.asyncio
-    async def test_rag_without_openai_client_rejected_before_calling_model(
+    def test_rag_without_openai_client_rejected_before_calling_model(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = ScriptedChatModel(replies=["should never be used"])
         patch_chat_model(monkeypatch, chat_model)
 
         with pytest.raises(ChatbotInputError, match="needs an OpenAI client"):
-            await run_agent_turn(
+            run_agent_turn(
                 node_type=ChatbotFlowNodeTypeEnum.RAG,
                 system_prompt=SYSTEM_PROMPT,
                 history=[],
@@ -37,15 +36,14 @@ class TestRunAgentTurn:
             )
         assert chat_model.calls == []
 
-    @pytest.mark.asyncio
-    async def test_onboarding_runs_field_extraction_and_ignores_client(
+    def test_onboarding_runs_field_extraction_and_ignores_client(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = ScriptedChatModel(replies=["Which city?"])
         patch_chat_model(monkeypatch, chat_model)
         client = FakeOpenAIClient()
 
-        result = await run_agent_turn(
+        result = run_agent_turn(
             node_type=ChatbotFlowNodeTypeEnum.ONBOARDING,
             system_prompt=SYSTEM_PROMPT,
             history=[],
@@ -60,8 +58,7 @@ class TestRunAgentTurn:
         assert chat_model.bound_tool_names == []
         assert client.vector_stores.calls == []
 
-    @pytest.mark.asyncio
-    async def test_rag_searches_with_the_given_client(
+    def test_rag_searches_with_the_given_client(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = ScriptedChatModel(
@@ -78,7 +75,7 @@ class TestRunAgentTurn:
             )
         )
 
-        result = await run_agent_turn(
+        result = run_agent_turn(
             node_type=ChatbotFlowNodeTypeEnum.RAG,
             system_prompt=SYSTEM_PROMPT,
             history=[],

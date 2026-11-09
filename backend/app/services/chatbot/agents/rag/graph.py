@@ -1,6 +1,5 @@
 """RAG turn: the model answers from the knowledge base, searching it through a tool loop."""
 
-import asyncio
 from typing import Any
 
 from langchain_anthropic import ChatAnthropic
@@ -129,7 +128,7 @@ def _collect_sources(messages: list[BaseMessage]) -> list[ChatbotSource]:
     return sources
 
 
-async def run_rag_turn(
+def run_rag_turn(
     *,
     system_prompt: str,
     history: list[ChatbotMessageDict],
@@ -161,8 +160,7 @@ async def run_rag_turn(
             search_tool,
             history_token_limit=model_settings.history_token_limit,
         )
-        # ChatAnthropic.invoke and the OpenAI search are sync; keep them off the event loop.
-        result = await asyncio.to_thread(graph.invoke, initial_state)
+        result = graph.invoke(initial_state)
     except CHAT_MODEL_ERRORS as e:
         raise to_provider_error(e, model=model_settings.model) from e
 

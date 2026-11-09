@@ -1,4 +1,3 @@
-import asyncio
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -295,16 +294,14 @@ def _load_turn_context(
 
 def _run_turn(context: TurnContext) -> ChatbotTurnResult:
     history, user_message = _split_pending_turn(context.stored_messages)
-    return asyncio.run(
-        run_agent_turn(
-            node_type=context.turn_node.node_type,
-            system_prompt=context.turn_node.prompt,
-            history=history,
-            user_message=user_message,
-            model_settings=context.model_settings,
-            collected_fields=context.collected_fields,
-            openai_client=context.openai_client,
-        )
+    return run_agent_turn(
+        node_type=context.turn_node.node_type,
+        system_prompt=context.turn_node.prompt,
+        history=history,
+        user_message=user_message,
+        model_settings=context.model_settings,
+        collected_fields=context.collected_fields,
+        openai_client=context.openai_client,
     )
 
 

@@ -10,7 +10,7 @@ from app.services.chatbot.types import ChatbotMessageDict, ChatbotTurnResult
 from app.services.chatbot.utils import ChatbotModelSettings
 
 
-async def run_agent_turn(
+def run_agent_turn(
     *,
     node_type: ChatbotFlowNodeTypeEnum,
     system_prompt: str,
@@ -22,7 +22,7 @@ async def run_agent_turn(
 ) -> ChatbotTurnResult:
     """Run one turn with the agent the session's active flow node runs."""
     if node_type == ChatbotFlowNodeTypeEnum.ONBOARDING:
-        return await run_chatbot_turn(
+        return run_chatbot_turn(
             system_prompt=system_prompt,
             history=history,
             user_message=user_message,
@@ -37,7 +37,7 @@ async def run_agent_turn(
                 "knowledge bases."
             )
             raise ChatbotInputError(error_message)
-        return await run_rag_turn(
+        return run_rag_turn(
             system_prompt=system_prompt,
             history=history,
             user_message=user_message,
