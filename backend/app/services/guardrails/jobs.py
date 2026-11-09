@@ -214,6 +214,9 @@ def _dedupe_validators(
     validators: list[Validator | InlineValidator] = []
     duplicates = 0
     for validator in config:
+        # A disabled entry must not claim the key and shadow an enabled duplicate.
+        if not validator.is_enabled:
+            continue
         key = (
             str(validator.validator_config_id)
             if isinstance(validator, Validator)

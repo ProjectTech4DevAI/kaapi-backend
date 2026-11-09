@@ -345,6 +345,42 @@ def test_execute_job_passes_inline_specs_and_dedupes_them(
     assert any("duplicate" in w for w in warnings)
 
 
+def test_execute_job_disabled_entry_does_not_shadow_enabled_duplicate(
+    user_api_key: TestAuthContext,
+) -> None:
+    req = GuardrailsRequest.model_validate(
+        {
+            "text": "hi",
+            "config": [
+                {"validator_config_id": str(VALIDATOR_A), "is_enabled": False},
+                {"validator_config_id": str(VALIDATOR_A)},
+            ],
+        }
+    )
+
+    with _patched_worker_db(), patch(
+        "app.services.guardrails.jobs.apply_guardrails"
+    ) as mock_apply:
+        mock_apply.return_value = GuardrailsOutcome(
+            safe_text="hi",
+            error=None,
+            bypassed=False,
+            rephrase_needed=False,
+            raw={"data": {}},
+        )
+        execute_job(
+            project_id=user_api_key.project_id,
+            job_id=str(uuid4()),
+            task_id="t",
+            task_instance=None,
+            request_data=req.model_dump(mode="json"),
+            organization_id=user_api_key.organization_id,
+        )
+
+    (validator,) = mock_apply.call_args.kwargs["validators"]
+    assert validator.is_enabled
+
+
 def test_execute_job_bypassed_adds_warning(user_api_key: TestAuthContext) -> None:
     req = _make_request()
 
