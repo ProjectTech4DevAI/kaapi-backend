@@ -62,7 +62,6 @@ def _resolve_top_k(max_num_results: int | None) -> int:
 
 
 def _to_search_error(error: openai.OpenAIError, *, vector_store_id: str) -> str:
-    # APITimeoutError subclasses APIConnectionError, so it must be checked first.
     if isinstance(error, openai.APITimeoutError):
         error_message = (
             "[KAAPI] Knowledge base search timed out — retry the turn. If persistent, "
