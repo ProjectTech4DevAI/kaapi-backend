@@ -246,7 +246,6 @@ def _resolve_turn_runtime(
                 model_settings=model_settings,
             )
     except HTTPException as e:
-        # Config lookups raise HTTP-shaped 404s; the worker reports them as a failure webhook.
         raise ChatbotInputError(str(e.detail)) from e
     return turn_node, model_settings, openai_client
 

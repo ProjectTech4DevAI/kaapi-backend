@@ -103,8 +103,6 @@ def build_rag_graph(
         response = model.invoke(messages)
         return {"messages": [response]}
 
-    # Retrieval failures must fail the turn (and send a failure webhook), not be fed
-    # back to the model as a tool result; only bad tool arguments are handed back.
     tool_node = ToolNode([search_tool], handle_tool_errors=ToolInvocationError)
 
     graph = StateGraph(RagState)
