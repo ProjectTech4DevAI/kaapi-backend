@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from app.models import Job, JobStatus, JobType
 from app.models.guardrails import GuardrailsRequest
+from app.models.llm.request import InlineValidator, Validator
 from app.services.guardrails.jobs import (
     _build_callback_payload,
     _coerce_int,
@@ -298,6 +299,49 @@ def test_execute_job_dedupes_duplicate_validators_and_warns(
 
     final = _update_calls(mock_crud)[-1]
     warnings = final.meta["callback"]["warnings"]
+    assert any("duplicate" in w for w in warnings)
+
+
+def test_execute_job_passes_inline_specs_and_dedupes_them(
+    user_api_key: TestAuthContext,
+) -> None:
+    pii = {"type": "pii_remover", "on_fail": "fix"}
+    req = GuardrailsRequest.model_validate(
+        {
+            "text": "My email is alice@example.com",
+            "config": [
+                {"validator_config_id": str(VALIDATOR_A)},
+                pii,
+                {"on_fail": "fix", "type": "pii_remover"},
+            ],
+        }
+    )
+
+    with _patched_worker_db() as mock_crud, patch(
+        "app.services.guardrails.jobs.apply_guardrails"
+    ) as mock_apply:
+        mock_apply.return_value = GuardrailsOutcome(
+            safe_text="ok",
+            error=None,
+            bypassed=False,
+            rephrase_needed=False,
+            raw={"data": {}},
+        )
+        execute_job(
+            project_id=user_api_key.project_id,
+            job_id=str(uuid4()),
+            task_id="t",
+            task_instance=None,
+            request_data=req.model_dump(mode="json"),
+            organization_id=user_api_key.organization_id,
+        )
+
+    ref, inline = mock_apply.call_args.kwargs["validators"]
+    assert isinstance(ref, Validator) and ref.validator_config_id == VALIDATOR_A
+    assert isinstance(inline, InlineValidator)
+    assert inline.model_dump(mode="json", exclude={"is_enabled"}) == pii
+
+    warnings = _update_calls(mock_crud)[-1].meta["callback"]["warnings"]
     assert any("duplicate" in w for w in warnings)
 
 
