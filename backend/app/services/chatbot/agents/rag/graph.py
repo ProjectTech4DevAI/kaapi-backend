@@ -78,13 +78,11 @@ def build_rag_graph(
 ) -> CompiledStateGraph:
     """prepare_context_node -> agent_node <-> tools, ending once the model stops calling tools."""
     tool_model: ToolCallingModel = chat_model.bind_tools([search_tool])
-    # Tools stay bound so the prior tool_use blocks in the history remain valid.
     answer_model: ToolCallingModel = chat_model.bind_tools(
         [search_tool], tool_choice=TOOL_CHOICE_NONE
     )
 
     def prepare_context_node(state: RagState) -> dict[str, list[BaseMessage]]:
-        # Summarized once up front so the tool loop never splits a tool_use/tool_result pair.
         messages = state["messages"]
         context_view = summarize_if_needed(
             chat_model, messages, history_token_limit=history_token_limit
