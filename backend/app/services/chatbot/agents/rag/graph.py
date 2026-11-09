@@ -51,8 +51,6 @@ AGENT_NODE = "agent_node"
 TOOLS_NODE = "tools"
 
 MAX_TOOL_ROUNDS = 3
-# Forced tool use is rejected with thinking on, so the model picks; "none" makes it
-# answer. Only ChatAnthropic passes a dict tool_choice through as-is.
 TOOL_CHOICE_NONE: dict[str, str] = {"type": "none"}
 
 

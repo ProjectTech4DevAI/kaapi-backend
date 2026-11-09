@@ -25,8 +25,6 @@ from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderEr
 
 DEFAULT_MAX_NUM_RESULTS = 5
 OPENAI_MAX_NUM_RESULTS = 50
-# A search is an idempotent read, so one SDK retry absorbs a transient blip
-# without stretching the turn far past OPENAI_TIMEOUT_SECONDS.
 KB_SEARCH_MAX_RETRIES = 1
 CREDENTIAL_API_KEY = "api_key"
 PASSAGE_CHUNK_SEPARATOR = "\n"
