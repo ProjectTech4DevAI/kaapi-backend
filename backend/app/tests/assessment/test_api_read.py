@@ -227,6 +227,33 @@ class TestDetail:
         assert gated.output.pre_filter.topic_relevance.verdict is False
         assert detail.counts.filtered == 1
 
+    def test_pre_filter_only_run_reports_its_own_row_errors(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        bag = _bag(
+            2,
+            pipeline=[{"stage": "topic_relevance", "kind": "GATE"}],
+            stage="topic_relevance",
+            stage_status="COMPLETED",
+            verdicts={
+                "topic_relevance": {
+                    "0": {"verdict": True, "reasoning": "on topic"},
+                    "1": {"verdict": True, "reasoning": ""},
+                }
+            },
+            stage_errors={"topic_relevance": {"1": "provider boom"}},
+        )
+        assessment, _ = _seed(db, auth, total=2, bag=bag)
+
+        with patch(_ROWS, _serving([{"a": "1"}, {"a": "2"}])):
+            detail = build_detail(session=db, assessment=assessment)
+
+        assert [item.output.assessment for item in detail.items] == [None, None]
+        assert detail.items[0].error is None
+        assert detail.items[1].error == "provider boom"
+        assert detail.stages == ["topic_relevance"]
+        assert detail.counts.errors == 1
+        assert detail.counts.assessed == 0
+
     def test_input_shorter_than_total_items(self, db) -> None:
         auth = get_user_test_auth_context(db)
         assessment, _ = _seed(db, auth, total=3)
