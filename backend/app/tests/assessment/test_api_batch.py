@@ -27,24 +27,24 @@ from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.config.config import ConfigTag
 from app.services.assessment.api import batch as batch_service
 from app.services.assessment.api.batch import (
-    ApiStage,
+    PipelineStage,
     StageKind,
     _build_batch_provider,
     _err_str,
     _fail,
     _finalize,
     _openai_output_text,
-    _parse_one,
-    _parse_verdict,
+    parse_one,
+    parse_verdict,
     _poll_outcome,
     _prefilter_for_stage,
     _record_stage,
     _row_index,
     _row_subset,
     _stage_kind,
-    _stage_params,
-    _stage_prompt,
-    _stage_provider_model,
+    stage_params,
+    stage_prompt,
+    stage_provider_model,
     _submit_provider_batch,
     _submit_stage,
     build_pipeline,
@@ -147,15 +147,18 @@ class TestBuildPipeline:
     def test_none_prefilters_is_assessment_only(self) -> None:
         pipeline = build_pipeline(None)
         assert pipeline == [
-            {"stage": ApiStage.ASSESSMENT.value, "kind": StageKind.ASSESSMENT.value}
+            {
+                "stage": PipelineStage.ASSESSMENT.value,
+                "kind": StageKind.ASSESSMENT.value,
+            }
         ]
 
     def test_gate_precedes_assessment(self) -> None:
         blob = _blob(topic_relevance=True)  # stop_on_fail=True -> GATE
         pipeline = build_pipeline(blob.pre_filters)
         assert [s["stage"] for s in pipeline] == [
-            ApiStage.TOPIC_RELEVANCE.value,
-            ApiStage.ASSESSMENT.value,
+            PipelineStage.TOPIC_RELEVANCE.value,
+            PipelineStage.ASSESSMENT.value,
         ]
         assert [s["kind"] for s in pipeline] == [
             StageKind.GATE.value,
@@ -166,8 +169,8 @@ class TestBuildPipeline:
         blob = _blob(topic_relevance=False)  # stop_on_fail=False -> PASS_THROUGH
         pipeline = build_pipeline(blob.pre_filters)
         assert [s["stage"] for s in pipeline] == [
-            ApiStage.TOPIC_RELEVANCE.value,
-            ApiStage.ASSESSMENT.value,
+            PipelineStage.TOPIC_RELEVANCE.value,
+            PipelineStage.ASSESSMENT.value,
         ]
         assert [s["kind"] for s in pipeline] == [
             StageKind.PASS_THROUGH.value,
@@ -179,15 +182,15 @@ class TestNextStageAndKind:
     def test_next_stage_advances_then_none(self) -> None:
         pipeline = build_pipeline(_blob(topic_relevance=True).pre_filters)
         assert (
-            next_stage(pipeline, ApiStage.TOPIC_RELEVANCE.value)
-            == ApiStage.ASSESSMENT.value
+            next_stage(pipeline, PipelineStage.TOPIC_RELEVANCE.value)
+            == PipelineStage.ASSESSMENT.value
         )
-        assert next_stage(pipeline, ApiStage.ASSESSMENT.value) is None
+        assert next_stage(pipeline, PipelineStage.ASSESSMENT.value) is None
 
     def test_stage_kind_lookup_and_missing_raises(self) -> None:
         pipeline = build_pipeline(_blob(topic_relevance=True).pre_filters)
         assert (
-            _stage_kind(pipeline, ApiStage.TOPIC_RELEVANCE.value)
+            _stage_kind(pipeline, PipelineStage.TOPIC_RELEVANCE.value)
             == StageKind.GATE.value
         )
         with pytest.raises(ValueError, match="not in pipeline"):
@@ -228,40 +231,40 @@ class TestBuildRows:
 class TestStagePrompt:
     def test_assessment_uses_config_submission(self) -> None:
         blob = _blob(submission="assess {a} now")
-        assert _stage_prompt(blob, ApiStage.ASSESSMENT.value) == "assess {a} now"
+        assert stage_prompt(blob, PipelineStage.ASSESSMENT.value) == "assess {a} now"
 
     def test_prefilter_returns_its_own_submission(self) -> None:
         blob = _blob(topic_relevance=True, topic_submission="rank {a}")
-        assert _stage_prompt(blob, ApiStage.TOPIC_RELEVANCE.value) == "rank {a}"
+        assert stage_prompt(blob, PipelineStage.TOPIC_RELEVANCE.value) == "rank {a}"
 
     def test_prefilter_without_submission_is_none(self) -> None:
         blob = _blob(topic_relevance=True)
-        assert _stage_prompt(blob, ApiStage.TOPIC_RELEVANCE.value) is None
+        assert stage_prompt(blob, PipelineStage.TOPIC_RELEVANCE.value) is None
 
 
 class TestPrefilterForStage:
     def test_returns_configured_filter(self) -> None:
         blob = _blob(topic_relevance=True)
-        tr = _prefilter_for_stage(blob, ApiStage.TOPIC_RELEVANCE.value)
+        tr = _prefilter_for_stage(blob, PipelineStage.TOPIC_RELEVANCE.value)
         assert tr.params["instructions"] == TOPIC_CRITERIA
 
     def test_missing_filter_raises(self) -> None:
         blob = _blob()  # no pre-filters
         with pytest.raises(ValueError, match="No pre-filter configured"):
-            _prefilter_for_stage(blob, ApiStage.TOPIC_RELEVANCE.value)
+            _prefilter_for_stage(blob, PipelineStage.TOPIC_RELEVANCE.value)
 
 
 class TestStageParams:
     def test_assessment_renames_output_schema_and_drops_input_schema(self) -> None:
         blob = _blob(input_schema={"a": {"type": "text"}})
-        params = _stage_params(blob, ApiStage.ASSESSMENT.value)
+        params = stage_params(blob, PipelineStage.ASSESSMENT.value)
         assert params["output_schema"] == OUTPUT_SCHEMA
         assert "json_output_schema" not in params
         assert "input_schema" not in params
 
     def test_prefilter_layers_verdict_schema_and_appends_gate_directive(self) -> None:
         blob = _blob(topic_relevance=True)
-        params = _stage_params(blob, ApiStage.TOPIC_RELEVANCE.value)
+        params = stage_params(blob, PipelineStage.TOPIC_RELEVANCE.value)
         assert params["output_schema"] == batch_service.PREFILTER_VERDICT_SCHEMA
         assert (
             params["instructions"]
@@ -275,21 +278,23 @@ class TestStageParams:
             topic_relevance=True,
             topic_submission="rank {a}",
         )
-        assert "submission" not in _stage_params(blob, ApiStage.ASSESSMENT.value)
-        assert "submission" not in _stage_params(blob, ApiStage.TOPIC_RELEVANCE.value)
+        assert "submission" not in stage_params(blob, PipelineStage.ASSESSMENT.value)
+        assert "submission" not in stage_params(
+            blob, PipelineStage.TOPIC_RELEVANCE.value
+        )
 
 
 class TestStageProviderModel:
     def test_assessment_uses_config_provider_model(self) -> None:
         blob = _blob(provider="anthropic", model="claude-sonnet-4-6")
-        assert _stage_provider_model(blob, ApiStage.ASSESSMENT.value) == (
+        assert stage_provider_model(blob, PipelineStage.ASSESSMENT.value) == (
             "anthropic",
             "claude-sonnet-4-6",
         )
 
     def test_prefilter_uses_own_provider_model(self) -> None:
         blob = _blob(topic_relevance=True)
-        assert _stage_provider_model(blob, ApiStage.TOPIC_RELEVANCE.value) == (
+        assert stage_provider_model(blob, PipelineStage.TOPIC_RELEVANCE.value) == (
             "openai",
             "gpt-4o",
         )
@@ -338,12 +343,12 @@ class TestOpenAIOutputText:
 
 class TestParseOne:
     def test_top_level_error(self) -> None:
-        result = _parse_one({"error": {"message": "bad"}}, "openai")
+        result = parse_one({"error": {"message": "bad"}}, "openai")
         assert result["output"] is None
         assert result["error"] == "bad"
 
     def test_openai_success(self) -> None:
-        result = _parse_one(
+        result = parse_one(
             {
                 "response": {
                     "status_code": 200,
@@ -361,7 +366,7 @@ class TestParseOne:
         assert result["response_id"] == "resp_1"
 
     def test_openai_http_error_status(self) -> None:
-        result = _parse_one(
+        result = parse_one(
             {
                 "response": {
                     "status_code": 500,
@@ -375,12 +380,12 @@ class TestParseOne:
         assert result["response_id"] == "resp_2"
 
     def test_openai_empty_output(self) -> None:
-        result = _parse_one({"response": {"status_code": 200, "body": {}}}, "openai")
+        result = parse_one({"response": {"status_code": 200, "body": {}}}, "openai")
         assert result["output"] is None
         assert result["error"] == "Empty response output"
 
     def test_anthropic_success(self) -> None:
-        result = _parse_one(
+        result = parse_one(
             {
                 "response": {
                     "content": [
@@ -398,7 +403,7 @@ class TestParseOne:
         assert result["response_id"] == "msg_1"
 
     def test_anthropic_empty(self) -> None:
-        result = _parse_one({"response": {"content": []}}, "anthropic")
+        result = parse_one({"response": {"content": []}}, "anthropic")
         assert result["output"] is None
         assert result["error"] == "Empty response"
 
@@ -407,11 +412,11 @@ class TestParseOne:
             "app.services.assessment.api.batch.extract_text_from_response_dict",
             return_value="gemini text",
         ):
-            result = _parse_one({"response": {"candidates": []}}, "google")
+            result = parse_one({"response": {"candidates": []}}, "google")
         assert result["output"] == "gemini text"
 
     def test_google_empty_response(self) -> None:
-        result = _parse_one({"response": None}, "google")
+        result = parse_one({"response": None}, "google")
         assert result["output"] is None
         assert result["error"] == "Empty response"
 
@@ -420,7 +425,7 @@ class TestParseOne:
             "app.services.assessment.api.batch.extract_text_from_response_dict",
             return_value="vertex text",
         ):
-            result = _parse_one({"response": {"candidates": []}}, "google-gcp")
+            result = parse_one({"response": {"candidates": []}}, "google-gcp")
         assert result["output"] == "vertex text"
 
     def test_google_aistudio_parses_like_google(self) -> None:
@@ -428,12 +433,12 @@ class TestParseOne:
             "app.services.assessment.api.batch.extract_text_from_response_dict",
             return_value="aistudio text",
         ):
-            result = _parse_one({"response": {"candidates": []}}, "google-aistudio")
+            result = parse_one({"response": {"candidates": []}}, "google-aistudio")
         assert result["output"] == "aistudio text"
         assert result["error"] is None
 
     def test_unknown_provider(self) -> None:
-        result = _parse_one({"response": {}}, "cohere")
+        result = parse_one({"response": {}}, "cohere")
         assert result["output"] is None
         assert result["error"] == "Unknown provider cohere"
 
@@ -451,17 +456,17 @@ class TestParseBatchResults:
 
 class TestParseVerdict:
     def test_empty_output_fails_open(self) -> None:
-        assert _parse_verdict(None) == {"verdict": True, "reasoning": ""}
+        assert parse_verdict(None) == {"verdict": True, "reasoning": ""}
 
     def test_valid_json(self) -> None:
         out = json.dumps({"verdict": False, "reasoning": "off topic"})
-        assert _parse_verdict(out) == {"verdict": False, "reasoning": "off topic"}
+        assert parse_verdict(out) == {"verdict": False, "reasoning": "off topic"}
 
     def test_unparseable_fails_open(self) -> None:
-        assert _parse_verdict("not json {") == {"verdict": True, "reasoning": ""}
+        assert parse_verdict("not json {") == {"verdict": True, "reasoning": ""}
 
     def test_missing_verdict_key_defaults_true(self) -> None:
-        assert _parse_verdict(json.dumps({"reasoning": "x"})) == {
+        assert parse_verdict(json.dumps({"reasoning": "x"})) == {
             "verdict": True,
             "reasoning": "x",
         }
@@ -473,7 +478,9 @@ class TestRecordStage:
 
     def test_assessment_kind_is_noop(self) -> None:
         bag = self._bag(2)
-        _record_stage(bag, ApiStage.ASSESSMENT.value, StageKind.ASSESSMENT.value, {})
+        _record_stage(
+            bag, PipelineStage.ASSESSMENT.value, StageKind.ASSESSMENT.value, {}
+        )
         assert bag["verdicts"] == {}
 
     def test_gate_marks_failed_rows(self) -> None:
@@ -482,9 +489,11 @@ class TestRecordStage:
             0: {"output": json.dumps({"verdict": True, "reasoning": ""})},
             1: {"output": json.dumps({"verdict": False, "reasoning": "no"})},
         }
-        _record_stage(bag, ApiStage.TOPIC_RELEVANCE.value, StageKind.GATE.value, parsed)
+        _record_stage(
+            bag, PipelineStage.TOPIC_RELEVANCE.value, StageKind.GATE.value, parsed
+        )
         assert bag["gate_passed"] == [True, False]
-        counters = bag["counters"][ApiStage.TOPIC_RELEVANCE.value]
+        counters = bag["counters"][PipelineStage.TOPIC_RELEVANCE.value]
         assert counters == {"total": 2, "passed": 1, "rejected": 1}
 
     def test_pass_through_records_but_does_not_gate(self) -> None:
@@ -495,25 +504,25 @@ class TestRecordStage:
         }
         _record_stage(
             bag,
-            ApiStage.TOPIC_RELEVANCE.value,
+            PipelineStage.TOPIC_RELEVANCE.value,
             StageKind.PASS_THROUGH.value,
             parsed,
         )
         assert bag["gate_passed"] == [True, True]
-        assert bag["counters"][ApiStage.TOPIC_RELEVANCE.value]["rejected"] == 1
+        assert bag["counters"][PipelineStage.TOPIC_RELEVANCE.value]["rejected"] == 1
 
 
 class TestRowSubset:
     def test_assessment_only_gate_passed(self) -> None:
         bag = {"gate_passed": [True, False, True]}
         assert _row_subset(
-            bag, ApiStage.ASSESSMENT.value, StageKind.ASSESSMENT.value, 3
+            bag, PipelineStage.ASSESSMENT.value, StageKind.ASSESSMENT.value, 3
         ) == [0, 2]
 
     def test_prefilter_all_rows(self) -> None:
         bag = {"gate_passed": [True, False, True]}
         assert _row_subset(
-            bag, ApiStage.TOPIC_RELEVANCE.value, StageKind.GATE.value, 3
+            bag, PipelineStage.TOPIC_RELEVANCE.value, StageKind.GATE.value, 3
         ) == [0, 1, 2]
 
 
@@ -718,7 +727,7 @@ class TestRunBatchStageFullWalk:
         assert assessment.status == AssessmentStatus.COMPLETED
         bag_after = execution.execution
         assert bag_after["gate_passed"] == [True, False]
-        tr_verdicts = bag_after["verdicts"][ApiStage.TOPIC_RELEVANCE.value]
+        tr_verdicts = bag_after["verdicts"][PipelineStage.TOPIC_RELEVANCE.value]
         assert tr_verdicts["0"]["verdict"] is True
         assert tr_verdicts["1"]["verdict"] is False
         assert build_result.called
@@ -1114,14 +1123,14 @@ class TestSubmitStageEmptySubset:
             assessment=assessment,
             blob=blob,
             bag=bag,
-            stage=ApiStage.ASSESSMENT.value,
+            stage=PipelineStage.ASSESSMENT.value,
             organization_id=auth.organization_id,
             project_id=auth.project_id,
         )
         # Empty subset submits no provider batch and reports False so the driver
         # advances/finalizes instead of re-submitting a PENDING stage forever.
         assert ok is False
-        assert bag["counters"][ApiStage.ASSESSMENT.value] == {
+        assert bag["counters"][PipelineStage.ASSESSMENT.value] == {
             "total": 0,
             "passed": 0,
             "rejected": 0,
@@ -1594,7 +1603,7 @@ class TestRunBatchStageFailurePaths:
                 lambda _e: _SessionCtx(db),
             ),
             patch(
-                "app.services.assessment.api.batch._resolve_blob",
+                "app.services.assessment.api.batch.api.get_config_blob",
                 side_effect=HTTPException(
                     status_code=404, detail="config version deleted"
                 ),
