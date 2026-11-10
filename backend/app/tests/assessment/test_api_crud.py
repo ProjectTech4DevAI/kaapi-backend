@@ -221,19 +221,12 @@ class TestSetResultFiles:
 
 class TestDeriveMethod:
     def test_response_input(self) -> None:
-        assert derive_method(ResponseInput(), None) == AssessmentMethod.RESPONSE
-
-    def test_batch_input(self) -> None:
         assert (
-            derive_method(BatchInput(data=[{"a": "1"}]), None) == AssessmentMethod.BATCH
+            derive_method(ResponseInput(data={"a": "1"})) == AssessmentMethod.RESPONSE
         )
 
-    def test_dataset_only_is_run(self) -> None:
-        assert derive_method(None, 7) == AssessmentMethod.RUN
-
-    def test_nothing_raises(self) -> None:
-        with pytest.raises(ValueError, match="Provide inline"):
-            derive_method(None, None)
+    def test_batch_input(self) -> None:
+        assert derive_method(BatchInput(data=[{"a": "1"}])) == AssessmentMethod.BATCH
 
 
 class TestPreFilterValidators:
@@ -531,10 +524,10 @@ class TestAssessmentInputExtraForbid:
 
     def test_response_input_rejects_query_key(self) -> None:
         with pytest.raises(ValidationError):
-            ResponseInput.model_validate({"query": "hi"})
+            ResponseInput.model_validate({"query": "hi", "data": {"a": "1"}})
 
     def test_response_input_without_query_accepted(self) -> None:
-        assert ResponseInput.model_validate({"attachments": []}).attachments == []
+        assert ResponseInput.model_validate({"data": {"a": "1"}}).data == {"a": "1"}
 
 
 class TestInputColumn:

@@ -15,6 +15,7 @@ from app.crud.assessment.submission import create_submission
 from app.models.assessment import (
     Assessment,
     AssessmentCreate,
+    AssessmentMethod,
     AssessmentStatus,
 )
 from app.models.config.assessment_blob import AssessmentConfigBlob
@@ -126,6 +127,41 @@ class TestSubmit:
         assert bag["stage"] == "assessment"
         assert bag["stage_status"] == AssessmentStatus.PENDING.value
         assert bag["callback_url"].startswith("https://hook.example")
+
+    def test_response_creates_run_with_the_row_and_dispatches(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        config = _assessment_config(db, auth.project_id)
+        request = _request(config, {"a": "one"})
+
+        with patch("app.celery.tasks.job_execution.run_assessment_response") as task:
+            response = submission.submit(
+                session=db,
+                request=request,
+                organization_id=auth.organization_id,
+                project_id=auth.project_id,
+            )
+
+        assert response.status == AssessmentStatus.PROCESSING
+        task.delay.assert_called_once()
+        assessment = db.get(Assessment, response.assessment_id)
+        assert assessment.method == AssessmentMethod.RESPONSE
+        assert assessment.input == {"data": {"a": "one"}}
+        assert assessment.submission_input is None
+        (execution,) = api.list_executions(
+            session=db, assessment_id=response.assessment_id
+        )
+        assert execution.total_items == 1
+        assert execution.execution["gate_passed"] == [True]
+        assert task.delay.call_args.kwargs["execution_id"] == execution.id
+
+    def test_response_without_callback_url_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="needs a callback_url"):
+            AssessmentCreate.model_validate(
+                {
+                    "config": {"id": str(uuid4()), "version": 1},
+                    "input": {"data": {"a": "one"}},
+                }
+            )
 
     def test_immediate_dispatch_keeps_trace_propagation(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -289,25 +325,6 @@ class TestSubmit:
                 project_id=auth.project_id,
             )
         assert exc.value.status_code == 404
-
-    def test_response_input_method_is_501(self, db) -> None:
-        auth = get_user_test_auth_context(db)
-        config = _assessment_config(db, auth.project_id)
-        request = AssessmentCreate.model_validate(
-            {
-                "config": {"id": str(config.id), "version": 1},
-                "input": {"attachments": []},
-                "callback_url": "https://hook.example/cb",
-            }
-        )
-        with pytest.raises(HTTPException) as exc:
-            submission.submit(
-                session=db,
-                request=request,
-                organization_id=auth.organization_id,
-                project_id=auth.project_id,
-            )
-        assert exc.value.status_code == 501
 
     def test_base64_attachment_column_is_422(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -539,18 +556,3 @@ class TestCreateAssessmentRoute:
         assert data["status"] == "PROCESSING"
         assert data["message"] == "Your assessment is being processed"
         task.delay.assert_called_once()
-
-    def test_response_input_is_501(
-        self, client: TestClient, superuser_api_key_header
-    ) -> None:
-        body = {
-            "config": {"id": "00000000-0000-0000-0000-000000000001", "version": 1},
-            "input": {"attachments": []},
-            "callback_url": "https://hook.example/cb",
-        }
-        resp = client.post(
-            f"{settings.API_V1_STR}/assessments",
-            headers=superuser_api_key_header,
-            json=body,
-        )
-        assert resp.status_code == 501
