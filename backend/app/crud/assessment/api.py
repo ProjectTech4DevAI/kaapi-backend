@@ -16,6 +16,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session, col, select
 
 from app.core.util import now
+from app.crud.config.version import ConfigVersionCrud
 from app.models.assessment import (
     Assessment,
     AssessmentMethod,
@@ -24,6 +25,8 @@ from app.models.assessment import (
     AssessmentSubmission,
     BatchRunState,
 )
+from app.models.config.assessment_blob import AssessmentConfigBlob
+from app.models.config.config import ConfigTag
 
 logger = logging.getLogger(__name__)
 
@@ -233,6 +236,20 @@ def list_assessments_with_execution(
         .offset(offset)
     )
     return list(session.exec(statement).all())
+
+
+def get_config_blob(
+    *, session: Session, execution: AssessmentRun, project_id: int
+) -> AssessmentConfigBlob:
+    """The ASSESSMENT config version the run was submitted with, parsed."""
+    version_crud = ConfigVersionCrud(
+        session=session,
+        config_id=execution.config_id,
+        project_id=project_id,
+        tag=ConfigTag.ASSESSMENT,
+    )
+    version = version_crud.exists_or_raise(version_number=execution.config_version)
+    return AssessmentConfigBlob.model_validate(version.config_blob)
 
 
 def list_executions(*, session: Session, assessment_id: UUID) -> list[AssessmentRun]:

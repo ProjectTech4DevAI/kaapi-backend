@@ -1,8 +1,8 @@
-"""Webhook delivery for the BATCH API-client path.
+"""Webhook delivery for the API-client path.
 
 POSTs the ``AssessmentCallback`` envelope to the client's callback_url on completion via
 the shared SSRF-guarded ``send_callback`` (HMAC-signed with the project webhook secret) —
-the same transport the response path uses. One inline attempt, no retry.
+the same transport the response path uses. The sender retries up to 4 times with backoff.
 """
 
 import logging
@@ -12,8 +12,8 @@ from sqlmodel import Session
 
 from app.models.assessment import (
     Assessment,
-    AssessmentBatchResult,
     AssessmentCallback,
+    AssessmentResultData,
     AssessmentStatus,
 )
 from app.services.assessment.api.result_files import presign_result_files
@@ -26,7 +26,7 @@ def deliver(
     *,
     session: Session,
     assessment: Assessment,
-    result: AssessmentBatchResult,
+    result: AssessmentResultData | None,
     callback_url: str,
     request_metadata: dict[str, JsonValue] | None,
     failure_message: str | None,
