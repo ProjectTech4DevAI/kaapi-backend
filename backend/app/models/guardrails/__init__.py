@@ -1,7 +1,4 @@
-from app.models.guardrails.request import (
-    GuardrailValidator,
-    GuardrailsRequest,
-)
+from app.models.guardrails.request import GuardrailsRequest
 from app.models.guardrails.response import (
     GuardrailsCallbackData,
     GuardrailsCallbackResponse,
@@ -13,7 +10,6 @@ from app.models.guardrails.response import (
 )
 
 __all__ = [
-    "GuardrailValidator",
     "GuardrailsCallbackData",
     "GuardrailsCallbackResponse",
     "GuardrailsCallbackUsage",
