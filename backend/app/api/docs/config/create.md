@@ -89,7 +89,7 @@ shape is documented here:
   A `strict: true` column must be present and non-blank in every submission row; any other
   column may be omitted or blank (see the submit docs for per-row validation). Unknown keys
   in a column spec are rejected. Shared by the pre-filter and the assessment call.
-* `assessment` (required) — the grading call. `provider` is `openai` | `google` |
+* `assessment` (optional) — the grading call. `provider` is `openai` | `google` |
   `anthropic`, `type` is `"text"`. `params` carries the `model`, the `instructions`
   (system prompt), the **mandatory** per-row `submission` template (`{column}`
   placeholders must name `input_schema` keys), and an optional `json_output_schema`
@@ -102,6 +102,10 @@ shape is documented here:
   an optional `knowledge_base_id`. Each pre-filter carries `stop_on_fail` (`true` = a
   failing verdict stops the chain and skips the assessment for that row; `false` = the
   verdict is just recorded).
+
+At least one of `pre_filters.topic_relevance` or `assessment` is required (`422` otherwise). With only
+`pre_filters` a run returns the verdicts and `output.assessment` is `null`; `stop_on_fail`
+then has no effect, as no assessment follows.
 
 ```json
 "config_blob": {
