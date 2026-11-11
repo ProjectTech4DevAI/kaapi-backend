@@ -315,13 +315,13 @@ def get_openai_client(session: Session, org_id: int, project_id: int) -> OpenAI:
     try:
         return OpenAI(api_key=credentials["api_key"])
     except Exception as e:
-        logger.warning(
+        logger.error(
             f"[get_openai_client] Failed to configure OpenAI client. | project_id: {project_id} | error: {str(e)}",
             exc_info=True,
         )
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to configure OpenAI client: {str(e)}",
+            detail="Failed to configure OpenAI client.",
         )
 
 
@@ -354,7 +354,7 @@ def get_anthropic_client(session: Session, org_id: int, project_id: int) -> Anth
         )
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to configure Anthropic client: {str(e)}",
+            detail="Failed to configure Anthropic client.",
         )
 
 
@@ -395,13 +395,13 @@ def get_langfuse_client(session: Session, org_id: int, project_id: int) -> Langf
     try:
         return _build_langfuse_client(credentials)
     except Exception as e:
-        logger.warning(
+        logger.error(
             f"[get_langfuse_client] Failed to configure Langfuse client. | project_id: {project_id} | error: {str(e)}",
             exc_info=True,
         )
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to configure Langfuse client: {str(e)}",
+            detail="Failed to configure Langfuse client.",
         )
 
 
