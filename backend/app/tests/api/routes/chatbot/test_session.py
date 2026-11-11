@@ -17,6 +17,7 @@ from app.crud.chatbot import (
 from app.models import (
     Chatbot,
     ChatbotCompletionStatusEnum,
+    ChatbotFlowNodeTypeEnum,
     ChatbotMessageRoleEnum,
     ChatbotSession,
     ChatbotSessionStatusEnum,
@@ -25,6 +26,7 @@ from app.models import (
 from app.services.chatbot import session as session_service
 from app.services.chatbot.exceptions import (
     CONCURRENT_SESSION_CONFLICT_MESSAGE,
+    RAG_MESSAGE_REQUIRED_MESSAGE,
     ChatbotSessionConflictError,
 )
 from app.services.chatbot.session import NO_LIVE_FLOW_MESSAGE
@@ -39,6 +41,7 @@ from app.tests.utils.chatbot import (
     build_flow_edge,
     build_flow_node,
     build_onboarding_node,
+    create_test_chatbot,
     create_test_chatbot_session,
     create_test_flow_version,
     create_test_live_chatbot,
@@ -62,6 +65,25 @@ def _supersede(db: Session, chatbot_session: ChatbotSession) -> ChatbotSession:
 @pytest.fixture
 def chatbot_session(db: Session, live_chatbot: Chatbot) -> ChatbotSession:
     return create_test_chatbot_session(db, chatbot=live_chatbot)
+
+
+@pytest.fixture
+def rag_chatbot_session(
+    db: Session, config: Config, user_api_key: TestAuthContext
+) -> ChatbotSession:
+    """A session in the caller's project whose live flow's only node is a rag node."""
+    chatbot = create_test_chatbot(db, project=user_api_key.project)
+    create_test_flow_version(
+        db,
+        chatbot=chatbot,
+        nodes=[
+            build_onboarding_node(
+                config_id=config.id, node_type=ChatbotFlowNodeTypeEnum.RAG.value
+            )
+        ],
+        is_live=True,
+    )
+    return create_test_chatbot_session(db, chatbot=chatbot)
 
 
 @pytest.fixture
@@ -490,6 +512,42 @@ class TestSendChatbotSessionMessage:
         assert resp.status_code == 202
         assert list_chatbot_session_messages(db, session_id=chatbot_session.id) == []
         assert [job["session_id"] for job in enqueued] == [str(chatbot_session.id)]
+
+    def test_omitted_message_on_rag_node_returns_422_and_queues_nothing(
+        self,
+        db: Session,
+        rag_chatbot_session: ChatbotSession,
+        send_message: Callable[..., Response],
+        enqueued: list[dict[str, Any]],
+    ) -> None:
+        resp = send_message(rag_chatbot_session.id)
+
+        assert resp.status_code == 422
+        assert resp.json()["error"] == RAG_MESSAGE_REQUIRED_MESSAGE
+        assert (
+            list_chatbot_session_messages(db, session_id=rag_chatbot_session.id) == []
+        )
+        assert enqueued == []
+
+    def test_rag_node_first_message_is_stored_and_queued(
+        self,
+        db: Session,
+        rag_chatbot_session: ChatbotSession,
+        send_message: Callable[..., Response],
+        enqueued: list[dict[str, Any]],
+    ) -> None:
+        resp = send_message(rag_chatbot_session.id, message="What is the tuition?")
+
+        assert resp.status_code == 202
+        stored = list_chatbot_session_messages(db, session_id=rag_chatbot_session.id)
+        assert [(m.role, m.content, m.node_id) for m in stored] == [
+            (
+                ChatbotMessageRoleEnum.USER,
+                "What is the tuition?",
+                rag_chatbot_session.active_node_id,
+            )
+        ]
+        assert [job["session_id"] for job in enqueued] == [str(rag_chatbot_session.id)]
 
     def test_omitted_message_after_session_started_returns_422(
         self,

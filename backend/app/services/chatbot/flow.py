@@ -28,6 +28,7 @@ from app.services.chatbot.config import (
     build_chatbot_model_settings,
     get_anthropic_api_key,
     get_chatbot_config_version,
+    prepare_rag_search_client,
 )
 from app.services.chatbot.exceptions import (
     ChatbotFlowConflictError,
@@ -41,9 +42,9 @@ KAAPI_ERROR_TAG = "[KAAPI]"
 FIRST_FLOW_VERSION = 1
 MAX_INPUT_NODES = 1
 MAX_OUTPUT_NODES = 1
-# The runtime only executes onboarding agents on this branch; coordinator/rag are stored but not publishable.
+# The runtime executes onboarding and rag agents; coordinator is stored but not publishable yet.
 SUPPORTED_AGENT_NODE_TYPES: frozenset[ChatbotFlowNodeTypeEnum] = frozenset(
-    {ChatbotFlowNodeTypeEnum.ONBOARDING}
+    {ChatbotFlowNodeTypeEnum.ONBOARDING, ChatbotFlowNodeTypeEnum.RAG}
 )
 _SUPPORTED_AGENT_NODE_TYPES_LABEL = ", ".join(
     sorted(node_type.value for node_type in SUPPORTED_AGENT_NODE_TYPES)
@@ -107,7 +108,7 @@ def build_chatbot_flow_version_public(
     )
 
 
-def _raise_flow_validation_error(function_name: str, problems: list[str]) -> NoReturn:
+def _raise_flow_validation_error(problems: list[str]) -> NoReturn:
     error_message = f"{KAAPI_ERROR_TAG} Chatbot flow is invalid: {'; '.join(problems)}."
     raise ChatbotFlowValidationError(error_message)
 
@@ -124,7 +125,6 @@ def resolve_entry_node(
         agent_nodes = [node for node in nodes if node.type in AGENT_NODE_TYPES]
         if len(agent_nodes) != 1:
             _raise_flow_validation_error(
-                "resolve_entry_node",
                 [
                     "a flow without edges must contain exactly one agent node "
                     f"(found {len(agent_nodes)})"
@@ -135,7 +135,6 @@ def resolve_entry_node(
     input_nodes = [node for node in nodes if node.type == ChatbotFlowNodeTypeEnum.INPUT]
     if len(input_nodes) != 1:
         _raise_flow_validation_error(
-            "resolve_entry_node",
             [
                 "a flow with edges must contain exactly one input node "
                 f"(found {len(input_nodes)})"
@@ -146,7 +145,6 @@ def resolve_entry_node(
     entry_edges = [edge for edge in edges if edge.source == input_node_id]
     if len(entry_edges) != 1:
         _raise_flow_validation_error(
-            "resolve_entry_node",
             [
                 f"input node '{input_node_id}' must have exactly one outgoing edge "
                 f"(found {len(entry_edges)})"
@@ -156,7 +154,6 @@ def resolve_entry_node(
     entry_node = find_flow_node(nodes, entry_edges[0].target)
     if entry_node is None or entry_node.type not in AGENT_NODE_TYPES:
         _raise_flow_validation_error(
-            "resolve_entry_node",
             [
                 f"the input node's edge must lead to an agent node "
                 f"(target '{entry_edges[0].target}')"
@@ -207,7 +204,7 @@ def _list_structural_problems(
 
 
 def _pin_agent_node_config(
-    *, session: Session, project_id: int, node: ChatbotFlowNode
+    *, session: Session, organization_id: int, project_id: int, node: ChatbotFlowNode
 ) -> tuple[ChatbotFlowNode, list[str]]:
     """Check the agent node is runnable; returns the node with its config_version pinned, plus any problems."""
     if node.type not in SUPPORTED_AGENT_NODE_TYPES:
@@ -236,13 +233,24 @@ def _pin_agent_node_config(
         return node, problems
 
     try:
-        build_chatbot_model_settings(
-            version_row, max_tokens=None, history_token_limit=None
-        )
+        model_settings = build_chatbot_model_settings(version_row)
     except ChatbotInputError as e:
         reason = str(e).removeprefix(KAAPI_ERROR_TAG).strip()
         problems.append(f"node '{node.id}': {reason}")
         return node, problems
+
+    if node.type == ChatbotFlowNodeTypeEnum.RAG:
+        try:
+            prepare_rag_search_client(
+                session=session,
+                organization_id=organization_id,
+                project_id=project_id,
+                model_settings=model_settings,
+            )
+        except ChatbotInputError as e:
+            reason = str(e).removeprefix(KAAPI_ERROR_TAG).strip()
+            problems.append(f"node '{node.id}': {reason}")
+            return node, problems
 
     # Pinned at publish so later config edits never change a published flow.
     pinned_data = {**node.data, "config_version": version_row.version}
@@ -275,13 +283,16 @@ def validate_flow_for_publish(
             pinned_nodes.append(node)
             continue
         pinned_node, node_problems = _pin_agent_node_config(
-            session=session, project_id=project_id, node=node
+            session=session,
+            organization_id=organization_id,
+            project_id=project_id,
+            node=node,
         )
         pinned_nodes.append(pinned_node)
         problems.extend(node_problems)
 
     if problems:
-        _raise_flow_validation_error("validate_flow_for_publish", problems)
+        _raise_flow_validation_error(problems)
 
     resolve_entry_node(nodes=pinned_nodes, edges=edges)
     return pinned_nodes
