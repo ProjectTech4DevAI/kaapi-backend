@@ -190,7 +190,16 @@ class AssessmentConfigBlob(SQLModel):
         ),
     )
     pre_filters: AssessmentPreFilters | None = None
-    assessment: AssessmentCompletionConfig
+    assessment: AssessmentCompletionConfig | None = None
+
+    @model_validator(mode="after")
+    def _require_a_stage(self):
+        has_pre_filter = bool(self.pre_filters and self.pre_filters.topic_relevance)
+        if not has_pre_filter and self.assessment is None:
+            raise ValueError(
+                "An ASSESSMENT config needs at least one of 'pre_filters' or 'assessment'."
+            )
+        return self
 
     def input_columns(self) -> dict[str, dict[str, Any]]:
         return {
@@ -208,9 +217,11 @@ class AssessmentConfigBlob(SQLModel):
         """
         declared = set(self.input_schema)
 
-        blocks: list[tuple[str, str]] = [
-            ("assessment", self.assessment.params.get("submission") or "")
-        ]
+        blocks: list[tuple[str, str]] = []
+        if self.assessment is not None:
+            blocks.append(
+                ("assessment", self.assessment.params.get("submission") or "")
+            )
         topic_relevance = self.pre_filters.topic_relevance if self.pre_filters else None
         if topic_relevance is not None and topic_relevance.params.get("submission"):
             blocks.append(
@@ -236,7 +247,9 @@ class AssessmentConfigBlob(SQLModel):
     @model_validator(mode="after")
     def _validate_column_types_supported(self):
         """Every stage's provider must accept each media column type in input_schema."""
-        stage_providers = {"assessment": self.assessment.provider}
+        stage_providers = {}
+        if self.assessment is not None:
+            stage_providers["assessment"] = self.assessment.provider
         if self.pre_filters and self.pre_filters.topic_relevance:
             stage_providers[
                 "pre_filter topic_relevance"

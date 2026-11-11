@@ -8,7 +8,7 @@ All paths relative to `backend/app/`. Related: [llm-call.md](llm-call.md) (guard
 
 | Entry point | Shape | Where |
 |---|---|---|
-| `POST /guardrails` | Standalone async job. Caller supplies text + validator IDs, gets `job_id`, result via webhook or poll. For callers running their own LLM workflow. | `api/routes/guardrails.py`, `services/guardrails/jobs.py` |
+| `POST /guardrails` | Standalone async job. Caller supplies text + validators (stored IDs or inline specs), gets `job_id`, result via webhook or poll. For callers running their own LLM workflow. | `api/routes/guardrails.py`, `services/guardrails/jobs.py` |
 | `/llm/call` + `/llm/chain` + **fast evaluation** | Inline hooks around the provider call, driven by `config_blob.input_guardrails` / `output_guardrails`. | `services/llm/jobs.py` (`apply_input_guardrails`, `apply_output_guardrails`) |
 
 Both funnel into `apply_guardrails()` in `services/llm/guardrails.py`. That module is the **only** place that talks HTTP to the guardrails service.
@@ -71,7 +71,8 @@ Worker (`execute_job`): PROCESSING → `_dedupe_validators` → `apply_guardrail
 
 Endpoint-specific behaviour, none of which exists on the `/llm/call` path:
 
-- **Dedupe.** `_dedupe_validators` drops repeated `validator_config_id`s (order-preserving) so callers are not double-billed upstream.
+- **Validator shape.** `GuardrailsRequest.config` is `list[GuardrailEntry]`, the same ref-or-inline union as `/llm/call` blobs. Refs run before inline specs (`apply_guardrails` concatenates `fetched + inline_specs`).
+- **Dedupe.** `_dedupe_validators` drops repeated entries (order-preserving) so callers are not double-billed upstream — refs keyed by `validator_config_id`, inline specs by canonical JSON.
 - **Warnings channel.** Bypass, dedupe, and "no validators resolved" become human-readable strings. Delivered as `metadata.warnings` in the callback and `warnings[]` on the poll response. A caller-supplied `warnings` key in `request_metadata` is overwritten (documented in the model docstring).
 - **`job.meta`** holds `{request, response, callback}`. Raw unsafe text is persisted on purpose — this endpoint exists to inspect unsafe content.
 - **`response_id` is server-minted** (`uuid4`), so callers always have a stable correlation handle even when upstream returns none.

@@ -187,6 +187,42 @@ def test_apply_guardrails_malformed_validator_id_422(
     assert resp.status_code == 422
 
 
+@pytest.mark.parametrize(
+    "config",
+    [
+        [{"type": "pii_remover", "on_fail": "fix"}],
+        [{"validator_config_id": VALIDATOR_ID}, {"type": "uli_slur_match"}],
+        # Legacy bookkeeping fields are ignored, not rejected.
+        [{"validator_config_id": VALIDATOR_ID, "type": "input_guardrail", "tag": "x"}],
+    ],
+    ids=["inline", "mixed", "legacy_type_tag"],
+)
+def test_apply_guardrails_accepts_ref_and_inline_entries(
+    client: TestClient, user_api_key_header: dict[str, str], config: list[dict]
+) -> None:
+    with patch("app.api.routes.guardrails.start_job") as mock_start:
+        mock_start.return_value = _stub_job()
+        resp = client.post(
+            "api/v1/guardrails",
+            json=_payload(config=config),
+            headers=user_api_key_header,
+        )
+
+    assert resp.status_code == 200
+    mock_start.assert_called_once()
+
+
+def test_apply_guardrails_unknown_inline_type_422(
+    client: TestClient, user_api_key_header: dict[str, str]
+) -> None:
+    resp = client.post(
+        "api/v1/guardrails",
+        json=_payload(config=[{"type": "not_a_validator"}]),
+        headers=user_api_key_header,
+    )
+    assert resp.status_code == 422
+
+
 def test_apply_guardrails_requires_auth(client: TestClient) -> None:
     resp = client.post("api/v1/guardrails", json=_payload())
     assert resp.status_code in (401, 403)

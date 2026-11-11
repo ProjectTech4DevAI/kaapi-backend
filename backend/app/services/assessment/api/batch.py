@@ -62,8 +62,8 @@ from app.models.assessment import (
 from app.models.batch_job import BatchJob, BatchJobType
 from app.models.config.assessment_blob import (
     ATTACHMENT_COLUMN_TYPES,
+    AssessmentCompletionConfig,
     AssessmentConfigBlob,
-    AssessmentPreFilters,
     TopicRelevanceFilter,
 )
 from app.models.llm.constants import DEFAULT_ASSESSMENT_BATCH_MAX_TOKENS
@@ -103,6 +103,9 @@ def _google_gcp_credential(
 
 # Re-poll cadence for a stage's provider batch, mirroring the assessment cron interval.
 POLL_COUNTDOWN_SECONDS = settings.CRON_INTERVAL_MINUTES * 60
+
+# Row error when a provider batch returns neither an output nor an error line for a row.
+MISSING_RESULT_ERROR = "No result returned by the provider"
 
 
 class PipelineStage(StrEnum):
@@ -163,16 +166,13 @@ def is_supported_provider(provider_name: str) -> bool:
     return provider_name in _SUPPORTED_PROVIDERS
 
 
-def build_pipeline(
-    pre_filters: AssessmentPreFilters | None,
-) -> list[dict[str, str]]:
-    """Ordered stages: GATE pre-filters, then PASS-THROUGH pre-filters, then assessment."""
+def build_pipeline(blob: AssessmentConfigBlob) -> list[dict[str, str]]:
+    """Ordered stages the config declares: GATE pre-filters, PASS-THROUGH pre-filters, assessment."""
     pre_filter_stages: list[tuple[PipelineStage, TopicRelevanceFilter]] = []
-    if pre_filters is not None:
-        if pre_filters.topic_relevance is not None:
-            pre_filter_stages.append(
-                (PipelineStage.TOPIC_RELEVANCE, pre_filters.topic_relevance)
-            )
+    if blob.pre_filters is not None and blob.pre_filters.topic_relevance is not None:
+        pre_filter_stages.append(
+            (PipelineStage.TOPIC_RELEVANCE, blob.pre_filters.topic_relevance)
+        )
 
     gates = [
         {"stage": stage.value, "kind": StageKind.GATE.value}
@@ -184,11 +184,12 @@ def build_pipeline(
         for stage, pre_filter in pre_filter_stages
         if not pre_filter.stop_on_fail
     ]
-    return [
-        *gates,
-        *passthrough,
-        {"stage": PipelineStage.ASSESSMENT.value, "kind": StageKind.ASSESSMENT.value},
-    ]
+    assessment = (
+        [{"stage": PipelineStage.ASSESSMENT.value, "kind": StageKind.ASSESSMENT.value}]
+        if blob.assessment is not None
+        else []
+    )
+    return [*gates, *passthrough, *assessment]
 
 
 def next_stage(pipeline: list[dict[str, str]], current: str) -> str | None:
@@ -257,10 +258,17 @@ def stage_prompt(blob: AssessmentConfigBlob, stage: str) -> str | None:
     params.instructions with the item's columns + attachments as the user content).
     """
     if stage == PipelineStage.ASSESSMENT:
-        return blob.assessment.params["submission"]
+        return _assessment_config(blob).params["submission"]
     return cast(
         "str | None", _prefilter_for_stage(blob, stage).params.get("submission")
     )
+
+
+def _assessment_config(blob: AssessmentConfigBlob) -> AssessmentCompletionConfig:
+    """The assessment block; the pipeline carries an assessment stage only when it exists."""
+    if blob.assessment is None:
+        raise ValueError("[_assessment_config] Config has no assessment block")
+    return blob.assessment
 
 
 def _prefilter_for_stage(
@@ -282,7 +290,7 @@ def stage_params(blob: AssessmentConfigBlob, stage: str) -> dict[str, Any]:
     schema + gate directive layered on.
     """
     if stage == PipelineStage.ASSESSMENT:
-        params = dict(blob.assessment.params)
+        params = dict(_assessment_config(blob).params)
         json_schema = params.pop("json_output_schema", None)
         # submission is a prompt concern, not a provider param.
         params.pop("submission", None)
@@ -308,7 +316,8 @@ def stage_provider_model(blob: AssessmentConfigBlob, stage: str) -> tuple[str, s
     if stage == PipelineStage.TOPIC_RELEVANCE:
         pre_filter = _prefilter_for_stage(blob, stage)
         return pre_filter.provider, pre_filter.params["model"]
-    return blob.assessment.provider, blob.assessment.params["model"]
+    assessment = _assessment_config(blob)
+    return assessment.provider, assessment.params["model"]
 
 
 def build_stage_requests(
@@ -810,7 +819,7 @@ def _finalize(
     from app.services.assessment.api.result_files import finalize_result_files
     from app.services.assessment.api.results import build_result
 
-    bag["stage"] = PipelineStage.ASSESSMENT.value
+    bag["stage"] = bag["pipeline"][-1]["stage"]
     bag["stage_status"] = StageStatus.COMPLETED.value
     api.save_execution_state(session=session, execution=execution, state=bag)
 
@@ -1122,6 +1131,10 @@ def run_batch_stage(
             error = out.get("error")
             if error:
                 stage_errors[str(idx)] = error
+        # A row absent from both the output and the error file would otherwise look clean.
+        for idx in _row_subset(bag, stage, kind, execution.total_items):
+            if idx not in parsed:
+                stage_errors[str(idx)] = MISSING_RESULT_ERROR
         bag.setdefault("stage_errors", {})[stage] = stage_errors
 
         bag.setdefault("stage_output_urls", {})[stage] = batch_job.raw_output_url

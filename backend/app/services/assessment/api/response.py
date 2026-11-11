@@ -170,7 +170,7 @@ def _assess(
         state["stage_status"] = StageStatus.COMPLETED.value
 
     pre_filter = PreFilter(**verdicts) if verdicts else None
-    if not state["gate_passed"][0]:
+    if not state["gate_passed"][0] or blob.assessment is None:
         return AssessmentResult(output=AssessmentOutput(pre_filter=pre_filter))
 
     _begin_stage(session, execution, state, PipelineStage.ASSESSMENT.value)
