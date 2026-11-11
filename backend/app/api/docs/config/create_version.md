@@ -31,7 +31,7 @@ anything you omit is carried forward.
 Send the **whole** `config_blob` every time. It replaces the previous version rather than
 merging onto it, so a column dropped from `input_schema`, a removed `json_output_schema`
 field, or an omitted `pre_filters` block is genuinely gone in the new version. A partial
-body is rejected with `422`, because `input_schema` and `assessment` are mandatory.
+body is rejected with `422`, because `input_schema` is mandatory and at least one of `pre_filters` or `assessment` is required.
 
 ```json
 {
