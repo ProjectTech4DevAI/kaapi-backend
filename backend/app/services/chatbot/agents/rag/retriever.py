@@ -3,13 +3,12 @@
 import html
 
 import openai
+from fastapi import HTTPException
 from langchain_core.tools import BaseTool, StructuredTool
 from openai import OpenAI
 from sqlmodel import Session
 
-from app.crud import get_provider_credential
-from app.crud.rag.open_ai import OPENAI_TIMEOUT_SECONDS
-from app.models.llm.constants import Provider
+from app.crud.rag.open_ai import OPENAI_TIMEOUT_SECONDS, OpenAIVectorStoreCrud
 from app.services.chatbot.agents.rag.prompts import (
     NO_PASSAGES_FOUND,
     PASSAGE_SEPARATOR,
@@ -22,36 +21,30 @@ from app.services.chatbot.agents.rag.types import (
     SearchKnowledgeBaseArgs,
 )
 from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
+from app.utils import get_openai_client
 
 DEFAULT_MAX_NUM_RESULTS = 5
 OPENAI_MAX_NUM_RESULTS = 50
 KB_SEARCH_MAX_RETRIES = 1
-CREDENTIAL_API_KEY = "api_key"
 PASSAGE_CHUNK_SEPARATOR = "\n"
+OPENAI_CREDENTIALS_MISSING_MESSAGE = (
+    "The rag agent searches knowledge bases with the project's OpenAI "
+    "credentials, but none are configured; add OpenAI credentials to this project."
+)
 
 
 def get_knowledge_base_client(
     *, session: Session, organization_id: int, project_id: int
 ) -> OpenAI:
-    """OpenAI client from the project's credentials, used only for vector-store search."""
-    credentials = get_provider_credential(
-        session=session,
-        org_id=organization_id,
-        project_id=project_id,
-        provider=Provider.OPENAI.value,
-    )
-    if not isinstance(credentials, dict) or not credentials.get(CREDENTIAL_API_KEY):
-        error_message = (
-            "[KAAPI] The rag agent searches knowledge bases with the project's OpenAI "
-            "credentials, but none are configured; add OpenAI credentials to this project."
-        )
-        raise ChatbotInputError(error_message)
-
-    api_key = credentials[CREDENTIAL_API_KEY]
-    return OpenAI(
-        api_key=api_key,
-        timeout=OPENAI_TIMEOUT_SECONDS,
-        max_retries=KB_SEARCH_MAX_RETRIES,
+    """The project's OpenAI client (shared `get_openai_client`), tuned for vector-store search."""
+    try:
+        client = get_openai_client(session, organization_id, project_id)
+    except HTTPException as e:
+        raise ChatbotInputError(OPENAI_CREDENTIALS_MISSING_MESSAGE) from e
+    if not client.api_key:
+        raise ChatbotInputError(OPENAI_CREDENTIALS_MISSING_MESSAGE)
+    return client.with_options(
+        timeout=OPENAI_TIMEOUT_SECONDS, max_retries=KB_SEARCH_MAX_RETRIES
     )
 
 
@@ -100,14 +93,14 @@ def search_knowledge_bases(
     passages: list[KnowledgeBasePassage] = []
     for vector_store_id in knowledge_base_ids:
         try:
-            page = client.vector_stores.search(
+            results = OpenAIVectorStoreCrud(client).search(
                 vector_store_id, query=query, max_num_results=top_k
             )
         except openai.OpenAIError as e:
             error_message = _to_search_error(e, vector_store_id=vector_store_id)
             raise ChatbotProviderError(error_message) from e
 
-        for result in page.data:
+        for result in results:
             chunk_texts: list[str] = []
             for chunk in result.content:
                 chunk_texts.append(chunk.text)

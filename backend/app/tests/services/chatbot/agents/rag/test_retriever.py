@@ -4,6 +4,7 @@ import pytest
 from langchain_core.messages import ToolMessage
 from sqlmodel import Session
 
+from app.crud.rag.open_ai import OPENAI_TIMEOUT_SECONDS
 from app.services.chatbot.agents.rag.prompts import NO_PASSAGES_FOUND
 from app.services.chatbot.agents.rag.retriever import (
     build_search_tool,
@@ -241,3 +242,4 @@ class TestGetKnowledgeBaseClient:
 
         assert client.api_key.startswith("sk-")
         assert client.max_retries == 1
+        assert client.timeout == OPENAI_TIMEOUT_SECONDS
