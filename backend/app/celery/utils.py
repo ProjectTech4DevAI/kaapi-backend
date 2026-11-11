@@ -362,6 +362,9 @@ def start_chatbot_session_message(
             "trace_id": trace_id,
         }
     ).id
+    logger.info(
+        f"[start_chatbot_session_message] Started session {session_id} with Celery task {task_id}"
+    )
     return task_id
 
 

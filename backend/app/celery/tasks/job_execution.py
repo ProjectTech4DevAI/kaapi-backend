@@ -338,10 +338,7 @@ def run_assessment_response(self, execution_id: int, trace_id: str, **kwargs):
     from app.services.assessment.api.response import run_response_assessment
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: run_response_assessment(execution_id=execution_id),
-    )
+    return run_response_assessment(execution_id=execution_id)
 
 
 @celery_app.task(bind=True, queue="default", priority=2)
@@ -461,7 +458,9 @@ def run_evaluation_iteration_graph_step(
 @gevent_timeout(
     settings.CELERY_TASK_SOFT_TIME_LIMIT, "send_eval_completion_notification"
 )
-def send_eval_completion_notification(self, evaluation_id: int) -> dict:
+def send_eval_completion_notification(
+    self, evaluation_id: int, trace_id: str = DEFAULT_TRACE_ID
+) -> dict:
     """
     Fan out a completion notification for an eval run to every project member.
 
@@ -474,19 +473,21 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
         execute_eval_completion_notification,
     )
 
+    _set_trace(trace_id)
     return execute_eval_completion_notification(evaluation_id=evaluation_id)
 
 
 @celery_app.task(bind=True, queue="default", priority=1)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "send_eval_completion_callback")
 def send_eval_completion_callback(
-    self: Task, evaluation_id: int
+    self: Task, evaluation_id: int, trace_id: str = DEFAULT_TRACE_ID
 ) -> "EvalCompletionCallbackResult":
     """POST the run's status to its registered webhook once it is terminal."""
     from app.services.notifications.eval_completion import (
         execute_eval_completion_callback,
     )
 
+    _set_trace(trace_id)
     return execute_eval_completion_callback(evaluation_id=evaluation_id)
 
 
