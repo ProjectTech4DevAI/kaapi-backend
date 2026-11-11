@@ -12,7 +12,7 @@ from app.models.assessment import AssessmentMethod, BatchRunState
 from app.models.batch_job import BatchJob, BatchJobType
 from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.config.config import ConfigTag
-from app.services.assessment.api.batch import ApiStage
+from app.services.assessment.api.batch import PipelineStage
 from app.services.assessment.api.result_files import (
     build_and_upload_errors,
     finalize_result_files,
@@ -39,8 +39,8 @@ _BLOB = AssessmentConfigBlob.model_validate(
 
 def _bag(**overrides) -> BatchRunState:
     bag: dict = {
-        "pipeline": [{"stage": ApiStage.ASSESSMENT.value, "kind": "ASSESSMENT"}],
-        "stage": ApiStage.ASSESSMENT.value,
+        "pipeline": [{"stage": PipelineStage.ASSESSMENT.value, "kind": "ASSESSMENT"}],
+        "stage": PipelineStage.ASSESSMENT.value,
         "stage_status": "COMPLETED",
         "stage_batches": {},
         "stage_output_urls": {},
@@ -141,7 +141,7 @@ class TestRecordStageDump:
         record_stage_dump(
             session=db,
             assessment=assessment,
-            stage=ApiStage.TOPIC_RELEVANCE.value,
+            stage=PipelineStage.TOPIC_RELEVANCE.value,
             url="s3://bucket/batch-1170/output.jsonl",
         )
 
@@ -159,7 +159,7 @@ class TestRecordStageDump:
         record_stage_dump(
             session=db,
             assessment=assessment,
-            stage=ApiStage.ASSESSMENT.value,
+            stage=PipelineStage.ASSESSMENT.value,
             url=None,
         )
 
@@ -190,7 +190,7 @@ class TestBuildAndUploadErrors:
         assessment, execution = _seed(db, auth, rows=2)
         uploads = _Uploads()
         bag = _bag(
-            stage_errors={ApiStage.ASSESSMENT.value: {"1": "rate limit exceeded"}}
+            stage_errors={PipelineStage.ASSESSMENT.value: {"1": "rate limit exceeded"}}
         )
 
         with _storage_patch(), _upload_patch(uploads):
@@ -204,7 +204,7 @@ class TestBuildAndUploadErrors:
         assert uploads.rows == [
             {
                 "type": "row_error",
-                "stage": ApiStage.ASSESSMENT.value,
+                "stage": PipelineStage.ASSESSMENT.value,
                 "row_index": 1,
                 "error": "rate limit exceeded",
             }
@@ -236,7 +236,7 @@ class TestBuildAndUploadErrors:
                 session=db,
                 execution=execution,
                 assessment=assessment,
-                bag=_bag(stage_batches={ApiStage.ASSESSMENT.value: job.id}),
+                bag=_bag(stage_batches={PipelineStage.ASSESSMENT.value: job.id}),
                 failure_message=None,
             )
         assert [row["type"] for row in uploads.rows] == [
@@ -270,7 +270,7 @@ class TestBuildAndUploadErrors:
                 session=db,
                 execution=execution,
                 assessment=assessment,
-                bag=_bag(stage_batches={ApiStage.ASSESSMENT.value: job.id}),
+                bag=_bag(stage_batches={PipelineStage.ASSESSMENT.value: job.id}),
                 failure_message=None,
             )
         row = uploads.rows[0]
@@ -289,7 +289,7 @@ class TestBuildAndUploadErrors:
                 session=db,
                 execution=execution,
                 assessment=assessment,
-                bag=_bag(stage_batches={ApiStage.ASSESSMENT.value: job.id}),
+                bag=_bag(stage_batches={PipelineStage.ASSESSMENT.value: job.id}),
                 failure_message=None,
             )
 
@@ -337,7 +337,7 @@ class TestFinalizeResultFiles:
         assert uploads.rows == [
             {
                 "type": "execution_error",
-                "stage": ApiStage.ASSESSMENT.value,
+                "stage": PipelineStage.ASSESSMENT.value,
                 "error": "Vertex model gemini-2.5-pro not found",
             }
         ]
@@ -350,7 +350,7 @@ class TestFinalizeResultFiles:
         record_stage_dump(
             session=db,
             assessment=assessment,
-            stage=ApiStage.ASSESSMENT.value,
+            stage=PipelineStage.ASSESSMENT.value,
             url="s3://bucket/batch-1173/output.jsonl",
         )
         uploads = _Uploads()
@@ -362,7 +362,7 @@ class TestFinalizeResultFiles:
                 assessment=assessment,
                 bag=_bag(
                     stage_output_urls={
-                        ApiStage.ASSESSMENT.value: "s3://bucket/batch-1173/output.jsonl"
+                        PipelineStage.ASSESSMENT.value: "s3://bucket/batch-1173/output.jsonl"
                     }
                 ),
             )
@@ -378,16 +378,20 @@ class TestFinalizeResultFiles:
         uploads = _Uploads()
         bag = _bag(
             stage_output_urls={
-                ApiStage.TOPIC_RELEVANCE.value: "s3://bucket/batch-1170/output.jsonl",
-                ApiStage.ASSESSMENT.value: "s3://bucket/batch-1173/output.jsonl",
+                PipelineStage.TOPIC_RELEVANCE.value: "s3://bucket/batch-1170/output.jsonl",
+                PipelineStage.ASSESSMENT.value: "s3://bucket/batch-1173/output.jsonl",
             },
             counters={
-                ApiStage.TOPIC_RELEVANCE.value: {
+                PipelineStage.TOPIC_RELEVANCE.value: {
                     "total": 2,
                     "passed": 1,
                     "rejected": 1,
                 },
-                ApiStage.ASSESSMENT.value: {"total": 1, "passed": 1, "rejected": 0},
+                PipelineStage.ASSESSMENT.value: {
+                    "total": 1,
+                    "passed": 1,
+                    "rejected": 0,
+                },
             },
         )
 
@@ -408,7 +412,7 @@ class TestFinalizeResultFiles:
         uploads = _Uploads()
         bag = _bag(
             stage_output_urls={
-                ApiStage.ASSESSMENT.value: "s3://bucket/batch-1173/output.jsonl"
+                PipelineStage.ASSESSMENT.value: "s3://bucket/batch-1173/output.jsonl"
             }
         )
 
@@ -441,7 +445,7 @@ class TestFinalizeResultFiles:
                 assessment=assessment,
                 bag=_bag(
                     stage_output_urls={
-                        ApiStage.ASSESSMENT.value: "s3://bucket/out.jsonl"
+                        PipelineStage.ASSESSMENT.value: "s3://bucket/out.jsonl"
                     }
                 ),
                 failure_message="kaboom",

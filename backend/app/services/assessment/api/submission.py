@@ -1,14 +1,17 @@
-"""BATCH API-client submit entrypoint.
+"""API-client submit entrypoint.
 
-Resolves the ASSESSMENT config, persists the parent assessment + one execution,
-seeds the staged-batch runtime bag, and hands the pipeline off to Celery. Only the
-BATCH method is wired here; RESPONSE stays a route-level 501 stub (deferred).
+Resolves the ASSESSMENT config and validates the rows. BATCH persists the parent
+assessment + one execution, seeds the staged-batch runtime bag and hands the pipeline
+off to Celery; RESPONSE persists the parent assessment and hands the row off.
 """
 
 import logging
+from typing import Any
 from uuid import UUID, uuid4
 
 from asgi_correlation_id import correlation_id
+from celery import Task
+from celery.result import AsyncResult
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlmodel import Session
@@ -17,8 +20,10 @@ from app.crud.assessment import api
 from app.crud.assessment.submission import get_submission_by_id
 from app.crud.config import ConfigCrud, ConfigVersionCrud
 from app.models.assessment import (
+    Assessment,
     AssessmentCreate,
     AssessmentMethod,
+    AssessmentRun,
     AssessmentStatus,
     AssessmentSubmitResponse,
     BatchInput,
@@ -187,6 +192,112 @@ def _resolve_config(
     return blob, provider, model
 
 
+def _enqueue(
+    *,
+    session: Session,
+    task: Task,
+    assessment: Assessment,
+    execution: AssessmentRun | None = None,
+    **task_kwargs: Any,
+) -> AsyncResult:
+    """Dispatch ``task``; a broker failure marks the rows FAILED and returns a 503."""
+    try:
+        return task.delay(**task_kwargs)
+    except Exception as exc:
+        logger.exception("[_enqueue] Failed to enqueue | task=%s", task.name)
+        if execution is not None:
+            api.update_status(
+                session=session, obj=execution, status=AssessmentStatus.FAILED
+            )
+        api.update_status(
+            session=session, obj=assessment, status=AssessmentStatus.FAILED
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to dispatch the assessment for processing. Please retry.",
+        ) from exc
+
+
+def _initial_state(
+    *,
+    request: AssessmentCreate,
+    blob: AssessmentConfigBlob,
+    provider: str,
+    model: str,
+    total_items: int,
+) -> BatchRunState:
+    pipeline = batch_service.build_pipeline(blob.pre_filters)
+    return {
+        "pipeline": pipeline,
+        "stage": pipeline[0]["stage"],
+        "stage_status": AssessmentStatus.PENDING.value,
+        "stage_batches": {},
+        "stage_output_urls": {},
+        "verdicts": {},
+        "counters": {},
+        "gate_passed": [True] * total_items,
+        "provider": provider,
+        "model": model,
+        "input_schema": blob.input_columns() or None,
+        "callback_url": str(request.callback_url) if request.callback_url else None,
+        "request_metadata": request.request_metadata,
+    }
+
+
+def _start_response(
+    *,
+    session: Session,
+    request: AssessmentCreate,
+    blob: AssessmentConfigBlob,
+    provider: str,
+    model: str,
+    organization_id: int,
+    project_id: int,
+) -> AssessmentSubmitResponse:
+    from app.celery.tasks.job_execution import run_assessment_response
+
+    assessment = api.create_assessment(
+        session=session,
+        method=AssessmentMethod.RESPONSE,
+        input=request.input.model_dump(),
+        experiment_name=request.experiment_name,
+        organization_id=organization_id,
+        project_id=project_id,
+    )
+    execution = api.create_execution(
+        session=session,
+        assessment_id=assessment.id,
+        config_id=request.config.id,
+        config_version=request.config.version,
+        total_items=1,
+    )
+    api.save_execution_state(
+        session=session,
+        execution=execution,
+        state=_initial_state(
+            request=request, blob=blob, provider=provider, model=model, total_items=1
+        ),
+    )
+    api.update_status(
+        session=session, obj=assessment, status=AssessmentStatus.PROCESSING
+    )
+    _enqueue(
+        session=session,
+        task=run_assessment_response,
+        assessment=assessment,
+        execution=execution,
+        execution_id=execution.id,
+        trace_id=correlation_id.get() or "",
+    )
+    return AssessmentSubmitResponse(
+        assessment_id=assessment.id,
+        status=assessment.status,
+        message="Your assessment is being processed",
+        inserted_at=assessment.inserted_at,
+        updated_at=assessment.updated_at,
+    )
+
+
 def submit(
     *,
     session: Session,
@@ -194,15 +305,8 @@ def submit(
     organization_id: int,
     project_id: int,
 ) -> AssessmentSubmitResponse:
-    """Submit a BATCH assessment: persist state, seed the pipeline, dispatch the task."""
-    from app.celery.tasks.job_execution import run_assessment_api_batch
-
-    method = derive_method(request.input, submission_id=None)
-    if method != AssessmentMethod.BATCH:
-        # RESPONSE is handled (stubbed) at the route; submit is BATCH-only for now.
-        raise HTTPException(
-            status_code=501, detail="Only BATCH input is wired in the assessment API."
-        )
+    """Submit an assessment: persist state, then dispatch the task for its method."""
+    method = derive_method(request.input)
 
     # Reject an unusable callback_url up front (HTTPS + SSRF/private-IP guard) instead
     # of after a full batch run is already paid for. Absent means the client polls.
@@ -212,7 +316,11 @@ def submit(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    batch_input: BatchInput = request.input
+    batch_input = (
+        request.input
+        if isinstance(request.input, BatchInput)
+        else request.input.as_batch()
+    )
     submission_id = batch_input.submission_doc_id
     if submission_id is not None:
         batch_input = _rows_from_submission(
@@ -226,10 +334,7 @@ def submit(
         session=session, request=request, project_id=project_id
     )
 
-    input_columns = {
-        name: col.model_dump(exclude_none=True)
-        for name, col in blob.input_schema.items()
-    }
+    input_columns = blob.input_columns()
     if submission_id is not None:
         batch_input = BatchInput(
             data=[
@@ -245,6 +350,19 @@ def submit(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     total_items = len(rows)
+
+    if method == AssessmentMethod.RESPONSE:
+        return _start_response(
+            session=session,
+            request=request,
+            blob=blob,
+            provider=provider,
+            model=model,
+            organization_id=organization_id,
+            project_id=project_id,
+        )
+
+    from app.celery.tasks.job_execution import run_assessment_api_batch
 
     assessment_id = uuid4()
     # Only inline rows need storing; an uploaded submission is already immutable in
@@ -282,51 +400,28 @@ def submit(
         total_items=total_items,
     )
 
-    pipeline = batch_service.build_pipeline(blob.pre_filters)
-    bag: BatchRunState = {
-        "pipeline": pipeline,
-        "stage": pipeline[0]["stage"],
-        "stage_status": AssessmentStatus.PENDING.value,
-        "stage_batches": {},
-        "stage_output_urls": {},
-        "verdicts": {},
-        "counters": {},
-        "gate_passed": [True] * total_items,
-        "provider": provider,
-        "model": model,
-        "input_schema": input_columns or None,
-        "callback_url": str(request.callback_url) if request.callback_url else None,
-        "request_metadata": request.request_metadata,
-    }
+    bag = _initial_state(
+        request=request,
+        blob=blob,
+        provider=provider,
+        model=model,
+        total_items=total_items,
+    )
     api.save_execution_state(session=session, execution=execution, state=bag)
     api.update_status(
         session=session, obj=assessment, status=AssessmentStatus.PROCESSING
     )
 
-    trace_id = correlation_id.get() or ""
-    try:
-        dispatched = run_assessment_api_batch.delay(
-            execution_id=execution.id,
-            organization_id=organization_id,
-            project_id=project_id,
-            trace_id=trace_id,
-        )
-    except Exception as exc:
-        logger.exception(
-            "[submit] Failed to enqueue BATCH task | assessment_id=%s | execution_id=%s",
-            assessment.id,
-            execution.id,
-        )
-        api.update_status(
-            session=session, obj=execution, status=AssessmentStatus.FAILED
-        )
-        api.update_status(
-            session=session, obj=assessment, status=AssessmentStatus.FAILED
-        )
-        raise HTTPException(
-            status_code=503,
-            detail="Failed to dispatch the assessment for processing. Please retry.",
-        ) from exc
+    dispatched = _enqueue(
+        session=session,
+        task=run_assessment_api_batch,
+        assessment=assessment,
+        execution=execution,
+        execution_id=execution.id,
+        organization_id=organization_id,
+        project_id=project_id,
+        trace_id=correlation_id.get() or "",
+    )
     logger.info(
         "[submit] Dispatched BATCH assessment | assessment_id=%s | execution_id=%s | "
         "task_id=%s | provider=%s | stages=%s | rows=%s",
@@ -334,7 +429,7 @@ def submit(
         execution.id,
         dispatched.id,
         provider,
-        [s["stage"] for s in pipeline],
+        [s["stage"] for s in bag["pipeline"]],
         total_items,
     )
 
