@@ -76,7 +76,7 @@ core/telemetry/
 
 ## 1. Tracing
 
-**What is traced:** HTTP requests, DB queries, Celery tasks, S3/KMS (botocore), outbound HTTP, and every LLM call. These feed Sentry's ready-made views: **AI Insights** (LLM calls), **Queries** (DB), **Queues** (Celery) and **Outbound API Requests**. Redis is not instrumented: its spans were only Celery result-backend bookkeeping and rate-limit counters. The broker (RabbitMQ) shows only as Celery's `apply_async` span, which links the API request to the worker trace.
+**What is traced:** HTTP requests, DB queries, Celery tasks, outbound HTTP, and every LLM call. These feed Sentry's ready-made views: **AI Insights** (LLM calls), **Queries** (DB), **Queues** (Celery) and **Outbound API Requests**. Redis is not instrumented: its spans were only Celery result-backend bookkeeping and rate-limit counters. botocore (S3/KMS) is not instrumented either: s3transfer uploads on its own thread pool, which drops the trace context and turned every `S3.PutObject` into an orphan trace. The broker (RabbitMQ) shows only as Celery's `apply_async` span, which links the API request to the worker trace.
 
 **Waterfall of one `/llm/call`**, as it appears in Sentry:
 

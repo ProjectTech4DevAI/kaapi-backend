@@ -12,7 +12,7 @@ from app.core.telemetry import tracing as telemetry
 
 
 class TestSetupTelemetryInstrumentors:
-    def test_enabled_instruments_botocore(self) -> None:
+    def test_does_not_instrument_botocore(self) -> None:
         botocore = MagicMock()
         with (
             patch.object(telemetry.settings, "SENTRY_DSN", None),
@@ -30,7 +30,7 @@ class TestSetupTelemetryInstrumentors:
         ):
             telemetry.setup_telemetry()
 
-        botocore.return_value.instrument.assert_called_once()
+        botocore.return_value.instrument.assert_not_called()
 
 
 class TestShouldDropBareHttpTrace:
@@ -237,10 +237,6 @@ class TestSetupTelemetryWithSentry:
             patch.object(telemetry, "RequestsInstrumentor", MagicMock()),
             patch(
                 "opentelemetry.instrumentation.celery.CeleryInstrumentor", MagicMock()
-            ),
-            patch(
-                "opentelemetry.instrumentation.botocore.BotocoreInstrumentor",
-                MagicMock(),
             ),
         ):
             telemetry.setup_telemetry()
