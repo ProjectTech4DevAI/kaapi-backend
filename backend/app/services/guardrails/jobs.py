@@ -1,3 +1,4 @@
+import json
 import logging
 from fastapi import HTTPException
 from typing import Any
@@ -19,9 +20,8 @@ from app.models.guardrails import (
     GuardrailsOutput,
     GuardrailsOutputContent,
     GuardrailsRequest,
-    GuardrailValidator,
 )
-from app.models.llm.request import Validator
+from app.models.llm.request import InlineValidator, Validator
 from app.services.llm.guardrails import GuardrailsOutcome, apply_guardrails
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
@@ -203,26 +203,35 @@ def _update_job(job_uuid: UUID, **fields: Any) -> None:
 
 
 def _dedupe_validators(
-    config: list[GuardrailValidator],
-) -> tuple[list[Validator], list[str]]:
-    """Drop duplicate validator IDs (preserve order) to avoid double-billing upstream.
+    config: list[Validator | InlineValidator],
+) -> tuple[list[Validator | InlineValidator], list[str]]:
+    """Drop duplicate validators (preserve order) to avoid double-billing upstream.
 
+    Refs are keyed by ID, inline specs by their full canonical JSON.
     Returns the unique validators plus any caller-facing warnings.
     """
-    seen_ids: set[UUID] = set()
-    validators: list[Validator] = []
+    seen_keys: set[str] = set()
+    validators: list[Validator | InlineValidator] = []
     duplicates = 0
-    for g in config:
-        if g.validator_config_id in seen_ids:
+    for validator in config:
+        # A disabled entry must not claim the key and shadow an enabled duplicate.
+        if not validator.is_enabled:
+            continue
+        key = (
+            str(validator.validator_config_id)
+            if isinstance(validator, Validator)
+            else json.dumps(validator.model_dump(mode="json"), sort_keys=True)
+        )
+        if key in seen_keys:
             duplicates += 1
             continue
-        seen_ids.add(g.validator_config_id)
-        validators.append(Validator(validator_config_id=g.validator_config_id))
+        seen_keys.add(key)
+        validators.append(validator)
 
     warnings: list[str] = []
     if duplicates:
         warnings.append(
-            f"Request contained {duplicates} duplicate validator_config_id "
+            f"Request contained {duplicates} duplicate validator "
             "entries; duplicates were ignored before calling the guardrails service."
         )
     if not validators:

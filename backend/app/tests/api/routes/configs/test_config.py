@@ -1,5 +1,6 @@
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -567,24 +568,50 @@ def test_list_configs_with_query(
     assert "other-config" not in returned_names
 
 
-def test_create_assessment_config_missing_assessment_block_gives_clear_error(
+_PRE_FILTERS = {
+    "topic_relevance": {
+        "provider": "openai",
+        "params": {"model": "gpt-4o", "instructions": "On topic?"},
+        "stop_on_fail": True,
+    }
+}
+_ASSESSMENT = {
+    "provider": "openai",
+    "type": "text",
+    "params": {"model": "gpt-4o", "instructions": "Grade it.", "submission": "{q}"},
+}
+
+
+@pytest.mark.parametrize(
+    ("stages", "expected_status"),
+    [
+        ({"pre_filters": _PRE_FILTERS}, 201),
+        ({"assessment": _ASSESSMENT}, 201),
+        ({"pre_filters": _PRE_FILTERS, "assessment": _ASSESSMENT}, 201),
+        ({}, 422),
+        ({"pre_filters": {}}, 422),
+    ],
+    ids=["pre_filter_only", "assessment_only", "both", "neither", "empty_pre_filters"],
+)
+def test_create_assessment_config_needs_a_stage(
     client: TestClient,
     user_api_key: TestAuthContext,
+    stages: dict,
+    expected_status: int,
 ) -> None:
-    """A malformed ASSESSMENT config (no 'assessment' block) returns a single
-    clear error on config_blob, not raw union noise."""
+    """An ASSESSMENT config needs at least one of pre_filters / assessment."""
     response = client.post(
         f"{settings.API_V1_STR}/configs",
         headers={"X-API-KEY": user_api_key.key},
         json={
-            "name": "bad-assessment",
+            "name": "stage-config",
             "tag": "ASSESSMENT",
-            "config_blob": {"pre_filters": {}},
+            "config_blob": {"input_schema": {"q": {"type": "text"}}, **stages},
         },
     )
 
-    assert response.status_code == 422
-    errors = response.json()["errors"]
-    assert len(errors) == 1
-    assert errors[0]["field"] == "config_blob"
-    assert "assessment" in errors[0]["message"].lower()
+    assert response.status_code == expected_status, response.text
+    if expected_status == 422:
+        errors = response.json()["errors"]
+        assert len(errors) == 1
+        assert "pre_filters" in errors[0]["message"]

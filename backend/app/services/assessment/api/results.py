@@ -6,7 +6,6 @@ output. Pre-filter verdicts live in the execution bag; assessment outputs are
 streamed back from object storage.
 """
 
-import json
 import logging
 from typing import Any, cast
 
@@ -33,25 +32,13 @@ from app.models.assessment import (
     Submission,
     Verdict,
 )
-from app.services.assessment.api.batch import ApiStage, parse_batch_results
-from app.services.assessment.utils.parsing import parse_stored_results
+from app.services.assessment.api.batch import PipelineStage, parse_batch_results
+from app.services.assessment.utils.parsing import (
+    parse_assessment_text,
+    parse_stored_results,
+)
 
 logger = logging.getLogger(__name__)
-
-
-def _parse_assessment(out: ParsedResult) -> dict[str, Any] | str | None:
-    """Stored assessment text as a dict (structured json_schema output) or raw string.
-
-    Null when the row produced no assessment text (gated out or empty/failed call).
-    """
-    text = out.get("output")
-    if not text:
-        return None
-    try:
-        parsed = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        return text
-    return parsed if isinstance(parsed, dict) else text
 
 
 def _verdict_obj(verdict: Verdict | None) -> PreFilterVerdict | None:
@@ -72,7 +59,7 @@ def _load_assessment_outputs(
     can flag it per-row instead of mistaking it for a clean run. Missing URL
     (all rows gated) is a legit empty, not an error.
     """
-    url = (bag.get("stage_output_urls") or {}).get(ApiStage.ASSESSMENT.value)
+    url = (bag.get("stage_output_urls") or {}).get(PipelineStage.ASSESSMENT.value)
     if not url:
         return {}, None
     try:
@@ -112,9 +99,11 @@ def build_result(
     verdicts = bag.get("verdicts") or {}
     outputs, load_error = _load_assessment_outputs(session, bag, assessment.project_id)
     # Rows the provider rejected are absent from the output dump; the bag kept their error.
-    row_errors = (bag.get("stage_errors") or {}).get(ApiStage.ASSESSMENT.value, {})
+    # Errors of the last stage: the assessment, or the pre-filter when there is none.
+    last_stage = (bag.get("pipeline") or [{}])[-1].get("stage")
+    row_errors = (bag.get("stage_errors") or {}).get(last_stage, {})
 
-    tr_verdicts = verdicts.get(ApiStage.TOPIC_RELEVANCE.value, {})
+    tr_verdicts = verdicts.get(PipelineStage.TOPIC_RELEVANCE.value, {})
 
     items: list[AssessmentResult] = []
     counts = AssessmentCounts()
@@ -126,7 +115,7 @@ def build_result(
         if gate_passed[idx]:
             if idx in outputs:
                 out = outputs[idx]
-                assessment_output = _parse_assessment(out)
+                assessment_output = parse_assessment_text(out)
                 error = out.get("error")
             elif str(idx) in row_errors:
                 error = row_errors[str(idx)]
