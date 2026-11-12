@@ -6,10 +6,9 @@ No LangGraph here — a single model call doesn't need a graph.
 import logging
 from dataclasses import dataclass
 
-from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 from app.services.chatbot.agents.coordinator.prompts import (
     FALLBACK_CLARIFYING_QUESTION,
@@ -17,13 +16,16 @@ from app.services.chatbot.agents.coordinator.prompts import (
     ROUTING_INSTRUCTION,
 )
 from app.services.chatbot.agents.onboarding.prompts import EXTRACTION_METHOD
-from app.services.chatbot.exceptions import ChatbotProviderError
 from app.services.chatbot.history import (
     summarize_if_needed,
     to_langchain_messages,
     validate_turn_input,
 )
-from app.services.chatbot.provider_errors import CHAT_MODEL_ERRORS, to_provider_error
+from app.services.chatbot.provider_errors import (
+    CHAT_MODEL_ERRORS,
+    invoke_structured,
+    to_provider_error,
+)
 from app.services.chatbot.types import ChatbotMessageDict, CoordinatorRoute
 from app.services.chatbot.utils import ChatbotModelSettings, get_chat_model
 
@@ -73,26 +75,9 @@ def _decide_route(
     routing_model = chat_model.with_structured_output(
         RouteDecision, method=EXTRACTION_METHOD
     )
-    # Both are ValueError subclasses; mapped here so the caller's ValueError
-    # catch doesn't mislabel them as a model-configuration problem.
-    try:
-        decision = routing_model.invoke(conversation_view)
-    except (OutputParserException, ValidationError) as e:
-        error_message = (
-            "[ANTHROPIC] Coordinator routing returned malformed structured output — "
-            f"retry the turn. If persistent, contact Kaapi. (code: {type(e).__name__})"
-        )
-        logger.warning(f"[_decide_route] {error_message}", exc_info=True)
-        raise ChatbotProviderError(error_message) from e
-
-    if not isinstance(decision, RouteDecision):
-        error_message = (
-            "[ANTHROPIC] Coordinator routing returned an unexpected output shape — "
-            "retry the turn. If persistent, contact Kaapi. (code: UnexpectedOutputType)"
-        )
-        logger.warning(f"[_decide_route] {error_message}")
-        raise ChatbotProviderError(error_message)
-    return decision
+    return invoke_structured(
+        routing_model, conversation_view, RouteDecision, call_name="Coordinator routing"
+    )
 
 
 def _match_route(

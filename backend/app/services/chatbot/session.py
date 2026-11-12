@@ -43,10 +43,11 @@ from app.services.chatbot.exceptions import (
 )
 from app.services.chatbot.flow import (
     EDGE_DESCRIPTION_KEY,
-    EDGE_INTENT_KEY,
     SUPPORTED_AGENT_NODE_TYPES,
+    SUPPORTED_AGENT_NODE_TYPES_LABEL,
     find_flow_node,
     get_chatbot_or_raise,
+    get_edge_intent,
     parse_flow_edges,
     parse_flow_nodes,
     resolve_entry_node,
@@ -67,15 +68,10 @@ SUPERSEDED_SESSION_ERROR = (
     "[KAAPI] Chatbot session was superseded by a newer session; start a new session."
 )
 NO_LIVE_FLOW_MESSAGE = "[KAAPI] Chatbot has no published flow; publish the flow first."
-
-
-_RUNNABLE_NODE_TYPES_LABEL = ", ".join(
-    sorted(f"'{node_type.value}'" for node_type in SUPPORTED_AGENT_NODE_TYPES)
+NODE_NOT_IN_FLOW_ERROR = (
+    "[KAAPI] Active node '{node_id}' is not in the session's flow version; "
+    "start a new session."
 )
-ACTIVE_NODE_LABEL = "Active node"
-ROUTE_TARGET_LABEL = "Route target"
-
-_RouteTargets = dict[str, tuple[TurnNode, ChatbotModelSettings]]
 
 
 class _TurnOutcome(NamedTuple):
@@ -178,39 +174,26 @@ def get_active_node_type(
     return active_node.type
 
 
-def _node_not_in_flow_message(label: str, node_id: str) -> str:
-    return (
-        f"[KAAPI] {label} '{node_id}' is not in the session's flow version; "
-        "start a new session."
-    )
-
-
 def _resolve_turn_node(
-    *,
-    flow_version: ChatbotFlowVersion,
-    active_node_id: str,
-    label: str = ACTIVE_NODE_LABEL,
+    *, flow_version: ChatbotFlowVersion, active_node_id: str
 ) -> TurnNode:
-    """The runnable agent node `active_node_id` names; ChatbotInputError when it can't run.
-
-    `label` names the node's role in error messages (the active node or a coordinator's route target).
-    """
+    """The runnable agent node `active_node_id` names; ChatbotInputError when it can't run."""
     active_node = find_flow_node(parse_flow_nodes(flow_version.nodes), active_node_id)
     if active_node is None:
-        raise ChatbotInputError(_node_not_in_flow_message(label, active_node_id))
+        raise ChatbotInputError(NODE_NOT_IN_FLOW_ERROR.format(node_id=active_node_id))
 
     if active_node.type not in SUPPORTED_AGENT_NODE_TYPES:
         error_message = (
-            f"[KAAPI] {label} '{active_node_id}' has type '{active_node.type.value}', "
-            f"which the chatbot runtime does not support yet; only "
-            f"{_RUNNABLE_NODE_TYPES_LABEL} nodes can run."
+            f"[KAAPI] Active node '{active_node_id}' has type '{active_node.type.value}', "
+            "which the chatbot runtime does not support yet; only "
+            f"{SUPPORTED_AGENT_NODE_TYPES_LABEL} nodes can run."
         )
         raise ChatbotInputError(error_message)
 
     node_data = active_node.agent_data()
     if node_data.prompt is None or node_data.config_id is None:
         error_message = (
-            f"[KAAPI] {label} '{active_node_id}' is missing data.prompt or "
+            f"[KAAPI] Active node '{active_node_id}' is missing data.prompt or "
             "data.config_id; republish the flow and start a new session."
         )
         raise ChatbotInputError(error_message)
@@ -225,61 +208,59 @@ def _resolve_turn_node(
 
 
 def _resolve_coordinator_routes(
-    *,
-    session: Session,
-    flow_version: ChatbotFlowVersion,
-    coordinator_node_id: str,
-    organization_id: int,
-    project_id: int,
-) -> tuple[list[CoordinatorRoute], _RouteTargets, OpenAI | None]:
-    """Every outgoing route of the coordinator, each target's node and model settings, and (rag targets) the search client.
+    *, flow_version: ChatbotFlowVersion, coordinator_node_id: str
+) -> tuple[list[CoordinatorRoute], dict[str, TurnNode]]:
+    """Every outgoing route of the coordinator and each target's node, read from the pinned flow.
 
     Intents and target types are enforced at publish, the only way a flow goes live.
     """
     routes: list[CoordinatorRoute] = []
-    targets: _RouteTargets = {}
-    openai_client: OpenAI | None = None
+    target_nodes: dict[str, TurnNode] = {}
     for edge in parse_flow_edges(flow_version.edges):
-        if edge.source != coordinator_node_id:
+        intent = get_edge_intent(edge)
+        # Publish rejects coordinator edges without an intent; the None check only narrows the type.
+        if edge.source != coordinator_node_id or intent is None:
             continue
 
         target_node = _resolve_turn_node(
-            flow_version=flow_version,
-            active_node_id=edge.target,
-            label=ROUTE_TARGET_LABEL,
+            flow_version=flow_version, active_node_id=edge.target
         )
         description = edge.data.get(EDGE_DESCRIPTION_KEY)
-        target_settings = resolve_chatbot_model_settings(
-            session=session,
-            organization_id=organization_id,
-            project_id=project_id,
-            config_id=target_node.config_id,
-            config_version=target_node.config_version,
-        )
-        if target_node.node_type == ChatbotFlowNodeTypeEnum.RAG:
-            # Validates this target's knowledge bases; the client itself is per project, so one serves every rag target.
-            openai_client = prepare_rag_search_client(
-                session=session,
-                organization_id=organization_id,
-                project_id=project_id,
-                model_settings=target_settings,
-            )
-        targets[target_node.node_id] = (target_node, target_settings)
+        target_nodes[target_node.node_id] = target_node
         routes.append(
             CoordinatorRoute(
-                intent=edge.data[EDGE_INTENT_KEY].strip(),
+                intent=intent,
                 description=description if isinstance(description, str) else None,
                 target_node_id=target_node.node_id,
             )
         )
+    return routes, target_nodes
 
-    if not routes:
-        error_message = (
-            f"[KAAPI] Coordinator '{coordinator_node_id}' has no outgoing routes; "
-            "republish the flow and start a new session."
+
+def _resolve_node_runtime(
+    *, session: Session, organization_id: int, project_id: int, turn_node: TurnNode
+) -> tuple[ChatbotModelSettings, OpenAI | None]:
+    """The node's model settings and, for a rag node, its validated knowledge-base search client."""
+    openai_client: OpenAI | None = None
+    try:
+        model_settings = resolve_chatbot_model_settings(
+            session=session,
+            organization_id=organization_id,
+            project_id=project_id,
+            config_id=turn_node.config_id,
+            config_version=turn_node.config_version,
         )
-        raise ChatbotInputError(error_message)
-    return routes, targets, openai_client
+        if turn_node.node_type == ChatbotFlowNodeTypeEnum.RAG:
+            openai_client = prepare_rag_search_client(
+                session=session,
+                organization_id=organization_id,
+                project_id=project_id,
+                model_settings=model_settings,
+            )
+    except HTTPException as e:
+        # Config lookups raise HTTP-shaped 404s; the worker only reports ChatbotInputError as a failure webhook.
+        raise ChatbotInputError(str(e.detail)) from e
+    return model_settings, openai_client
 
 
 def _find_return_coordinator(
@@ -329,53 +310,37 @@ def _resolve_turn_context(
 ) -> TurnContext:
     """The active node and its settings, plus (rag) its search client, (coordinator) its routes, or (agent) the coordinator it returns to.
 
-    Every route target's settings are resolved here too, so no DB access happens once the LLM calls start.
+    A coordinator's route targets are only parsed here; the chosen one loads its settings in its own
+    short DB session after routing, so no DB connection is held across an LLM call.
     """
     flow_version = get_chatbot_flow_version_by_id(
         session, flow_version_id=chatbot_session.flow_version_id
     )
     if flow_version is None:
         raise ChatbotInputError(
-            _node_not_in_flow_message(ACTIVE_NODE_LABEL, chatbot_session.active_node_id)
+            NODE_NOT_IN_FLOW_ERROR.format(node_id=chatbot_session.active_node_id)
         )
     turn_node = _resolve_turn_node(
         flow_version=flow_version, active_node_id=chatbot_session.active_node_id
     )
 
-    openai_client: OpenAI | None = None
+    model_settings, openai_client = _resolve_node_runtime(
+        session=session,
+        organization_id=organization_id,
+        project_id=project_id,
+        turn_node=turn_node,
+    )
     routes: list[CoordinatorRoute] = []
-    route_targets: _RouteTargets = {}
+    route_target_nodes: dict[str, TurnNode] = {}
     return_node_id: str | None = None
-    try:
-        model_settings = resolve_chatbot_model_settings(
-            session=session,
-            organization_id=organization_id,
-            project_id=project_id,
-            config_id=turn_node.config_id,
-            config_version=turn_node.config_version,
+    if turn_node.node_type == ChatbotFlowNodeTypeEnum.COORDINATOR:
+        routes, route_target_nodes = _resolve_coordinator_routes(
+            flow_version=flow_version, coordinator_node_id=turn_node.node_id
         )
-        if turn_node.node_type == ChatbotFlowNodeTypeEnum.RAG:
-            openai_client = prepare_rag_search_client(
-                session=session,
-                organization_id=organization_id,
-                project_id=project_id,
-                model_settings=model_settings,
-            )
-        if turn_node.node_type == ChatbotFlowNodeTypeEnum.COORDINATOR:
-            routes, route_targets, openai_client = _resolve_coordinator_routes(
-                session=session,
-                flow_version=flow_version,
-                coordinator_node_id=turn_node.node_id,
-                organization_id=organization_id,
-                project_id=project_id,
-            )
-        else:
-            return_node_id = _find_return_coordinator(
-                flow_version=flow_version, node_id=turn_node.node_id
-            )
-    except HTTPException as e:
-        # Config lookups raise HTTP-shaped 404s; the worker reports them as a failure webhook.
-        raise ChatbotInputError(str(e.detail)) from e
+    else:
+        return_node_id = _find_return_coordinator(
+            flow_version=flow_version, node_id=turn_node.node_id
+        )
     return TurnContext(
         chatbot_id=chatbot_session.chatbot_id,
         session_status=chatbot_session.status.value,
@@ -385,7 +350,7 @@ def _resolve_turn_context(
         model_settings=model_settings,
         openai_client=openai_client,
         routes=routes,
-        route_targets=route_targets,
+        route_target_nodes=route_target_nodes,
         return_node_id=return_node_id,
     )
 
@@ -430,6 +395,8 @@ def _run_coordinator_turn_and_handoff(
     context: TurnContext,
     history: list[ChatbotMessageDict],
     user_message: str | None,
+    organization_id: int,
+    project_id: int,
 ) -> _TurnOutcome:
     """Route, then let the chosen agent reply in the same turn (silent handoff)."""
     coordinator_node = context.turn_node
@@ -441,10 +408,10 @@ def _run_coordinator_turn_and_handoff(
         model_settings=context.model_settings,
     )
     if decision.target_node_id is None:
-        question = decision.clarifying_question or FALLBACK_CLARIFYING_QUESTION
+        # The fallback only narrows the type; run_coordinator_turn always sets a question when it doesn't route.
         return _TurnOutcome(
             result=ChatbotTurnResult(
-                reply=question,
+                reply=decision.clarifying_question or FALLBACK_CLARIFYING_QUESTION,
                 collected_fields=context.collected_fields,
                 is_complete=False,
             ),
@@ -452,7 +419,19 @@ def _run_coordinator_turn_and_handoff(
             next_active_node_id=None,
         )
 
-    target_node, target_settings = context.route_targets[decision.target_node_id]
+    target_node = context.route_target_nodes[decision.target_node_id]
+    logger.info(
+        f"[_run_coordinator_turn_and_handoff] Loading route target | "
+        f"target_node_id: {target_node.node_id}, node_type: {target_node.node_type.value}"
+    )
+    # Only the chosen target loads, so a broken sibling target can't fail this turn.
+    with Session(engine) as session:
+        target_settings, target_openai_client = _resolve_node_runtime(
+            session=session,
+            organization_id=organization_id,
+            project_id=project_id,
+            turn_node=target_node,
+        )
     turn_result = run_agent_turn(
         node_type=target_node.node_type,
         system_prompt=target_node.prompt,
@@ -460,7 +439,7 @@ def _run_coordinator_turn_and_handoff(
         user_message=user_message,
         model_settings=target_settings,
         collected_fields=context.collected_fields,
-        openai_client=context.openai_client,
+        openai_client=target_openai_client,
     )
     # rag never completes, so the session stays on the coordinator and every question is routed afresh.
     if target_node.node_type == ChatbotFlowNodeTypeEnum.RAG:
@@ -477,11 +456,17 @@ def _run_coordinator_turn_and_handoff(
     )
 
 
-def _run_turn(context: TurnContext) -> _TurnOutcome:
+def _run_turn(
+    context: TurnContext, *, organization_id: int, project_id: int
+) -> _TurnOutcome:
     history, user_message = _split_pending_turn(context.stored_messages)
     if context.turn_node.node_type == ChatbotFlowNodeTypeEnum.COORDINATOR:
         return _run_coordinator_turn_and_handoff(
-            context=context, history=history, user_message=user_message
+            context=context,
+            history=history,
+            user_message=user_message,
+            organization_id=organization_id,
+            project_id=project_id,
         )
 
     turn_result = run_agent_turn(
@@ -574,7 +559,9 @@ def process_chatbot_session_message(
         )
         if context is None:
             return
-        outcome = _run_turn(context)
+        outcome = _run_turn(
+            context, organization_id=organization_id, project_id=project_id
+        )
     except (ChatbotInputError, ChatbotProviderError) as e:
         _send_failure_webhook(
             session_id=session_id,

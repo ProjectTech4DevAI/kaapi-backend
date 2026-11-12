@@ -752,7 +752,7 @@ class TestProcessChatbotSessionMessageFlowNode:
             callbacks,
             chatbot_session,
             "Active node 'done' has type 'output'",
-            "only 'coordinator', 'onboarding', 'rag' nodes can run",
+            "only coordinator, onboarding, rag nodes can run",
         )
 
     @pytest.mark.parametrize(
@@ -1272,8 +1272,13 @@ APPLY_NODE_ID = "apply-agent"
 FAQ_NODE_ID = "faq-agent"
 
 
-def _coordinator_with_rag_route(db: Session, project: Project) -> tuple[Chatbot, str]:
-    """A live input -> coordinator flow routing "Apply" to onboarding and "Questions" to rag."""
+def _coordinator_with_rag_route(
+    db: Session, project: Project
+) -> tuple[Chatbot, str, Config]:
+    """A live input -> coordinator flow routing "Apply" to onboarding and "Questions" to rag.
+
+    Only the rag target uses `rag_config`; the coordinator and onboarding target share another.
+    """
     collection = get_vector_store_collection(db, project)
     rag_config = create_test_anthropic_config(
         db, project_id=project.id, knowledge_base_ids=[collection.knowledge_base_id]
@@ -1284,7 +1289,7 @@ def _coordinator_with_rag_route(db: Session, project: Project) -> tuple[Chatbot,
         routes={"Apply": APPLY_NODE_ID},
         rag_routes={"Questions": (FAQ_NODE_ID, rag_config.id)},
     )
-    return chatbot, collection.knowledge_base_id
+    return chatbot, collection.knowledge_base_id, rag_config
 
 
 def _ask(db: Session, chatbot_session: ChatbotSession, text: str) -> None:
@@ -1292,6 +1297,44 @@ def _ask(db: Session, chatbot_session: ChatbotSession, text: str) -> None:
         db, chatbot_session, [(ChatbotMessageRoleEnum.USER, text)]
     )
     _process(chatbot_session, db)
+
+
+def _greet_then_complete_apply(
+    db: Session,
+    chatbot: Chatbot,
+    callbacks: CallbackRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> ChatbotSession:
+    """Run the greeting and a fully-answered "Apply" turn, leaving the session back on the coordinator."""
+    chatbot_session = _coordinator_session(db, chatbot, [])
+    patch_chat_model(
+        monkeypatch,
+        ScriptedChatModel(
+            extractions=[RouteDecision(intent=None, clarifying_question=GREETING)]
+        ),
+    )
+    _process(chatbot_session, db)
+    assert callbacks.payloads[-1]["success"] is True
+
+    patch_chat_model(
+        monkeypatch,
+        ScriptedChatModel(
+            replies=["You're registered!"],
+            extractions=[
+                RouteDecision(intent="Apply"),
+                FieldExtraction(
+                    collected_fields=extracted_fields({"name": "Asha"}),
+                    missing_fields=[],
+                    is_complete=True,
+                ),
+            ],
+        ),
+    )
+    _ask(db, chatbot_session, "I'm Asha and I want to apply")
+    assert callbacks.payloads[-1]["success"] is True
+    assert callbacks.payloads[-1]["data"]["node_id"] == APPLY_NODE_ID
+    assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
+    return chatbot_session
 
 
 class TestCoordinatorRagRoute:
@@ -1303,7 +1346,9 @@ class TestCoordinatorRagRoute:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _credentials, project = create_test_credential(db)
-        chatbot, knowledge_base_id = _coordinator_with_rag_route(db, project)
+        chatbot, knowledge_base_id, _rag_config = _coordinator_with_rag_route(
+            db, project
+        )
         vector_stores.hits[knowledge_base_id] = [
             search_hit(file_id="file-fees", filename="fees.pdf", score=0.9)
         ]
@@ -1344,32 +1389,80 @@ class TestCoordinatorRagRoute:
         assert stored.active_node_id == COORDINATOR_NODE_ID
         assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS
 
-    def test_rag_target_without_openai_credentials_fails_before_routing(
+    def test_rag_target_without_openai_credentials_fails_only_turns_routed_to_it(
         self,
         db: Session,
         callbacks: CallbackRecorder,
         vector_stores: FakeVectorStores,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        chatbot, _kb_id = _coordinator_with_rag_route(db, create_test_project(db))
-        chat_model = patch_chat_model(
+        # A project with Anthropic credentials (from the config factory) but no OpenAI ones.
+        chatbot, _kb_id, _rag_config = _coordinator_with_rag_route(
+            db, create_test_project(db)
+        )
+        chatbot_session = _greet_then_complete_apply(
+            db, chatbot, callbacks, monkeypatch
+        )
+
+        rag_turn_model = patch_chat_model(
             monkeypatch,
             ScriptedChatModel(
                 replies=["should never be used"],
                 extractions=[RouteDecision(intent="Questions")],
             ),
         )
-        chatbot_session = _coordinator_session(
-            db, chatbot, [(ChatbotMessageRoleEnum.USER, "What is the tuition?")]
+        _ask(db, chatbot_session, "What is the tuition?")
+
+        assert rag_turn_model.calls == []
+        assert vector_stores.calls == []
+        assert len(callbacks.payloads) == 3
+        failure = callbacks.payloads[-1]
+        assert failure["success"] is False
+        assert "OpenAI credentials" in failure["error"]
+        assert failure["data"] == {"session_id": str(chatbot_session.id)}
+        assert _transcript(db, chatbot_session)[-1] == ("user", "What is the tuition?")
+        assert _assistant_node_ids(db, chatbot_session) == [
+            COORDINATOR_NODE_ID,
+            APPLY_NODE_ID,
+        ]
+        assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
+
+    def test_deleted_target_config_version_fails_only_turns_routed_to_it(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _credentials, project = create_test_credential(db)
+        chatbot, _kb_id, rag_config = _coordinator_with_rag_route(db, project)
+        ConfigVersionCrud(
+            session=db, project_id=project.id, config_id=rag_config.id
+        ).delete_or_raise(1)
+        chatbot_session = _greet_then_complete_apply(
+            db, chatbot, callbacks, monkeypatch
         )
 
-        _process(chatbot_session, db)
+        rag_turn_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["should never be used"],
+                extractions=[RouteDecision(intent="Questions")],
+            ),
+        )
+        _ask(db, chatbot_session, "What is the tuition?")
 
-        assert chat_model.structured_output_schemas == []
-        assert chat_model.calls == []
+        assert rag_turn_model.calls == []
         assert vector_stores.calls == []
-        _assert_single_failure_webhook(callbacks, chatbot_session, "OpenAI credentials")
-        assert _transcript(db, chatbot_session) == [("user", "What is the tuition?")]
+        assert len(callbacks.payloads) == 3
+        assert callbacks.payloads[-1] == _failure_webhook(
+            chatbot_session,
+            f"Version with number '1' not found for config '{rag_config.id}'",
+        )
+        assert _assistant_node_ids(db, chatbot_session) == [
+            COORDINATOR_NODE_ID,
+            APPLY_NODE_ID,
+        ]
         assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
 
     def test_rag_and_onboarding_routes_interleave_across_turns(
@@ -1380,7 +1473,9 @@ class TestCoordinatorRagRoute:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         _credentials, project = create_test_credential(db)
-        chatbot, knowledge_base_id = _coordinator_with_rag_route(db, project)
+        chatbot, knowledge_base_id, _rag_config = _coordinator_with_rag_route(
+            db, project
+        )
         vector_stores.hits[knowledge_base_id] = [
             search_hit(file_id="file-fees", filename="fees.pdf", score=0.9)
         ]

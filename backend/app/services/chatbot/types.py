@@ -51,7 +51,7 @@ class CoordinatorRoute(NamedTuple):
 
 
 class TurnContext(NamedTuple):
-    """Everything a turn needs, loaded in one DB session before the LLM call."""
+    """Everything a turn needs, loaded in one DB session before the first LLM call."""
 
     chatbot_id: UUID
     session_status: str
@@ -59,10 +59,10 @@ class TurnContext(NamedTuple):
     stored_messages: list[ChatbotSessionMessage]
     turn_node: TurnNode
     model_settings: ChatbotModelSettings
-    # Knowledge-base search client: set for a rag node, or a coordinator with a rag target.
+    # Knowledge-base search client: set only when the active node is rag.
     openai_client: OpenAI | None
-    # Coordinator only: its routes and each target's node + settings, resolved up front.
+    # Coordinator only: its routes and each target's node; the chosen target's settings load after routing.
     routes: list[CoordinatorRoute]
-    route_targets: dict[str, tuple[TurnNode, ChatbotModelSettings]]
+    route_target_nodes: dict[str, TurnNode]
     # Agent behind a coordinator: where the session returns once the agent completes.
     return_node_id: str | None

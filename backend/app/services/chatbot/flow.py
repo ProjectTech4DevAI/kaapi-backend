@@ -60,7 +60,7 @@ _COORDINATOR_TARGET_NODE_TYPES_LABEL = " or ".join(
 )
 EDGE_INTENT_KEY = "intent"
 EDGE_DESCRIPTION_KEY = "description"
-_SUPPORTED_AGENT_NODE_TYPES_LABEL = ", ".join(
+SUPPORTED_AGENT_NODE_TYPES_LABEL = ", ".join(
     sorted(node_type.value for node_type in SUPPORTED_AGENT_NODE_TYPES)
 )
 CHATBOT_NOT_FOUND_MESSAGE = "Chatbot not found"
@@ -282,7 +282,7 @@ def _pin_agent_node_config(
     if node.type not in SUPPORTED_AGENT_NODE_TYPES:
         return node, [
             f"node '{node.id}' has type '{node.type.value}', which is not supported yet "
-            f"(supported agent types: {_SUPPORTED_AGENT_NODE_TYPES_LABEL})"
+            f"(supported agent types: {SUPPORTED_AGENT_NODE_TYPES_LABEL})"
         ]
 
     node_data = node.agent_data()
