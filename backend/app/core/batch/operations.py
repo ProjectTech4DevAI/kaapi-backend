@@ -49,6 +49,11 @@ def start_batch_job(
 
     batch_job = create_batch_job(session=session, batch_job_create=batch_job_create)
 
+    # create_batch_job's refresh() re-opens a transaction; end it so no pooled
+    # connection sits idle-in-transaction during the (slow) upload + create.
+    # Nothing is pending at this point, so this only releases the connection.
+    session.commit()
+
     try:
         batch_result = provider.create_batch(jsonl_data=jsonl_data, config=config)
 
