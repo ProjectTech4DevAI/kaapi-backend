@@ -1,9 +1,11 @@
 import random
 import string
+from types import SimpleNamespace
 from uuid import UUID
 from typing import Type, TypeVar
 
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.core.config import settings
@@ -12,6 +14,16 @@ from app.models import Project, Assistant, Organization, Document
 
 
 T = TypeVar("T")
+
+
+def make_integrity_error(
+    sqlstate: str | None, constraint: str | None = None
+) -> IntegrityError:
+    """IntegrityError whose driver error carries psycopg's sqlstate and diag, as Postgres raises it."""
+    orig = Exception("integrity violation")
+    orig.sqlstate = sqlstate  # type: ignore[attr-defined]
+    orig.diag = SimpleNamespace(constraint_name=constraint)  # type: ignore[attr-defined]
+    return IntegrityError("INSERT", {"input": "9876543210"}, orig)
 
 
 def random_lower_string() -> str:

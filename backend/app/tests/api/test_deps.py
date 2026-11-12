@@ -1,11 +1,11 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from app.api.deps import get_auth_context
+from app.api.deps import _set_tenant_span_attributes, get_auth_context
 from app.core.config import settings
 from app.core.security import create_access_token, create_refresh_token
 from app.models import (
@@ -270,3 +270,22 @@ class TestGetAuthContext:
         assert auth_context.organization.id == user_api_key.organization.id
         assert auth_context.project is not None
         assert auth_context.project.id == user_api_key.project.id
+
+
+def test_tenant_attributes_set_on_recording_span() -> None:
+    span = MagicMock()
+    span.is_recording.return_value = True
+    auth_context = MagicMock()
+    auth_context.user.id = 5
+    auth_context.organization.id = 2
+    auth_context.project.id = 3
+
+    with (
+        patch("app.api.deps.trace.get_current_span", return_value=span),
+        patch("app.api.deps.set_request_log_context"),
+        patch("app.api.deps.bind_sentry_user"),
+    ):
+        _set_tenant_span_attributes(auth_context)
+
+    span.set_attribute.assert_any_call("tenant.org_id", "2")
+    span.set_attribute.assert_any_call("tenant.project_id", "3")

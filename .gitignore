@@ -21,3 +21,6 @@ ENV/
 
 #
 /backend/app/logs
+
+# local assessment scratch data
+z_assessment_test/

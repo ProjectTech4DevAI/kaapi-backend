@@ -1,10 +1,12 @@
 import base64
 import json
 from datetime import timedelta
+from unittest.mock import MagicMock
 
 import boto3
 import jwt
 import pytest
+from fastapi import HTTPException
 from moto import mock_aws
 from sqlmodel import Session
 
@@ -82,6 +84,33 @@ class TestCredentialEncryption:
         monkeypatch.setattr(settings, "ENVIRONMENT", "staging")
         assert decrypt_credentials(fernet_encrypted) == creds
 
+    def test_kms_encrypt_failure_raises_502_without_leaking_cause(
+        self, monkeypatch, kms_key
+    ):
+        broken = MagicMock()
+        broken.generate_data_key.side_effect = Exception(
+            "arn:aws:kms:ap-south-1:secret"
+        )
+        monkeypatch.setattr(security, "_kms_client", broken)
+
+        with pytest.raises(HTTPException) as exc:
+            encrypt_credentials({"api_key": "sk-1"})
+
+        assert exc.value.status_code == 502
+        assert "arn:aws:kms" not in exc.value.detail
+
+    def test_kms_decrypt_failure_raises_502(self, monkeypatch, kms_key):
+        encrypted = encrypt_credentials({"api_key": "sk-1"})
+        broken = MagicMock()
+        broken.decrypt.side_effect = Exception("arn:aws:kms:ap-south-1:secret")
+        monkeypatch.setattr(security, "_kms_client", broken)
+
+        with pytest.raises(HTTPException) as exc:
+            decrypt_credentials(encrypted)
+
+        assert exc.value.status_code == 502
+        assert "arn:aws:kms" not in exc.value.detail
+
     def test_kms_v2_envelope_roundtrip(self, kms_key):
         creds = {"openai": {"api_key": "sk-envelope-123"}}
 
@@ -133,12 +162,14 @@ class TestCredentialEncryption:
             f"{base64.b64encode(bytes(ct)).decode()}"
         )
 
-        with pytest.raises(ValueError, match="Failed to decrypt credentials"):
+        with pytest.raises(HTTPException) as exc:
             decrypt_credentials(tampered)
+        assert exc.value.status_code == 502
 
     def test_v2_wrong_segment_count_raises(self, kms_key):
-        with pytest.raises(ValueError, match="Failed to decrypt credentials"):
+        with pytest.raises(HTTPException) as exc:
             decrypt_credentials(f"{KMS_ENVELOPE_PREFIX}onlyoneseg")
+        assert exc.value.status_code == 502
 
     def test_encrypt_fernet_forces_fernet_even_with_kms_active(self, kms_key):
         creds = {"api_key": "sk-force-fernet"}

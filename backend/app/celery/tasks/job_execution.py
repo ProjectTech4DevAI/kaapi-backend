@@ -22,16 +22,12 @@ within the same priority, delivery is FIFO.
 """
 
 import logging
-from collections.abc import Callable
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from asgi_correlation_id import correlation_id
 from celery import Task, current_task
 from gevent import Timeout
-from opentelemetry import context as otel_context
-from opentelemetry import trace
-from opentelemetry.propagate import extract
 
 from app.celery.celery_app import EVALUATIONS_QUEUE, celery_app
 from app.celery.utils import gevent_timeout
@@ -44,8 +40,6 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
-
-T = TypeVar("T")
 
 # Sentinel correlation id used when no trace id is propagated from the
 # enqueueing request. Matches the codebase-wide "N/A" default (see
@@ -60,60 +54,18 @@ def _set_trace(trace_id: str) -> None:
     logger.info(f"[_set_trace] Set correlation ID: {trace_id}")
 
 
-def _extract_parent_context(task_instance: Task) -> otel_context.Context:
-    """Extract OTel parent context from Celery headers if available."""
-    headers = getattr(task_instance.request, "headers", None) or {}
-    carrier: dict[str, str] = {}
-
-    if isinstance(headers, dict):
-        for key, value in headers.items():
-            if isinstance(value, str):
-                carrier[str(key)] = value
-
-        nested = headers.get("otel", {})
-        if isinstance(nested, dict):
-            for key, value in nested.items():
-                if isinstance(value, str):
-                    carrier[str(key)] = value
-
-    return extract(carrier)
-
-
-def _run_with_otel_parent(
-    task_instance: Task, fn: Callable[[], T]
-) -> T:  # noqa: UP047 (black doesn't support PEP 695 generics yet)
-    """Attach the extracted parent context and execute `fn` under it.
-
-    Needed because otel's Celery instrumentation misses propagation headers
-    under `task.request.headers`, leaving `run/...` spans unparented.
-    """
-    parent_ctx = _extract_parent_context(task_instance)
-    parent_span_ctx = trace.get_current_span(parent_ctx).get_span_context()
-    if not (parent_span_ctx and parent_span_ctx.is_valid):
-        return fn()
-
-    token = otel_context.attach(parent_ctx)
-    try:
-        return fn()
-    finally:
-        otel_context.detach(token)
-
-
 @celery_app.task(bind=True, queue="default", priority=9)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_llm_job")
 def run_llm_job(self, project_id: int, job_id: str, trace_id: str, **kwargs):
     from app.services.llm.jobs import execute_job
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_job(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_job(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 
@@ -123,15 +75,12 @@ def run_llm_chain_job(self, project_id: int, job_id: str, trace_id: str, **kwarg
     from app.services.llm.jobs import execute_chain_job
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_chain_job(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_chain_job(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 
@@ -141,15 +90,12 @@ def run_response_job(self, project_id: int, job_id: str, trace_id: str, **kwargs
     from app.services.response.jobs import execute_job
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_job(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_job(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 
@@ -159,15 +105,12 @@ def run_guardrails_job(self, project_id: int, job_id: str, trace_id: str, **kwar
     from app.services.guardrails.jobs import execute_job
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_job(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_job(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 
@@ -177,15 +120,12 @@ def run_doctransform_job(self, project_id: int, job_id: str, trace_id: str, **kw
     from app.services.doctransform.job import execute_job
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_job(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_job(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 
@@ -197,15 +137,12 @@ def run_collection_setup_job(
     from app.services.collections.create_collection import execute_setup_job
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_setup_job(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_setup_job(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 
@@ -217,15 +154,12 @@ def run_collection_batch_job(
     from app.services.collections.create_collection import execute_batch_job
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_batch_job(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_batch_job(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 
@@ -237,15 +171,12 @@ def run_delete_collection_job(
     from app.services.collections.delete_collection import execute_job
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_job(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_job(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 
@@ -257,15 +188,12 @@ def run_evaluation_batch_submission(
     from app.services.evaluations.batch_job import execute_evaluation_batch_submission
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_evaluation_batch_submission(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_evaluation_batch_submission(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 
@@ -277,14 +205,11 @@ def run_prompt_improvement(self, project_id: int, job_id: str, trace_id: str, **
     from app.services.evaluations.prompt_improvement import execute_prompt_improvement
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_prompt_improvement(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            **kwargs,
-        ),
+    return execute_prompt_improvement(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        **kwargs,
     )
 
 
@@ -296,15 +221,12 @@ def run_stt_batch_submission(
     from app.services.stt_evaluations.batch_job import execute_batch_submission
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_batch_submission(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_batch_submission(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 
@@ -316,15 +238,12 @@ def run_stt_metric_computation(
     from app.services.stt_evaluations.metric_job import execute_metric_computation
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_metric_computation(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_metric_computation(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 
@@ -336,15 +255,12 @@ def run_tts_batch_submission(
     from app.services.tts_evaluations.batch_job import execute_batch_submission
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_batch_submission(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_batch_submission(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 
@@ -361,13 +277,10 @@ def run_assessment_pipeline(
     from app.services.assessment.tasks import execute_assessment_pipeline
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_assessment_pipeline(
-            run_id=run_id,
-            organization_id=organization_id,
-            project_id=project_id,
-        ),
+    return execute_assessment_pipeline(
+        run_id=run_id,
+        organization_id=organization_id,
+        project_id=project_id,
     )
 
 
@@ -399,13 +312,10 @@ def run_assessment_api_batch(
     )
 
     _set_trace(trace_id)
-    result = _run_with_otel_parent(
-        self,
-        lambda: run_batch_stage(
-            execution_id=execution_id,
-            organization_id=organization_id,
-            project_id=project_id,
-        ),
+    result = run_batch_stage(
+        execution_id=execution_id,
+        organization_id=organization_id,
+        project_id=project_id,
     )
     if result and result.get("requeue"):
         self.apply_async(
@@ -428,10 +338,7 @@ def run_assessment_response(self, execution_id: int, trace_id: str, **kwargs):
     from app.services.assessment.api.response import run_response_assessment
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: run_response_assessment(execution_id=execution_id),
-    )
+    return run_response_assessment(execution_id=execution_id)
 
 
 @celery_app.task(bind=True, queue="default", priority=2)
@@ -444,15 +351,12 @@ def run_tts_result_processing(
     )
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_tts_result_processing(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_tts_result_processing(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 
@@ -479,11 +383,8 @@ def run_evaluation_fast_chunk(
     )
 
     with log_context(module=LogModuleEnum.FASTEVALS):
-        return _run_with_otel_parent(
-            self,
-            lambda: execute_fast_evaluation_chunk(
-                eval_run_id=eval_run_id, chunk_index=chunk_index
-            ),
+        return execute_fast_evaluation_chunk(
+            eval_run_id=eval_run_id, chunk_index=chunk_index
         )
 
 
@@ -507,10 +408,7 @@ def run_evaluation_fast_aggregate(
     )
 
     with log_context(module=LogModuleEnum.FASTEVALS):
-        return _run_with_otel_parent(
-            self,
-            lambda: execute_fast_evaluation_aggregate(eval_run_id=eval_run_id),
-        )
+        return execute_fast_evaluation_aggregate(eval_run_id=eval_run_id)
 
 
 # Priority 6 (fast-eval tier): same band as run_prompt_improvement — one graph
@@ -547,15 +445,12 @@ def run_evaluation_iteration_graph_step(
         f"iteration_run_id={iteration_run_id} | resume={resume} | "
         f"task_id={current_task.request.id}"
     )
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_evaluation_iteration_graph_step(
-            iteration_run_id=iteration_run_id,
-            resume=resume,
-            organization_id=organization_id,
-            project_id=project_id,
-            **kwargs,
-        ),
+    return execute_evaluation_iteration_graph_step(
+        iteration_run_id=iteration_run_id,
+        resume=resume,
+        organization_id=organization_id,
+        project_id=project_id,
+        **kwargs,
     )
 
 
@@ -563,7 +458,9 @@ def run_evaluation_iteration_graph_step(
 @gevent_timeout(
     settings.CELERY_TASK_SOFT_TIME_LIMIT, "send_eval_completion_notification"
 )
-def send_eval_completion_notification(self, evaluation_id: int) -> dict:
+def send_eval_completion_notification(
+    self, evaluation_id: int, trace_id: str = DEFAULT_TRACE_ID
+) -> dict:
     """
     Fan out a completion notification for an eval run to every project member.
 
@@ -576,19 +473,21 @@ def send_eval_completion_notification(self, evaluation_id: int) -> dict:
         execute_eval_completion_notification,
     )
 
+    _set_trace(trace_id)
     return execute_eval_completion_notification(evaluation_id=evaluation_id)
 
 
 @celery_app.task(bind=True, queue="default", priority=1)
 @gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "send_eval_completion_callback")
 def send_eval_completion_callback(
-    self: Task, evaluation_id: int
+    self: Task, evaluation_id: int, trace_id: str = DEFAULT_TRACE_ID
 ) -> "EvalCompletionCallbackResult":
     """POST the run's status to its registered webhook once it is terminal."""
     from app.services.notifications.eval_completion import (
         execute_eval_completion_callback,
     )
 
+    _set_trace(trace_id)
     return execute_eval_completion_callback(evaluation_id=evaluation_id)
 
 
@@ -607,12 +506,9 @@ def run_chatbot_session_message(
     from app.services.chatbot.session import process_chatbot_session_message
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: process_chatbot_session_message(
-            session_id=UUID(session_id),
-            organization_id=organization_id,
-            project_id=project_id,
-            webhook_url=webhook_url,
-        ),
+    return process_chatbot_session_message(
+        session_id=UUID(session_id),
+        organization_id=organization_id,
+        project_id=project_id,
+        webhook_url=webhook_url,
     )

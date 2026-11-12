@@ -118,7 +118,7 @@ class CollectionCrud:
                 "[CollectionCrud.read_one_if_delete] Collection already deleted | "
                 f"{{'project_id': '{self.project_id}', 'collection_id': '{collection_id}'}}"
             )
-            raise HTTPException(status_code=400, detail="Collection already deleted")
+            raise HTTPException(status_code=409, detail="Collection already deleted")
 
         return collection
 

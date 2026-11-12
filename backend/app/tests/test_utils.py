@@ -435,7 +435,7 @@ class TestSendCallbackLogging:
         mock_session.post.return_value = MagicMock(status_code=502)
         mock_session_cls.return_value.__enter__.return_value = mock_session
 
-        with caplog.at_level("ERROR", logger="app.utils"):
+        with caplog.at_level("WARNING", logger="app.utils"):
             assert not send_callback("https://api.example.com/hook", self._payload)
 
         line = next(
@@ -558,4 +558,5 @@ class TestGetLangfuseClient:
         with pytest.raises(HTTPException) as exc_info:
             get_langfuse_client(session=MagicMock(), org_id=1, project_id=2)
         assert exc_info.value.status_code == 500
-        assert "bad host" in exc_info.value.detail
+        assert exc_info.value.detail == "Failed to configure Langfuse client."
+        assert "bad host" not in exc_info.value.detail
