@@ -312,18 +312,32 @@ def build_coordinator_node(
 
 
 def build_coordinator_flow(
-    *, config_id: UUID, routes: dict[str, str]
+    *,
+    config_id: UUID,
+    routes: dict[str, str],
+    rag_routes: dict[str, tuple[str, UUID]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """input -> coordinator -> one onboarding node per `routes` entry (intent -> node id)."""
+    """input -> coordinator -> one onboarding node per `routes` entry (intent -> node id),
+    plus one rag node per `rag_routes` entry (intent -> (node id, rag config id))."""
     nodes = [
         build_flow_node(INPUT_NODE_ID, ChatbotFlowNodeTypeEnum.INPUT.value),
         build_coordinator_node(config_id=config_id),
     ]
     edges = [build_flow_edge("e-input", INPUT_NODE_ID, COORDINATOR_NODE_ID)]
-    for intent, node_id in routes.items():
+    targets = [
+        (intent, node_id, config_id, ChatbotFlowNodeTypeEnum.ONBOARDING)
+        for intent, node_id in routes.items()
+    ] + [
+        (intent, node_id, rag_config_id, ChatbotFlowNodeTypeEnum.RAG)
+        for intent, (node_id, rag_config_id) in (rag_routes or {}).items()
+    ]
+    for intent, node_id, target_config_id, node_type in targets:
         nodes.append(
             build_onboarding_node(
-                config_id=config_id, node_id=node_id, prompt=route_prompt(node_id)
+                config_id=target_config_id,
+                node_id=node_id,
+                prompt=route_prompt(node_id),
+                node_type=node_type.value,
             )
         )
         edges.append(build_intent_edge(f"e-{node_id}", node_id, intent))
@@ -399,13 +413,19 @@ def create_test_live_chatbot(
 
 
 def create_test_live_coordinator_chatbot(
-    db: Session, *, config: Config, routes: dict[str, str]
+    db: Session,
+    *,
+    config: Config,
+    routes: dict[str, str],
+    rag_routes: dict[str, tuple[str, UUID]] | None = None,
 ) -> tuple[Chatbot, ChatbotFlowVersion]:
-    """A chatbot whose live flow is input -> coordinator -> one onboarding node per route."""
+    """A chatbot whose live flow is input -> coordinator -> one agent node per route."""
     project = db.get(Project, config.project_id)
     assert project is not None
     chatbot = create_test_chatbot(db, project=project)
-    nodes, edges = build_coordinator_flow(config_id=config.id, routes=routes)
+    nodes, edges = build_coordinator_flow(
+        config_id=config.id, routes=routes, rag_routes=rag_routes
+    )
     flow_version = create_test_flow_version(
         db, chatbot=chatbot, nodes=nodes, edges=edges, is_live=True
     )

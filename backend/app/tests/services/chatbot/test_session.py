@@ -44,6 +44,7 @@ from app.tests.utils.chatbot import (
     DEFAULT_SYSTEM_PROMPT,
     FakeOpenAIClient,
     FakeVectorStores,
+    NOTHING_EXTRACTED,
     ONBOARDING_NODE_ID,
     WEBHOOK_URL,
     ScriptedChatModel,
@@ -1265,3 +1266,196 @@ class TestRagSessionTurn:
         assert payload["data"] == {"session_id": str(chatbot_session.id)}
         assert _transcript(db, chatbot_session) == [("user", "What is the tuition?")]
         assert len(chat_model.calls) == 1
+
+
+APPLY_NODE_ID = "apply-agent"
+FAQ_NODE_ID = "faq-agent"
+
+
+def _coordinator_with_rag_route(db: Session, project: Project) -> tuple[Chatbot, str]:
+    """A live input -> coordinator flow routing "Apply" to onboarding and "Questions" to rag."""
+    collection = get_vector_store_collection(db, project)
+    rag_config = create_test_anthropic_config(
+        db, project_id=project.id, knowledge_base_ids=[collection.knowledge_base_id]
+    )
+    chatbot, _flow_version = create_test_live_coordinator_chatbot(
+        db,
+        config=create_test_anthropic_config(db, project_id=project.id),
+        routes={"Apply": APPLY_NODE_ID},
+        rag_routes={"Questions": (FAQ_NODE_ID, rag_config.id)},
+    )
+    return chatbot, collection.knowledge_base_id
+
+
+def _ask(db: Session, chatbot_session: ChatbotSession, text: str) -> None:
+    add_test_chatbot_messages(
+        db, chatbot_session, [(ChatbotMessageRoleEnum.USER, text)]
+    )
+    _process(chatbot_session, db)
+
+
+class TestCoordinatorRagRoute:
+    def test_rag_handoff_answers_with_sources_and_stays_on_coordinator(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _credentials, project = create_test_credential(db)
+        chatbot, knowledge_base_id = _coordinator_with_rag_route(db, project)
+        vector_stores.hits[knowledge_base_id] = [
+            search_hit(file_id="file-fees", filename="fees.pdf", score=0.9)
+        ]
+        chat_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=[tool_call_reply("tuition fee"), "Tuition is 100 per term."],
+                extractions=[RouteDecision(intent="Questions")],
+            ),
+        )
+        chatbot_session = _coordinator_session(
+            db,
+            chatbot,
+            [
+                (ChatbotMessageRoleEnum.ASSISTANT, GREETING),
+                (ChatbotMessageRoleEnum.USER, "What is the tuition?"),
+            ],
+        )
+
+        _process(chatbot_session, db)
+
+        assert callbacks.payloads == [
+            _success_webhook(
+                chatbot_session,
+                chatbot,
+                reply="Tuition is 100 per term.",
+                node_id=FAQ_NODE_ID,
+                sources=[{"file_id": "file-fees", "filename": "fees.pdf"}],
+            )
+        ]
+        assert route_prompt(FAQ_NODE_ID) in str(chat_model.calls[0][0].content)
+        assert vector_stores.calls[0]["vector_store_id"] == knowledge_base_id
+        assert _assistant_node_ids(db, chatbot_session) == [
+            COORDINATOR_NODE_ID,
+            FAQ_NODE_ID,
+        ]
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == COORDINATOR_NODE_ID
+        assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS
+
+    def test_rag_target_without_openai_credentials_fails_before_routing(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        chatbot, _kb_id = _coordinator_with_rag_route(db, create_test_project(db))
+        chat_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["should never be used"],
+                extractions=[RouteDecision(intent="Questions")],
+            ),
+        )
+        chatbot_session = _coordinator_session(
+            db, chatbot, [(ChatbotMessageRoleEnum.USER, "What is the tuition?")]
+        )
+
+        _process(chatbot_session, db)
+
+        assert chat_model.structured_output_schemas == []
+        assert chat_model.calls == []
+        assert vector_stores.calls == []
+        _assert_single_failure_webhook(callbacks, chatbot_session, "OpenAI credentials")
+        assert _transcript(db, chatbot_session) == [("user", "What is the tuition?")]
+        assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
+
+    def test_rag_and_onboarding_routes_interleave_across_turns(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _credentials, project = create_test_credential(db)
+        chatbot, knowledge_base_id = _coordinator_with_rag_route(db, project)
+        vector_stores.hits[knowledge_base_id] = [
+            search_hit(file_id="file-fees", filename="fees.pdf", score=0.9)
+        ]
+        chatbot_session = _coordinator_session(
+            db, chatbot, [(ChatbotMessageRoleEnum.ASSISTANT, GREETING)]
+        )
+
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=[tool_call_reply("fees"), "Fees are 100."],
+                extractions=[RouteDecision(intent="Questions")],
+            ),
+        )
+        _ask(db, chatbot_session, "What are the fees?")
+        assert callbacks.payloads[-1]["data"]["node_id"] == FAQ_NODE_ID
+        assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
+
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["What's your name?"],
+                extractions=[RouteDecision(intent="Apply"), NOTHING_EXTRACTED],
+            ),
+        )
+        _ask(db, chatbot_session, "I want to apply")
+        assert callbacks.payloads[-1]["data"]["node_id"] == APPLY_NODE_ID
+        assert _reload(db, chatbot_session).active_node_id == APPLY_NODE_ID
+
+        sticky_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["You're registered!"],
+                extractions=[
+                    FieldExtraction(
+                        collected_fields=extracted_fields({"name": "Asha"}),
+                        missing_fields=[],
+                        is_complete=True,
+                    )
+                ],
+            ),
+        )
+        _ask(db, chatbot_session, "Asha")
+        assert sticky_model.structured_output_schemas == [FieldExtraction]
+        assert callbacks.payloads[-1]["data"]["completion_status"] == "complete"
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == COORDINATOR_NODE_ID
+        assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
+
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=[tool_call_reply("exam date"), "The exam is in May."],
+                extractions=[RouteDecision(intent="Questions")],
+            ),
+        )
+        _ask(db, chatbot_session, "When is the exam?")
+
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session,
+            chatbot,
+            reply="The exam is in May.",
+            node_id=FAQ_NODE_ID,
+            collected_fields={"name": "Asha"},
+            sources=[{"file_id": "file-fees", "filename": "fees.pdf"}],
+        )
+        assert len(callbacks.payloads) == 4
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == COORDINATOR_NODE_ID
+        assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS
+        assert stored.collected_fields == {"name": "Asha"}
+        assert _assistant_node_ids(db, chatbot_session) == [
+            COORDINATOR_NODE_ID,
+            FAQ_NODE_ID,
+            APPLY_NODE_ID,
+            APPLY_NODE_ID,
+            FAQ_NODE_ID,
+        ]

@@ -11,12 +11,12 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field, ValidationError
 
-from app.services.chatbot.agents.onboarding.prompts import EXTRACTION_METHOD
 from app.services.chatbot.agents.coordinator.prompts import (
     FALLBACK_CLARIFYING_QUESTION,
     ROUTES_TEMPLATE,
     ROUTING_INSTRUCTION,
 )
+from app.services.chatbot.agents.onboarding.prompts import EXTRACTION_METHOD
 from app.services.chatbot.exceptions import ChatbotProviderError
 from app.services.chatbot.history import (
     summarize_if_needed,

@@ -33,6 +33,7 @@ from app.tests.utils.chatbot import (
 )
 from app.tests.utils.collection import get_vector_store_collection
 from app.tests.utils.test_data import create_test_config
+from app.tests.utils.utils import random_lower_string
 
 INVALID_FLOW_PREFIX = "[KAAPI] Chatbot flow is invalid: "
 NO_DRAFT_MESSAGE = "[KAAPI] Chatbot has no draft flow to publish; save the flow first."
@@ -40,6 +41,7 @@ MISSING_CREDENTIALS = "Anthropic credentials are not configured for this project
 INPUT_NODE_ID = "input-1"
 OUTPUT_NODE_ID = "output-1"
 ROUTES = {"Enroll": "enroll-agent", "Feedback": "feedback-agent"}
+FAQ_NODE_ID = "faq"
 
 
 def _coordinator_flow_with(
@@ -481,6 +483,43 @@ class TestPublishChatbotFlow:
         assert (stored.version, stored.is_live) == (2, True)
         assert stored.nodes[0]["type"] == "rag"
 
+    def test_coordinator_route_to_rag_node_publishes_with_its_config_pinned(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        config: Config,
+        chatbot: Chatbot,
+        save: Callable[..., Response],
+        publish: Callable[[], Response],
+        live_v1: dict[str, Any],
+    ) -> None:
+        project = db.get(Project, user_api_key.project_id)
+        assert project is not None
+        collection = get_vector_store_collection(db, project)
+        rag_config = create_test_anthropic_config(
+            db,
+            project_id=project.id,
+            knowledge_base_ids=[collection.knowledge_base_id],
+        )
+        nodes, edges = build_coordinator_flow(
+            config_id=config.id,
+            routes=ROUTES,
+            rag_routes={"Questions": (FAQ_NODE_ID, rag_config.id)},
+        )
+        # Left unpinned: a pinned version after publish proves the rag target went
+        # through the per-node config checks, not just the coordinator edge check.
+        del next(n for n in nodes if n["id"] == FAQ_NODE_ID)["data"]["config_version"]
+        assert save(nodes, edges).status_code == 200
+
+        resp = publish()
+
+        assert resp.status_code == 200
+        _, stored = list_stored_flow_versions(db, chatbot)
+        assert (stored.version, stored.is_live) == (2, True)
+        faq_node = next(n for n in stored.nodes if n["id"] == FAQ_NODE_ID)
+        assert faq_node["type"] == "rag"
+        assert faq_node["data"]["config_version"] == 1
+
     def test_missing_config_version_is_pinned_to_latest_and_stored(
         self,
         db: Session,
@@ -663,17 +702,6 @@ INVALID_FLOW_CASES: dict[str, tuple[FlowBuilder, str]] = {
         lambda cid: ([build_coordinator_node(config_id=cid)], []),
         f"coordinator node '{COORDINATOR_NODE_ID}' needs at least one outgoing edge",
     ),
-    "coordinator-route-to-rag": (
-        lambda cid: _coordinator_flow_with(
-            cid,
-            extra_nodes=[
-                build_onboarding_node(config_id=cid, node_id="faq", node_type="rag")
-            ],
-            extra_edges=[build_intent_edge("e-faq", "faq", "Questions")],
-        ),
-        f"edge 'e-faq' from coordinator '{COORDINATOR_NODE_ID}' must target an "
-        "onboarding node (target 'faq' is 'rag')",
-    ),
     "coordinator-route-to-output": (
         lambda cid: _coordinator_flow_with(
             cid,
@@ -681,7 +709,7 @@ INVALID_FLOW_CASES: dict[str, tuple[FlowBuilder, str]] = {
             extra_edges=[build_intent_edge("e-out", OUTPUT_NODE_ID, "Done")],
         ),
         f"edge 'e-out' from coordinator '{COORDINATOR_NODE_ID}' must target an "
-        f"onboarding node (target '{OUTPUT_NODE_ID}' is 'output')",
+        f"onboarding or rag node (target '{OUTPUT_NODE_ID}' is 'output')",
     ),
     "coordinator-route-to-coordinator": (
         lambda cid: _coordinator_flow_with(
@@ -695,7 +723,7 @@ INVALID_FLOW_CASES: dict[str, tuple[FlowBuilder, str]] = {
             ],
         ),
         f"edge 'e-router-2' from coordinator '{COORDINATOR_NODE_ID}' must target an "
-        "onboarding node (target 'router-2' is 'coordinator')",
+        "onboarding or rag node (target 'router-2' is 'coordinator')",
     ),
     "two-coordinators": (
         lambda cid: _coordinator_flow_with(
@@ -882,6 +910,42 @@ class TestPublishChatbotFlowValidation:
         error = resp.json()["error"]
         assert error.startswith(INVALID_FLOW_PREFIX)
         assert expected_problem in error
+        live, draft = list_stored_flow_versions(db, chatbot)
+        assert (live.version, live.is_live) == (1, True)
+        assert (draft.version, draft.is_live) == (2, False)
+
+    def test_coordinator_route_to_rag_node_with_unknown_knowledge_base_returns_422(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        config: Config,
+        chatbot: Chatbot,
+        save: Callable[..., Response],
+        publish: Callable[[], Response],
+        live_v1: dict[str, Any],
+    ) -> None:
+        unknown_kb_id = f"vs_{random_lower_string()}"
+        rag_config = create_test_anthropic_config(
+            db, project_id=user_api_key.project_id, knowledge_base_ids=[unknown_kb_id]
+        )
+        nodes, edges = build_coordinator_flow(
+            config_id=config.id,
+            routes=ROUTES,
+            rag_routes={"Questions": (FAQ_NODE_ID, rag_config.id)},
+        )
+        assert save(nodes, edges).status_code == 200
+
+        resp = publish()
+
+        assert resp.status_code == 422
+        error = resp.json()["error"]
+        assert error.startswith(INVALID_FLOW_PREFIX)
+        assert (
+            f"node '{FAQ_NODE_ID}': Config knowledge_base_ids not found among this "
+            f"project's OpenAI collections: {unknown_kb_id}"
+        ) in error
+        # The rag target itself is a legal route; only its knowledge base is wrong.
+        assert "must target" not in error
         live, draft = list_stored_flow_versions(db, chatbot)
         assert (live.version, live.is_live) == (1, True)
         assert (draft.version, draft.is_live) == (2, False)

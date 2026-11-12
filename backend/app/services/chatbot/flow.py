@@ -52,6 +52,12 @@ SUPPORTED_AGENT_NODE_TYPES: frozenset[ChatbotFlowNodeTypeEnum] = frozenset(
 )
 # One coordinator keeps "which coordinator does a finished agent return to" unambiguous.
 MAX_COORDINATOR_NODES = 1
+COORDINATOR_TARGET_NODE_TYPES: frozenset[ChatbotFlowNodeTypeEnum] = frozenset(
+    {ChatbotFlowNodeTypeEnum.ONBOARDING, ChatbotFlowNodeTypeEnum.RAG}
+)
+_COORDINATOR_TARGET_NODE_TYPES_LABEL = " or ".join(
+    sorted(node_type.value for node_type in COORDINATOR_TARGET_NODE_TYPES)
+)
 EDGE_INTENT_KEY = "intent"
 EDGE_DESCRIPTION_KEY = "description"
 _SUPPORTED_AGENT_NODE_TYPES_LABEL = ", ".join(
@@ -245,10 +251,11 @@ def _list_coordinator_problems(
         for edge in outgoing_edges:
             target = find_flow_node(nodes, edge.target)
             # A missing target is already reported by the structural check.
-            if target is not None and target.type != ChatbotFlowNodeTypeEnum.ONBOARDING:
+            if target is not None and target.type not in COORDINATOR_TARGET_NODE_TYPES:
                 problems.append(
                     f"edge '{edge.id}' from coordinator '{coordinator.id}' must target "
-                    f"an onboarding node (target '{target.id}' is '{target.type.value}')"
+                    f"an {_COORDINATOR_TARGET_NODE_TYPES_LABEL} node "
+                    f"(target '{target.id}' is '{target.type.value}')"
                 )
 
             intent = get_edge_intent(edge)

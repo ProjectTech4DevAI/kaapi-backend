@@ -59,7 +59,7 @@ class TurnContext(NamedTuple):
     stored_messages: list[ChatbotSessionMessage]
     turn_node: TurnNode
     model_settings: ChatbotModelSettings
-    # Rag only: the knowledge-base search client.
+    # Knowledge-base search client: set for a rag node, or a coordinator with a rag target.
     openai_client: OpenAI | None
     # Coordinator only: its routes and each target's node + settings, resolved up front.
     routes: list[CoordinatorRoute]

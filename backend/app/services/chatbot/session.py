@@ -31,7 +31,6 @@ from app.services.chatbot.agents.coordinator.graph import run_coordinator_turn
 from app.services.chatbot.agents.coordinator.prompts import (
     FALLBACK_CLARIFYING_QUESTION,
 )
-from app.services.chatbot.agents.onboarding.graph import run_chatbot_turn
 from app.services.chatbot.agents.registry import run_agent_turn
 from app.services.chatbot.config import (
     prepare_rag_search_client,
@@ -232,13 +231,14 @@ def _resolve_coordinator_routes(
     coordinator_node_id: str,
     organization_id: int,
     project_id: int,
-) -> tuple[list[CoordinatorRoute], _RouteTargets]:
-    """Every outgoing route of the coordinator, plus each target's node and model settings.
+) -> tuple[list[CoordinatorRoute], _RouteTargets, OpenAI | None]:
+    """Every outgoing route of the coordinator, each target's node and model settings, and (rag targets) the search client.
 
     Intents and target types are enforced at publish, the only way a flow goes live.
     """
     routes: list[CoordinatorRoute] = []
     targets: _RouteTargets = {}
+    openai_client: OpenAI | None = None
     for edge in parse_flow_edges(flow_version.edges):
         if edge.source != coordinator_node_id:
             continue
@@ -249,16 +249,22 @@ def _resolve_coordinator_routes(
             label=ROUTE_TARGET_LABEL,
         )
         description = edge.data.get(EDGE_DESCRIPTION_KEY)
-        targets[target_node.node_id] = (
-            target_node,
-            resolve_chatbot_model_settings(
+        target_settings = resolve_chatbot_model_settings(
+            session=session,
+            organization_id=organization_id,
+            project_id=project_id,
+            config_id=target_node.config_id,
+            config_version=target_node.config_version,
+        )
+        if target_node.node_type == ChatbotFlowNodeTypeEnum.RAG:
+            # Validates this target's knowledge bases; the client itself is per project, so one serves every rag target.
+            openai_client = prepare_rag_search_client(
                 session=session,
                 organization_id=organization_id,
                 project_id=project_id,
-                config_id=target_node.config_id,
-                config_version=target_node.config_version,
-            ),
-        )
+                model_settings=target_settings,
+            )
+        targets[target_node.node_id] = (target_node, target_settings)
         routes.append(
             CoordinatorRoute(
                 intent=edge.data[EDGE_INTENT_KEY].strip(),
@@ -273,7 +279,7 @@ def _resolve_coordinator_routes(
             "republish the flow and start a new session."
         )
         raise ChatbotInputError(error_message)
-    return routes, targets
+    return routes, targets, openai_client
 
 
 def _find_return_coordinator(
@@ -356,7 +362,7 @@ def _resolve_turn_context(
                 model_settings=model_settings,
             )
         if turn_node.node_type == ChatbotFlowNodeTypeEnum.COORDINATOR:
-            routes, route_targets = _resolve_coordinator_routes(
+            routes, route_targets, openai_client = _resolve_coordinator_routes(
                 session=session,
                 flow_version=flow_version,
                 coordinator_node_id=turn_node.node_id,
@@ -447,20 +453,27 @@ def _run_coordinator_turn_and_handoff(
         )
 
     target_node, target_settings = context.route_targets[decision.target_node_id]
-    turn_result = run_chatbot_turn(
+    turn_result = run_agent_turn(
+        node_type=target_node.node_type,
         system_prompt=target_node.prompt,
         history=history,
         user_message=user_message,
         model_settings=target_settings,
         collected_fields=context.collected_fields,
+        openai_client=context.openai_client,
     )
+    # rag never completes, so the session stays on the coordinator and every question is routed afresh.
+    if target_node.node_type == ChatbotFlowNodeTypeEnum.RAG:
+        next_active_node_id = None
     # A finished sub-flow hands the session back so the next message is routed afresh.
+    elif turn_result.is_complete:
+        next_active_node_id = coordinator_node.node_id
+    else:
+        next_active_node_id = target_node.node_id
     return _TurnOutcome(
         result=turn_result,
         reply_node_id=target_node.node_id,
-        next_active_node_id=(
-            coordinator_node.node_id if turn_result.is_complete else target_node.node_id
-        ),
+        next_active_node_id=next_active_node_id,
     )
 
 
