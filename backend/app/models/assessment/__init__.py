@@ -42,7 +42,6 @@ from app.models.assessment.assessment_api import (
     AssessmentResultRow,
     AssessmentSubmitResponse,
     AssessmentSummary,
-    Attachment,
     BatchInput,
     BatchRunState,
     ParsedResult,
@@ -88,7 +87,6 @@ __all__ = [
     "AssessmentSubmissionPreview",
     "AssessmentSubmissionResponse",
     # API-client surface
-    "Attachment",
     "ResponseInput",
     "BatchInput",
     "BatchRunState",

@@ -1,43 +1,16 @@
 from typing import Any
-from uuid import UUID
 
 from pydantic import HttpUrl
 from sqlmodel import Field, SQLModel
 
-
-class GuardrailValidator(SQLModel):
-    """Single validator reference inside a /guardrails request.
-
-    Only ``validator_config_id`` is meaningful to the server. ``type`` and
-    ``tag`` are caller-side bookkeeping fields: they are accepted and
-    persisted on ``job.meta.request`` for traceability, but they are not
-    echoed back on the webhook payload. To correlate webhooks with
-    requests, put your correlation keys in ``request_metadata`` (which is
-    echoed under the callback's ``metadata`` field).
-    """
-
-    validator_config_id: UUID = Field(
-        ...,
-        description="ID of a validator configuration registered with the guardrails service.",
-    )
-    type: str | None = Field(
-        default=None,
-        description=(
-            "Optional bookkeeping label for the caller (e.g. 'input_guardrail' "
-            "or 'output_guardrail'). Server does not interpret this field."
-        ),
-    )
-    tag: str | None = Field(
-        default=None,
-        description="Optional caller-side tag. Server does not interpret this field.",
-    )
+from app.models.llm.request import GuardrailEntry
 
 
 class GuardrailsRequest(SQLModel):
     """Request body for ``POST /api/v1/guardrails``.
 
     The endpoint is symmetric for input and output guardrails: send the text
-    that needs sanitisation in ``text`` along with the validator IDs to apply.
+    that needs sanitisation in ``text`` along with the validators to apply.
     The sanitised text is delivered via the configured ``callback_url``.
     """
 
@@ -46,10 +19,13 @@ class GuardrailsRequest(SQLModel):
         min_length=1,
         description="Text to validate/sanitise. May be a user prompt or an LLM response.",
     )
-    config: list[GuardrailValidator] = Field(
+    config: list[GuardrailEntry] = Field(
         ...,
         min_length=1,
-        description="Validators to apply, identified by validator_config_id.",
+        description=(
+            "Validators to apply: `{validator_config_id}` for a stored config, "
+            "or an inline spec `{type, ...params}`."
+        ),
     )
     callback_url: HttpUrl | None = Field(
         default=None,

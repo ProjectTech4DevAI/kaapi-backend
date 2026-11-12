@@ -4,10 +4,12 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+
 from sqlmodel import Session, select
 
 from app.models import Job, JobStatus, JobType
 from app.models.guardrails import GuardrailsRequest
+from app.models.llm.request import InlineValidator, Validator
 from app.services.guardrails.jobs import (
     _build_callback_payload,
     _coerce_int,
@@ -143,7 +145,7 @@ def test_start_job_happy_path_creates_row_and_enqueues(
     assert kwargs["job_id"] == str(job.id)
 
 
-def test_start_job_celery_failure_marks_failed_and_raises_500(
+def test_start_job_celery_failure_marks_failed_and_raises_503(
     db: Session, user_api_key: TestAuthContext
 ) -> None:
     with patch("app.services.guardrails.jobs.start_guardrails_job") as mock_enqueue:
@@ -156,7 +158,7 @@ def test_start_job_celery_failure_marks_failed_and_raises_500(
                 organization_id=user_api_key.organization_id,
             )
 
-    assert exc.value.status_code == 500
+    assert exc.value.status_code == 503
 
     rows = db.exec(select(Job).where(Job.project_id == user_api_key.project_id)).all()
     failed = [r for r in rows if r.status == JobStatus.FAILED]
@@ -299,6 +301,85 @@ def test_execute_job_dedupes_duplicate_validators_and_warns(
     final = _update_calls(mock_crud)[-1]
     warnings = final.meta["callback"]["warnings"]
     assert any("duplicate" in w for w in warnings)
+
+
+def test_execute_job_passes_inline_specs_and_dedupes_them(
+    user_api_key: TestAuthContext,
+) -> None:
+    pii = {"type": "pii_remover", "on_fail": "fix"}
+    req = GuardrailsRequest.model_validate(
+        {
+            "text": "My email is alice@example.com",
+            "config": [
+                {"validator_config_id": str(VALIDATOR_A)},
+                pii,
+                {"on_fail": "fix", "type": "pii_remover"},
+            ],
+        }
+    )
+
+    with _patched_worker_db() as mock_crud, patch(
+        "app.services.guardrails.jobs.apply_guardrails"
+    ) as mock_apply:
+        mock_apply.return_value = GuardrailsOutcome(
+            safe_text="ok",
+            error=None,
+            bypassed=False,
+            rephrase_needed=False,
+            raw={"data": {}},
+        )
+        execute_job(
+            project_id=user_api_key.project_id,
+            job_id=str(uuid4()),
+            task_id="t",
+            task_instance=None,
+            request_data=req.model_dump(mode="json"),
+            organization_id=user_api_key.organization_id,
+        )
+
+    ref, inline = mock_apply.call_args.kwargs["validators"]
+    assert isinstance(ref, Validator) and ref.validator_config_id == VALIDATOR_A
+    assert isinstance(inline, InlineValidator)
+    assert inline.model_dump(mode="json", exclude={"is_enabled"}) == pii
+
+    warnings = _update_calls(mock_crud)[-1].meta["callback"]["warnings"]
+    assert any("duplicate" in w for w in warnings)
+
+
+def test_execute_job_disabled_entry_does_not_shadow_enabled_duplicate(
+    user_api_key: TestAuthContext,
+) -> None:
+    req = GuardrailsRequest.model_validate(
+        {
+            "text": "hi",
+            "config": [
+                {"validator_config_id": str(VALIDATOR_A), "is_enabled": False},
+                {"validator_config_id": str(VALIDATOR_A)},
+            ],
+        }
+    )
+
+    with _patched_worker_db(), patch(
+        "app.services.guardrails.jobs.apply_guardrails"
+    ) as mock_apply:
+        mock_apply.return_value = GuardrailsOutcome(
+            safe_text="hi",
+            error=None,
+            bypassed=False,
+            rephrase_needed=False,
+            raw={"data": {}},
+        )
+        execute_job(
+            project_id=user_api_key.project_id,
+            job_id=str(uuid4()),
+            task_id="t",
+            task_instance=None,
+            request_data=req.model_dump(mode="json"),
+            organization_id=user_api_key.organization_id,
+        )
+
+    (validator,) = mock_apply.call_args.kwargs["validators"]
+    assert validator.is_enabled
 
 
 def test_execute_job_bypassed_adds_warning(user_api_key: TestAuthContext) -> None:

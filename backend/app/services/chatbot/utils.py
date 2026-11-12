@@ -13,9 +13,6 @@ DEFAULT_THINKING: dict[str, Any] = {"type": "adaptive"}
 DEFAULT_HISTORY_TOKEN_LIMIT = 4000
 FLOW_KEEP_RECENT_MESSAGES = 6
 
-# Forced tool use is rejected with thinking on, and Opus 5.5 can't disable thinking.
-STRUCTURED_OUTPUT_METHOD = "json_schema"
-
 
 def default_thinking() -> dict[str, Any]:
     return dict(DEFAULT_THINKING)
@@ -28,6 +25,9 @@ class ChatbotModelSettings:
     reasoning_effort: AnthropicEffort | None = None
     thinking: dict[str, Any] = field(default_factory=default_thinking)
     history_token_limit: int = DEFAULT_HISTORY_TOKEN_LIMIT
+    instructions: str | None = None
+    knowledge_base_ids: tuple[str, ...] = ()
+    max_num_results: int | None = None
     api_key: str = field(default="", repr=False, compare=False)
 
 

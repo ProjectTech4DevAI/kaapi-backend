@@ -90,3 +90,30 @@ class TestWorkerObservabilityInit:
         sentry.set_tag.assert_called_once_with(
             "celery.task_name", "app.celery.tasks.job_execution.run_llm_job"
         )
+
+    def test_tags_sentry_scope_with_tenant_from_task_kwargs(self) -> None:
+        hooks: list = []
+        sentry = MagicMock()
+        with (
+            patch.object(celery_app, "_sentry_initialized", False),
+            patch.object(celery_app, "_telemetry_initialized", True),
+            patch.object(
+                celery_app.settings, "SENTRY_DSN", "https://k@o.ingest.sentry.io/1"
+            ),
+            patch("app.core.telemetry.init_sentry", MagicMock()),
+            patch.object(
+                celery_app.task_prerun,
+                "connect",
+                MagicMock(side_effect=lambda **_: hooks.append),
+            ),
+            patch.object(celery_app, "configure_logging", MagicMock()),
+            patch.dict("sys.modules", {"sentry_sdk": sentry}),
+        ):
+            celery_app._initialize_worker_observability()
+            hooks[0](
+                task=SimpleNamespace(name="run_llm_job"),
+                kwargs={"project_id": 3, "organization_id": 2},
+            )
+
+        sentry.set_tag.assert_any_call("tenant.project_id", "3")
+        sentry.set_tag.assert_any_call("tenant.org_id", "2")

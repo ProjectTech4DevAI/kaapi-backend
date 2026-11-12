@@ -18,34 +18,48 @@ CHAT_MODEL_ERRORS: tuple[type[Exception], ...] = (
 
 
 def to_provider_error(error: Exception, *, model: str) -> ChatbotProviderError:
-    log = logger.error
     if isinstance(error, anthropic.APITimeoutError):
         error_message = (
             "[KAAPI] Request timed out — retry smaller. If persistent, contact Kaapi. "
             "(code: APITimeoutError)"
         )
-    elif isinstance(error, anthropic.APIConnectionError):
+        logger.error(
+            f"[to_provider_error] {error_message} | provider=anthropic, model={model}",
+            exc_info=error,
+        )
+        return ChatbotProviderError(error_message)
+    if isinstance(error, anthropic.APIConnectionError):
         error_message = (
             "[KAAPI] Network/DNS issue reaching provider — check connectivity. "
             "If persistent, contact Kaapi. (code: APIConnectionError)"
         )
-    elif isinstance(error, anthropic.APIStatusError):
+        logger.error(
+            f"[to_provider_error] {error_message} | provider=anthropic, model={model}",
+            exc_info=error,
+        )
+        return ChatbotProviderError(error_message)
+    if isinstance(error, anthropic.APIStatusError):
         error_message = (
             f"[ANTHROPIC] Chat model call failed: {error.message} "
             f"(code: {error.status_code}, request_id: {error.request_id})"
         )
         # 5xx is provider-side (alert-worthy); 4xx is caller's fault (noise if alerted)
-        if error.status_code < PROVIDER_SERVER_ERROR_STATUS:
-            log = logger.warning
-    else:
-        error_message = (
-            f"[KAAPI] Unsupported model configuration for '{model}': {error} "
-            "— update the config's model, thinking, or effort. (code: ValueError)"
+        log = (
+            logger.error
+            if error.status_code >= PROVIDER_SERVER_ERROR_STATUS
+            else logger.warning
         )
-        log = logger.warning
+        log(
+            f"[to_provider_error] {error_message} | provider=anthropic, model={model}",
+            exc_info=error,
+        )
+        return ChatbotProviderError(error_message)
 
-    log(
-        f"[to_provider_error] {error_message} | provider=anthropic, model={model}",
-        exc_info=error,
+    error_message = (
+        f"[KAAPI] Unsupported model configuration for '{model}': {error} "
+        "— update the config's model, thinking, or effort. (code: ValueError)"
+    )
+    logger.warning(
+        f"[to_provider_error] {error_message} | provider=anthropic, model={model}"
     )
     return ChatbotProviderError(error_message)

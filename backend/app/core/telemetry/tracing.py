@@ -149,20 +149,8 @@ def setup_telemetry(service_name: str | None = None) -> None:
         CeleryInstrumentor().instrument()  # type: ignore[no-untyped-call]
     except Exception:
         logger.exception("[setup_telemetry] Failed to instrument Celery")
-
-    try:
-        from opentelemetry.instrumentation.redis import RedisInstrumentor
-
-        RedisInstrumentor().instrument()
-    except Exception:
-        logger.exception("[setup_telemetry] Failed to instrument Redis")
-
-    try:
-        from opentelemetry.instrumentation.botocore import BotocoreInstrumentor
-
-        BotocoreInstrumentor().instrument()  # type: ignore[no-untyped-call]
-    except Exception:
-        logger.exception("[setup_telemetry] Failed to instrument botocore")
+    # botocore is not instrumented: s3transfer runs PutObject on its own thread
+    # pool without OTel context, so every upload became an orphan Sentry trace.
 
 
 def flush_telemetry(timeout_millis: int = 10000) -> None:

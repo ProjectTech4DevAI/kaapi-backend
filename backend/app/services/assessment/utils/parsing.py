@@ -3,6 +3,8 @@
 import json
 from typing import Any
 
+from app.models.assessment import ParsedResult
+
 
 def parse_stored_results(raw_content: str) -> list[dict[str, Any]]:
     """Parse stored batch results from JSONL or JSON array."""
@@ -15,6 +17,21 @@ def parse_stored_results(raw_content: str) -> list[dict[str, Any]]:
         return parsed if isinstance(parsed, list) else []
 
     return [json.loads(line) for line in content.splitlines() if line.strip()]
+
+
+def parse_assessment_text(out: ParsedResult) -> dict[str, Any] | str | None:
+    """Stored assessment text as a dict (structured json_schema output) or raw string.
+
+    Null when the row produced no assessment text (gated out or empty/failed call).
+    """
+    text = out.get("output")
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return text
+    return parsed if isinstance(parsed, dict) else text
 
 
 def usage_totals(usage: Any) -> tuple[int | None, int | None, int | None]:

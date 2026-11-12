@@ -34,14 +34,14 @@ def _alternating_history(turns: int) -> list[dict[str, str]]:
     return history
 
 
-async def _run_turn(
+def _run_turn(
     *,
     history: list[ChatbotMessageDict],
     user_message: str | None,
     history_token_limit: int = DEFAULT_HISTORY_TOKEN_LIMIT,
     collected_fields: dict[str, str] | None = None,
 ) -> ChatbotTurnResult:
-    return await run_chatbot_turn(
+    return run_chatbot_turn(
         system_prompt=SYSTEM_PROMPT,
         history=history,
         user_message=user_message,
@@ -53,25 +53,24 @@ async def _run_turn(
 
 
 class TestRunChatbotTurn:
-    @pytest.mark.asyncio
-    async def test_first_call_returns_greeting_without_kickoff(
+    def test_first_call_returns_greeting_without_kickoff(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = patch_chat_model(
             monkeypatch, ScriptedChatModel(replies=["Hi! What's your name?"])
         )
 
-        result = await _run_turn(history=[], user_message=None)
+        result = _run_turn(history=[], user_message=None)
 
         assert result.reply == "Hi! What's your name?"
+        assert result.sources == []
         # Anthropic rejects a conversation that doesn't open with a user turn.
         sent = chat_model.calls[0]
         assert isinstance(sent[0], SystemMessage)
         assert isinstance(sent[1], HumanMessage)
         assert sent[1].content == "Begin the conversation."
 
-    @pytest.mark.asyncio
-    async def test_follow_up_turn_appends_user_message_and_reply(
+    def test_follow_up_turn_appends_user_message_and_reply(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = patch_chat_model(
@@ -82,47 +81,40 @@ class TestRunChatbotTurn:
             {"role": "assistant", "content": "Hi! What's your name?"},
         ]
 
-        result = await _run_turn(history=history, user_message="Asha")
+        result = _run_turn(history=history, user_message="Asha")
 
         assert result.reply == "Nice to meet you, Asha."
         sent_contents = [m.content for m in chat_model.calls[0]]
         assert "stale prompt from the previous call" not in sent_contents
 
-    @pytest.mark.asyncio
-    async def test_empty_reply_becomes_provider_error(
+    def test_empty_reply_becomes_provider_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         patch_chat_model(monkeypatch, ScriptedChatModel(replies=["   "]))
 
         with pytest.raises(ChatbotProviderError, match="EmptyReply"):
-            await _run_turn(history=[], user_message=None)
+            _run_turn(history=[], user_message=None)
 
     def test_reply_must_come_from_a_final_ai_message(self) -> None:
         with pytest.raises(ChatbotProviderError, match="EmptyReply"):
             extract_final_reply([HumanMessage(content="Asha")])
 
-    @pytest.mark.asyncio
-    async def test_missing_message_with_history_rejected(
+    def test_missing_message_with_history_rejected(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = patch_chat_model(monkeypatch, ScriptedChatModel())
 
         with pytest.raises(ChatbotInputError, match="`message` is required"):
-            await _run_turn(
+            _run_turn(
                 history=[{"role": "assistant", "content": "Hi!"}], user_message=None
             )
         assert chat_model.calls == []
 
-    @pytest.mark.asyncio
-    async def test_unsupported_role_rejected(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_unsupported_role_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         chat_model = patch_chat_model(monkeypatch, ScriptedChatModel())
 
         with pytest.raises(ChatbotInputError, match="Unsupported message role: tool"):
-            await _run_turn(
-                history=[{"role": "tool", "content": "{}"}], user_message="hello"
-            )
+            _run_turn(history=[{"role": "tool", "content": "{}"}], user_message="hello")
         assert chat_model.calls == []
 
 
@@ -158,8 +150,7 @@ class TestProviderErrorMapping:
         ],
         ids=["timeout", "connection", "value_error", "status"],
     )
-    @pytest.mark.asyncio
-    async def test_anthropic_errors_become_provider_errors(
+    def test_anthropic_errors_become_provider_errors(
         self,
         monkeypatch: pytest.MonkeyPatch,
         error: anthropic.APIError,
@@ -168,15 +159,14 @@ class TestProviderErrorMapping:
         patch_chat_model(monkeypatch, ScriptedChatModel(error=error))
 
         with pytest.raises(ChatbotProviderError) as exc_info:
-            await _run_turn(history=[], user_message="hello")
+            _run_turn(history=[], user_message="hello")
 
         assert expected_message in str(exc_info.value)
         assert exc_info.value.__cause__ is error
 
 
 class TestHistorySummarization:
-    @pytest.mark.asyncio
-    async def test_long_history_over_budget_is_summarized(
+    def test_long_history_over_budget_is_summarized(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = patch_chat_model(
@@ -185,7 +175,7 @@ class TestHistorySummarization:
         )
         history = _alternating_history(turns=4)
 
-        result = await _run_turn(
+        result = _run_turn(
             history=history, user_message="user 4", history_token_limit=4000
         )
 
@@ -210,18 +200,17 @@ class TestHistorySummarization:
             "bot 3",
             "user 4",
         ]
-        # The reply is the turn's answer, not the summary text.
+        # The reply is the turn's answer, never the summary text.
         assert result.reply == "Got it."
 
-    @pytest.mark.asyncio
-    async def test_long_history_within_budget_is_sent_whole(
+    def test_long_history_within_budget_is_sent_whole(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = patch_chat_model(
             monkeypatch, ScriptedChatModel(replies=["Got it."], token_count=100)
         )
 
-        await _run_turn(
+        _run_turn(
             history=_alternating_history(turns=4),
             user_message="user 4",
             history_token_limit=4000,
@@ -230,15 +219,14 @@ class TestHistorySummarization:
         assert len(chat_model.calls) == 1
         assert len(chat_model.calls[0]) == 10
 
-    @pytest.mark.asyncio
-    async def test_short_history_never_summarized(
+    def test_short_history_never_summarized(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = patch_chat_model(
             monkeypatch, ScriptedChatModel(replies=["Got it."], token_count=10_000)
         )
 
-        await _run_turn(
+        _run_turn(
             history=_alternating_history(turns=3)[:5],
             user_message="more",
             history_token_limit=10,
@@ -247,8 +235,7 @@ class TestHistorySummarization:
         assert len(chat_model.calls) == 1
         assert len(chat_model.calls[0]) == 7
 
-    @pytest.mark.asyncio
-    async def test_no_user_turn_to_split_on_skips_summary(
+    def test_no_user_turn_to_split_on_skips_summary(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = patch_chat_model(
@@ -260,15 +247,12 @@ class TestHistorySummarization:
             {"role": "assistant", "content": f"bot {i}"} for i in range(7)
         ]
 
-        await _run_turn(
-            history=assistant_only, user_message="hello", history_token_limit=10
-        )
+        _run_turn(history=assistant_only, user_message="hello", history_token_limit=10)
 
         assert len(chat_model.calls) == 1
         assert len(chat_model.calls[0]) == 10
 
-    @pytest.mark.asyncio
-    async def test_long_history_summary_is_shared_by_extraction_and_reply(
+    def test_long_history_summary_is_shared_by_extraction_and_reply(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = patch_chat_model(
@@ -286,7 +270,7 @@ class TestHistorySummarization:
             ),
         )
 
-        await _run_turn(
+        _run_turn(
             history=_alternating_history(turns=4),
             user_message="user 4",
             history_token_limit=4000,
@@ -313,8 +297,7 @@ class TestHistorySummarization:
 
 
 class TestFieldExtraction:
-    @pytest.mark.asyncio
-    async def test_greeting_turn_skips_extraction(
+    def test_greeting_turn_skips_extraction(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = patch_chat_model(
@@ -331,7 +314,7 @@ class TestFieldExtraction:
             ),
         )
 
-        result = await _run_turn(
+        result = _run_turn(
             history=[], user_message=None, collected_fields={"name": "Asha"}
         )
 
@@ -344,28 +327,26 @@ class TestFieldExtraction:
             "Begin the conversation.",
         ]
 
-    @pytest.mark.asyncio
-    async def test_extraction_uses_native_json_schema_output(
+    def test_extraction_uses_native_json_schema_output(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = patch_chat_model(
             monkeypatch, ScriptedChatModel(replies=["Which city?"])
         )
 
-        await _run_turn(history=[], user_message="I'm Asha")
+        _run_turn(history=[], user_message="I'm Asha")
 
         # Forced tool use is rejected by Anthropic when thinking is on.
         assert chat_model.structured_output_methods == ["json_schema"]
 
-    @pytest.mark.asyncio
-    async def test_extraction_sees_flow_prompt_prior_fields_and_conversation(
+    def test_extraction_sees_flow_prompt_prior_fields_and_conversation(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = patch_chat_model(
             monkeypatch, ScriptedChatModel(replies=["Which city?"])
         )
 
-        await _run_turn(
+        _run_turn(
             history=[{"role": "assistant", "content": "Hi! What's your name?"}],
             user_message="I'm Asha",
             collected_fields={"age": "30"},
@@ -387,8 +368,7 @@ class TestFieldExtraction:
             "I'm Asha",
         ]
 
-    @pytest.mark.asyncio
-    async def test_extracted_fields_merge_over_prior_with_corrections_winning(
+    def test_extracted_fields_merge_over_prior_with_corrections_winning(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         patch_chat_model(
@@ -407,7 +387,7 @@ class TestFieldExtraction:
             ),
         )
 
-        result = await _run_turn(
+        result = _run_turn(
             history=[{"role": "assistant", "content": "Anything to change?"}],
             user_message="Actually I live in Mumbai now, and I'm 30",
             collected_fields={"name": "Asha", "city": "Pune"},
@@ -428,8 +408,7 @@ class TestFieldExtraction:
         ],
         ids=["complete", "complete_but_lists_missing", "not_complete"],
     )
-    @pytest.mark.asyncio
-    async def test_completion_requires_flag_and_no_missing_fields(
+    def test_completion_requires_flag_and_no_missing_fields(
         self,
         monkeypatch: pytest.MonkeyPatch,
         is_complete: bool,
@@ -450,7 +429,7 @@ class TestFieldExtraction:
             ),
         )
 
-        result = await _run_turn(history=[], user_message="I'm Asha")
+        result = _run_turn(history=[], user_message="I'm Asha")
 
         assert result.completion_status == expected_status
 
@@ -489,8 +468,7 @@ class TestProgressNote:
         ],
         ids=["collected_and_missing", "missing_only", "complete"],
     )
-    @pytest.mark.asyncio
-    async def test_note_follows_system_prompt_in_reply_call(
+    def test_note_follows_system_prompt_in_reply_call(
         self,
         monkeypatch: pytest.MonkeyPatch,
         extraction: FieldExtraction,
@@ -500,7 +478,7 @@ class TestProgressNote:
             monkeypatch, ScriptedChatModel(replies=["Reply."], extractions=[extraction])
         )
 
-        await _run_turn(
+        _run_turn(
             history=[{"role": "assistant", "content": "Hi! What's your name?"}],
             user_message="I'm Asha from Pune",
         )
@@ -515,8 +493,7 @@ class TestProgressNote:
             "I'm Asha from Pune",
         ]
 
-    @pytest.mark.asyncio
-    async def test_no_note_when_nothing_collected_missing_or_complete(
+    def test_no_note_when_nothing_collected_missing_or_complete(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = patch_chat_model(
@@ -533,20 +510,19 @@ class TestProgressNote:
             ),
         )
 
-        await _run_turn(history=[], user_message="hello")
+        _run_turn(history=[], user_message="hello")
 
         [reply_call] = chat_model.calls
         assert [m.content for m in reply_call] == [SYSTEM_PROMPT, "hello"]
 
-    @pytest.mark.asyncio
-    async def test_prior_fields_survive_into_note_when_extraction_adds_none(
+    def test_prior_fields_survive_into_note_when_extraction_adds_none(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = patch_chat_model(
             monkeypatch, ScriptedChatModel(replies=["Which city?"])
         )
 
-        await _run_turn(
+        _run_turn(
             history=[{"role": "assistant", "content": "Which city?"}],
             user_message="hmm",
             collected_fields={"name": "Asha"},
@@ -595,8 +571,7 @@ class TestExtractionErrors:
         ],
         ids=["output_parser", "wrong_type", "value_error", "anthropic_timeout"],
     )
-    @pytest.mark.asyncio
-    async def test_extraction_failure_becomes_provider_error_before_reply(
+    def test_extraction_failure_becomes_provider_error_before_reply(
         self,
         monkeypatch: pytest.MonkeyPatch,
         extraction_outcome: object,
@@ -610,7 +585,7 @@ class TestExtractionErrors:
         )
 
         with pytest.raises(ChatbotProviderError) as exc_info:
-            await _run_turn(history=[], user_message="I'm Asha")
+            _run_turn(history=[], user_message="I'm Asha")
 
         assert expected_message in str(exc_info.value)
         assert chat_model.calls == []

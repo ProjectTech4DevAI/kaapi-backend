@@ -237,7 +237,7 @@ def test_duplicate_credential_creation_fails(
     client: TestClient,
     user_api_key: TestAuthContext,
 ) -> None:
-    """Test that creating duplicate credentials fails with 400."""
+    """Test that creating duplicate credentials fails with 409."""
     api_key = "sk-" + generate_random_string(10)
     duplicate_credential = {
         "organization_id": user_api_key.organization_id,
@@ -257,7 +257,7 @@ def test_duplicate_credential_creation_fails(
         headers={"X-API-KEY": user_api_key.key},
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 409
     assert "already exist" in response.json()["error"]
 
 

@@ -1,6 +1,5 @@
 """Onboarding turn: extract the flow's fields, then reply -- two LangGraph nodes over a LangChain chat model."""
 
-import asyncio
 import json
 from typing import Any
 
@@ -16,6 +15,7 @@ from pydantic import BaseModel, ValidationError
 from app.services.chatbot.agents.onboarding.prompts import (
     EXTRACTION_FLOW_PROMPT_TEMPLATE,
     EXTRACTION_INSTRUCTION,
+    EXTRACTION_METHOD,
     EXTRACTION_PRIOR_FIELDS_TEMPLATE,
     PROGRESS_COLLECTED_TEMPLATE,
     PROGRESS_COMPLETE_NOTE,
@@ -37,11 +37,7 @@ from app.services.chatbot.history import (
 )
 from app.services.chatbot.provider_errors import CHAT_MODEL_ERRORS, to_provider_error
 from app.services.chatbot.types import ChatbotMessageDict, ChatbotTurnResult
-from app.services.chatbot.utils import (
-    STRUCTURED_OUTPUT_METHOD,
-    ChatbotModelSettings,
-    get_chat_model,
-)
+from app.services.chatbot.utils import ChatbotModelSettings, get_chat_model
 
 ExtractionModel = Runnable[LanguageModelInput, dict | BaseModel]
 
@@ -167,12 +163,10 @@ def build_onboarding_graph(
 
 
 def _get_extraction_model(chat_model: BaseChatModel) -> ExtractionModel:
-    return chat_model.with_structured_output(
-        FieldExtraction, method=STRUCTURED_OUTPUT_METHOD
-    )
+    return chat_model.with_structured_output(FieldExtraction, method=EXTRACTION_METHOD)
 
 
-async def run_chatbot_turn(
+def run_chatbot_turn(
     *,
     system_prompt: str,
     history: list[ChatbotMessageDict],
@@ -200,8 +194,7 @@ async def run_chatbot_turn(
             flow_prompt=system_prompt,
             history_token_limit=model_settings.history_token_limit,
         )
-        # ChatAnthropic.invoke is sync; keep it off the event loop.
-        result = await asyncio.to_thread(graph.invoke, initial_state)
+        result = graph.invoke(initial_state)
     except CHAT_MODEL_ERRORS as e:
         raise to_provider_error(e, model=model_settings.model) from e
 

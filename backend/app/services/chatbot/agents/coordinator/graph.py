@@ -3,7 +3,6 @@
 No LangGraph here — a single model call doesn't need a graph.
 """
 
-import asyncio
 import logging
 from dataclasses import dataclass
 
@@ -12,6 +11,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field, ValidationError
 
+from app.services.chatbot.agents.onboarding.prompts import EXTRACTION_METHOD
 from app.services.chatbot.agents.coordinator.prompts import (
     FALLBACK_CLARIFYING_QUESTION,
     ROUTES_TEMPLATE,
@@ -25,11 +25,7 @@ from app.services.chatbot.history import (
 )
 from app.services.chatbot.provider_errors import CHAT_MODEL_ERRORS, to_provider_error
 from app.services.chatbot.types import ChatbotMessageDict, CoordinatorRoute
-from app.services.chatbot.utils import (
-    STRUCTURED_OUTPUT_METHOD,
-    ChatbotModelSettings,
-    get_chat_model,
-)
+from app.services.chatbot.utils import ChatbotModelSettings, get_chat_model
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +71,7 @@ def _decide_route(
         chat_model, messages, history_token_limit=history_token_limit
     )
     routing_model = chat_model.with_structured_output(
-        RouteDecision, method=STRUCTURED_OUTPUT_METHOD
+        RouteDecision, method=EXTRACTION_METHOD
     )
     # Both are ValueError subclasses; mapped here so the caller's ValueError
     # catch doesn't mislabel them as a model-configuration problem.
@@ -108,7 +104,7 @@ def _match_route(
     return next((route for route in routes if route.intent.casefold() == wanted), None)
 
 
-async def run_coordinator_turn(
+def run_coordinator_turn(
     *,
     system_prompt: str,
     history: list[ChatbotMessageDict],
@@ -126,9 +122,7 @@ async def run_coordinator_turn(
     )
     try:
         chat_model = get_chat_model(model_settings)
-        # ChatAnthropic.invoke is sync; keep it off the event loop.
-        decision = await asyncio.to_thread(
-            _decide_route,
+        decision = _decide_route(
             chat_model,
             messages,
             history_token_limit=model_settings.history_token_limit,

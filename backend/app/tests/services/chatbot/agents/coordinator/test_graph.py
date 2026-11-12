@@ -34,12 +34,12 @@ CLARIFY = CoordinatorDecision(
 )
 
 
-async def _run(
+def _run(
     *,
     user_message: str | None = "I want to enroll my son",
     history: list[ChatbotMessageDict] | None = None,
 ) -> CoordinatorDecision:
-    return await run_coordinator_turn(
+    return run_coordinator_turn(
         system_prompt=COORDINATOR_PROMPT,
         history=history or [],
         user_message=user_message,
@@ -66,13 +66,12 @@ class TestRouting:
         ],
         ids=["exact", "second-route", "padded-lowercase", "uppercase"],
     )
-    @pytest.mark.asyncio
-    async def test_matching_intent_routes_to_its_target(
+    def test_matching_intent_routes_to_its_target(
         self, monkeypatch: pytest.MonkeyPatch, intent: str, target: str
     ) -> None:
         _scripted(monkeypatch, RouteDecision(intent=intent))
 
-        decision = await _run()
+        decision = _run()
 
         assert decision == CoordinatorDecision(
             target_node_id=target, clarifying_question=None
@@ -81,8 +80,7 @@ class TestRouting:
     @pytest.mark.parametrize(
         "intent", [None, "Billing"], ids=["null-intent", "unknown-intent"]
     )
-    @pytest.mark.asyncio
-    async def test_no_matching_intent_asks_the_models_question(
+    def test_no_matching_intent_asks_the_models_question(
         self, monkeypatch: pytest.MonkeyPatch, intent: str | None
     ) -> None:
         _scripted(
@@ -92,23 +90,21 @@ class TestRouting:
             ),
         )
 
-        assert await _run(user_message="hmm") == CLARIFY
+        assert _run(user_message="hmm") == CLARIFY
 
     @pytest.mark.parametrize("question", [None, "   "], ids=["missing", "blank"])
-    @pytest.mark.asyncio
-    async def test_missing_question_falls_back_to_default(
+    def test_missing_question_falls_back_to_default(
         self, monkeypatch: pytest.MonkeyPatch, question: str | None
     ) -> None:
         _scripted(monkeypatch, RouteDecision(intent=None, clarifying_question=question))
 
-        decision = await _run(user_message="hmm")
+        decision = _run(user_message="hmm")
 
         assert decision == CoordinatorDecision(
             target_node_id=None, clarifying_question=FALLBACK_CLARIFYING_QUESTION
         )
 
-    @pytest.mark.asyncio
-    async def test_opening_turn_clarifies_even_when_model_names_an_intent(
+    def test_opening_turn_clarifies_even_when_model_names_an_intent(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # The opening turn only carries the synthetic kickoff, so there's nothing to route on.
@@ -117,19 +113,18 @@ class TestRouting:
             RouteDecision(intent="Enroll", clarifying_question="Hi! How can I help?"),
         )
 
-        decision = await _run(user_message=None)
+        decision = _run(user_message=None)
 
         assert decision == CoordinatorDecision(
             target_node_id=None, clarifying_question="Hi! How can I help?"
         )
 
-    @pytest.mark.asyncio
-    async def test_routing_is_one_json_schema_call_listing_every_intent(
+    def test_routing_is_one_json_schema_call_listing_every_intent(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = _scripted(monkeypatch, RouteDecision(intent="Enroll"))
 
-        await _run()
+        _run()
 
         assert chat_model.structured_output_schemas == [RouteDecision]
         # Forced tool use is rejected while thinking is on.
@@ -142,16 +137,13 @@ class TestRouting:
         assert "- Feedback" in system_prompt.splitlines()
         assert sent[-1].content == "I want to enroll my son"
 
-    @pytest.mark.asyncio
-    async def test_missing_message_with_history_rejected(
+    def test_missing_message_with_history_rejected(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         chat_model = _scripted(monkeypatch)
 
         with pytest.raises(ChatbotInputError, match="`message` is required"):
-            await _run(
-                user_message=None, history=[{"role": "assistant", "content": "Hi!"}]
-            )
+            _run(user_message=None, history=[{"role": "assistant", "content": "Hi!"}])
         assert chat_model.extraction_calls == []
 
 
@@ -201,8 +193,7 @@ class TestRoutingErrors:
             "status",
         ],
     )
-    @pytest.mark.asyncio
-    async def test_routing_failure_becomes_provider_error(
+    def test_routing_failure_becomes_provider_error(
         self,
         monkeypatch: pytest.MonkeyPatch,
         outcome: object,
@@ -211,6 +202,6 @@ class TestRoutingErrors:
         _scripted(monkeypatch, outcome)
 
         with pytest.raises(ChatbotProviderError) as exc_info:
-            await _run()
+            _run()
 
         assert expected_message in str(exc_info.value)

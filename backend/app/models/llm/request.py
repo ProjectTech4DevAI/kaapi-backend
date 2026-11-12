@@ -479,6 +479,7 @@ class Validator(SQLModel):
 class InlineValidatorTypeEnum(str, Enum):
     """Validator types productised for tenants; mirrors GET /guardrails."""
 
+    CONTENT_SAFETY = "content_safety"
     GENDER_ASSUMPTION_BIAS = "gender_assumption_bias"
     PII_REMOVER = "pii_remover"
     TOPIC_RELEVANCE_LLM = "topic_relevance_llm"

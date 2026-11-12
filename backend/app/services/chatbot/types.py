@@ -1,6 +1,8 @@
-from dataclasses import dataclass
-from typing import Any, NamedTuple
+from dataclasses import dataclass, field
+from typing import Any, NamedTuple, TypedDict
 from uuid import UUID
+
+from openai import OpenAI
 
 from app.models.chatbot import (
     ChatbotCompletionStatusEnum,
@@ -12,11 +14,17 @@ from app.services.chatbot.utils import ChatbotModelSettings
 ChatbotMessageDict = dict[str, str]
 
 
+class ChatbotSource(TypedDict):
+    file_id: str
+    filename: str
+
+
 @dataclass(frozen=True)
 class ChatbotTurnResult:
     reply: str
     collected_fields: dict[str, Any]
     is_complete: bool
+    sources: list[ChatbotSource] = field(default_factory=list)
 
     @property
     def completion_status(self) -> ChatbotCompletionStatusEnum:
@@ -51,6 +59,8 @@ class TurnContext(NamedTuple):
     stored_messages: list[ChatbotSessionMessage]
     turn_node: TurnNode
     model_settings: ChatbotModelSettings
+    # Rag only: the knowledge-base search client.
+    openai_client: OpenAI | None
     # Coordinator only: its routes and each target's node + settings, resolved up front.
     routes: list[CoordinatorRoute]
     route_targets: dict[str, tuple[TurnNode, ChatbotModelSettings]]

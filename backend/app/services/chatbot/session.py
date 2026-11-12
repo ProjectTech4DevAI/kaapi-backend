@@ -1,9 +1,9 @@
-import asyncio
 import logging
 from typing import NamedTuple
 from uuid import UUID
 
 from fastapi import HTTPException
+from openai import OpenAI
 from sqlmodel import Session
 
 from app.core.db import engine
@@ -32,7 +32,11 @@ from app.services.chatbot.agents.coordinator.prompts import (
     FALLBACK_CLARIFYING_QUESTION,
 )
 from app.services.chatbot.agents.onboarding.graph import run_chatbot_turn
-from app.services.chatbot.config import resolve_chatbot_model_settings
+from app.services.chatbot.agents.registry import run_agent_turn
+from app.services.chatbot.config import (
+    prepare_rag_search_client,
+    resolve_chatbot_model_settings,
+)
 from app.services.chatbot.exceptions import (
     ChatbotFlowConflictError,
     ChatbotInputError,
@@ -158,6 +162,23 @@ def get_latest_chatbot_session_summary(
     )
 
 
+def get_active_node_type(
+    session: Session, *, chatbot_session: ChatbotSession
+) -> ChatbotFlowNodeTypeEnum | None:
+    """Type of the node the session's next turn runs on; None if it isn't in the pinned flow."""
+    flow_version = get_chatbot_flow_version_by_id(
+        session, flow_version_id=chatbot_session.flow_version_id
+    )
+    if flow_version is None:
+        return None
+    active_node = find_flow_node(
+        parse_flow_nodes(flow_version.nodes), chatbot_session.active_node_id
+    )
+    if active_node is None:
+        return None
+    return active_node.type
+
+
 def _node_not_in_flow_message(label: str, node_id: str) -> str:
     return (
         f"[KAAPI] {label} '{node_id}' is not in the session's flow version; "
@@ -236,8 +257,6 @@ def _resolve_coordinator_routes(
                 project_id=project_id,
                 config_id=target_node.config_id,
                 config_version=target_node.config_version,
-                max_tokens=None,
-                history_token_limit=None,
             ),
         )
         routes.append(
@@ -302,7 +321,7 @@ def _resolve_turn_context(
     organization_id: int,
     project_id: int,
 ) -> TurnContext:
-    """The active node and its settings, plus (coordinator) its routes or (agent) the coordinator it returns to.
+    """The active node and its settings, plus (rag) its search client, (coordinator) its routes, or (agent) the coordinator it returns to.
 
     Every route target's settings are resolved here too, so no DB access happens once the LLM calls start.
     """
@@ -317,6 +336,7 @@ def _resolve_turn_context(
         flow_version=flow_version, active_node_id=chatbot_session.active_node_id
     )
 
+    openai_client: OpenAI | None = None
     routes: list[CoordinatorRoute] = []
     route_targets: _RouteTargets = {}
     return_node_id: str | None = None
@@ -327,9 +347,14 @@ def _resolve_turn_context(
             project_id=project_id,
             config_id=turn_node.config_id,
             config_version=turn_node.config_version,
-            max_tokens=None,
-            history_token_limit=None,
         )
+        if turn_node.node_type == ChatbotFlowNodeTypeEnum.RAG:
+            openai_client = prepare_rag_search_client(
+                session=session,
+                organization_id=organization_id,
+                project_id=project_id,
+                model_settings=model_settings,
+            )
         if turn_node.node_type == ChatbotFlowNodeTypeEnum.COORDINATOR:
             routes, route_targets = _resolve_coordinator_routes(
                 session=session,
@@ -352,6 +377,7 @@ def _resolve_turn_context(
         stored_messages=stored_messages,
         turn_node=turn_node,
         model_settings=model_settings,
+        openai_client=openai_client,
         routes=routes,
         route_targets=route_targets,
         return_node_id=return_node_id,
@@ -393,7 +419,7 @@ def _load_turn_context(
         )
 
 
-async def _run_coordinator_turn_and_handoff(
+def _run_coordinator_turn_and_handoff(
     *,
     context: TurnContext,
     history: list[ChatbotMessageDict],
@@ -401,7 +427,7 @@ async def _run_coordinator_turn_and_handoff(
 ) -> _TurnOutcome:
     """Route, then let the chosen agent reply in the same turn (silent handoff)."""
     coordinator_node = context.turn_node
-    decision = await run_coordinator_turn(
+    decision = run_coordinator_turn(
         system_prompt=coordinator_node.prompt,
         history=history,
         user_message=user_message,
@@ -421,7 +447,7 @@ async def _run_coordinator_turn_and_handoff(
         )
 
     target_node, target_settings = context.route_targets[decision.target_node_id]
-    turn_result = await run_chatbot_turn(
+    turn_result = run_chatbot_turn(
         system_prompt=target_node.prompt,
         history=history,
         user_message=user_message,
@@ -441,20 +467,18 @@ async def _run_coordinator_turn_and_handoff(
 def _run_turn(context: TurnContext) -> _TurnOutcome:
     history, user_message = _split_pending_turn(context.stored_messages)
     if context.turn_node.node_type == ChatbotFlowNodeTypeEnum.COORDINATOR:
-        return asyncio.run(
-            _run_coordinator_turn_and_handoff(
-                context=context, history=history, user_message=user_message
-            )
+        return _run_coordinator_turn_and_handoff(
+            context=context, history=history, user_message=user_message
         )
 
-    turn_result = asyncio.run(
-        run_chatbot_turn(
-            system_prompt=context.turn_node.prompt,
-            history=history,
-            user_message=user_message,
-            model_settings=context.model_settings,
-            collected_fields=context.collected_fields,
-        )
+    turn_result = run_agent_turn(
+        node_type=context.turn_node.node_type,
+        system_prompt=context.turn_node.prompt,
+        history=history,
+        user_message=user_message,
+        model_settings=context.model_settings,
+        collected_fields=context.collected_fields,
+        openai_client=context.openai_client,
     )
     return _TurnOutcome(
         result=turn_result,
@@ -482,6 +506,30 @@ def _persist_turn(*, session_id: UUID, outcome: _TurnOutcome) -> None:
         )
 
 
+def _send_success_webhook(
+    *,
+    session_id: UUID,
+    context: TurnContext,
+    outcome: _TurnOutcome,
+    webhook_url: str,
+    webhook_secret: str | None,
+) -> None:
+    turn_result = outcome.result
+    envelope = APIResponse.success_response(
+        data={
+            "session_id": str(session_id),
+            "chatbot_id": str(context.chatbot_id),
+            "node_id": outcome.reply_node_id,
+            "reply": turn_result.reply,
+            "status": context.session_status,
+            "completion_status": turn_result.completion_status.value,
+            "collected_fields": turn_result.collected_fields,
+            "sources": turn_result.sources,
+        }
+    )
+    send_callback(webhook_url, envelope.model_dump(exclude_none=True), webhook_secret)
+
+
 def _send_failure_webhook(
     *,
     session_id: UUID,
@@ -502,7 +550,7 @@ def process_chatbot_session_message(
     project_id: int,
     webhook_url: str,
 ) -> None:
-    """Run the pending chatbot turn (load -> run -> persist -> notify) and POST the reply to `webhook_url`."""
+    """Run the pending chatbot turn (load -> resolve -> run -> persist -> notify) and POST the reply to `webhook_url`."""
     webhook_secret = get_webhook_secret(project_id, organization_id)
 
     try:
@@ -529,16 +577,10 @@ def process_chatbot_session_message(
         f"reply_node_id: {outcome.reply_node_id}, "
         f"next_active_node_id: {outcome.next_active_node_id}"
     )
-    turn_result = outcome.result
-    envelope = APIResponse.success_response(
-        data={
-            "session_id": str(session_id),
-            "chatbot_id": str(context.chatbot_id),
-            "node_id": outcome.reply_node_id,
-            "reply": turn_result.reply,
-            "status": context.session_status,
-            "completion_status": turn_result.completion_status.value,
-            "collected_fields": turn_result.collected_fields,
-        }
+    _send_success_webhook(
+        session_id=session_id,
+        context=context,
+        outcome=outcome,
+        webhook_url=webhook_url,
+        webhook_secret=webhook_secret,
     )
-    send_callback(webhook_url, envelope.model_dump(exclude_none=True), webhook_secret)
