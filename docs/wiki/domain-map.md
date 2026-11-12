@@ -37,7 +37,7 @@ APIKey → Organization, Project, User  # programmatic access
 | TTSResult | tts_evaluation.py | Run, Org, Project | human annotation UI (logical) |
 | Assessment / AssessmentRun | assessment.py | Config, AssessmentSubmission, BatchJob, Job, Org, Project | console UI (logical); webhook consumers (logical) |
 | Document | document.py | Project, Document (parent) | DocumentCollection, DocTransformationJob, FineTuning, ModelEvaluation |
-| Collection | collection.py | Project | DocumentCollection, CollectionJob; provider vector stores (logical) |
+| Collection | collection.py | Project | DocumentCollection, CollectionJob; provider vector stores (logical); rag chatbot turns search OpenAI collections by `knowledge_base_id` from the config (logical) |
 | DocumentCollection | document_collection.py | Document, Collection | RAG lookups (logical) |
 | CollectionJob | collection_job.py | Collection, Project | async collection create/delete (logical) |
 | DocTransformationJob | doc_transformation_job.py | Document | doctransform service (logical) |

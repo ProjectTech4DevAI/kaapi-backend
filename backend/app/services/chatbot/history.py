@@ -124,3 +124,13 @@ def extract_final_reply(messages: list[BaseMessage]) -> str:
         )
         raise ChatbotProviderError(error_message)
     return reply
+
+
+def validate_turn_input(
+    *, history: list[ChatbotMessageDict], user_message: str | None
+) -> None:
+    if user_message is None and history:
+        raise ChatbotInputError(
+            "[KAAPI] `message` is required once `history` is non-empty; omit it only "
+            "on the first call to get the opening greeting."
+        )

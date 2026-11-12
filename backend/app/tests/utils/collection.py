@@ -31,6 +31,7 @@ def get_vector_store_collection(
     *,
     vector_store_id: Optional[str] = None,
     collection_id: Optional[UUID] = None,
+    provider: ProviderType = ProviderType.openai,
 ) -> Collection:
     """
     Create a Collection configured for the Vector Store path.
@@ -42,9 +43,9 @@ def get_vector_store_collection(
     collection = Collection(
         id=collection_id or uuid4(),
         project_id=project.id,
-        knowledge_base_provider=get_service_name("openai"),
+        knowledge_base_provider=get_service_name(provider.value),
         knowledge_base_id=vector_store_id,
-        provider=ProviderType.openai,
+        provider=provider,
     )
     return CollectionCrud(db, project.id).create(collection)
 
