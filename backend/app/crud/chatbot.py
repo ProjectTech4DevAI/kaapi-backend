@@ -367,18 +367,21 @@ def update_chatbot_session_progress(
     session_id: UUID,
     collected_fields: dict[str, Any],
     completion_status: ChatbotCompletionStatusEnum,
+    active_node_id: str | None = None,
 ) -> ChatbotSession | None:
+    """`active_node_id=None` leaves the session's current node unchanged."""
     chatbot_session = session.get(ChatbotSession, session_id)
     if chatbot_session is None:
         return None
 
-    chatbot_session.sqlmodel_update(
-        {
-            "collected_fields": collected_fields,
-            "completion_status": completion_status,
-            "updated_at": now(),
-        }
-    )
+    updates: dict[str, Any] = {
+        "collected_fields": collected_fields,
+        "completion_status": completion_status,
+        "updated_at": now(),
+    }
+    if active_node_id is not None:
+        updates["active_node_id"] = active_node_id
+    chatbot_session.sqlmodel_update(updates)
     session.add(chatbot_session)
     session.commit()
     session.refresh(chatbot_session)

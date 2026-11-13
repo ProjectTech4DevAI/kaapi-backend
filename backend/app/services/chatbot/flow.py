@@ -42,11 +42,25 @@ KAAPI_ERROR_TAG = "[KAAPI]"
 FIRST_FLOW_VERSION = 1
 MAX_INPUT_NODES = 1
 MAX_OUTPUT_NODES = 1
-# The runtime executes onboarding and rag agents; coordinator is stored but not publishable yet.
+# The runtime executes these agent node types; a node of any other type is stored but not publishable.
 SUPPORTED_AGENT_NODE_TYPES: frozenset[ChatbotFlowNodeTypeEnum] = frozenset(
+    {
+        ChatbotFlowNodeTypeEnum.ONBOARDING,
+        ChatbotFlowNodeTypeEnum.RAG,
+        ChatbotFlowNodeTypeEnum.COORDINATOR,
+    }
+)
+# One coordinator keeps "which coordinator does a finished agent return to" unambiguous.
+MAX_COORDINATOR_NODES = 1
+COORDINATOR_TARGET_NODE_TYPES: frozenset[ChatbotFlowNodeTypeEnum] = frozenset(
     {ChatbotFlowNodeTypeEnum.ONBOARDING, ChatbotFlowNodeTypeEnum.RAG}
 )
-_SUPPORTED_AGENT_NODE_TYPES_LABEL = ", ".join(
+_COORDINATOR_TARGET_NODE_TYPES_LABEL = " or ".join(
+    sorted(node_type.value for node_type in COORDINATOR_TARGET_NODE_TYPES)
+)
+EDGE_INTENT_KEY = "intent"
+EDGE_DESCRIPTION_KEY = "description"
+SUPPORTED_AGENT_NODE_TYPES_LABEL = ", ".join(
     sorted(node_type.value for node_type in SUPPORTED_AGENT_NODE_TYPES)
 )
 CHATBOT_NOT_FOUND_MESSAGE = "Chatbot not found"
@@ -203,6 +217,64 @@ def _list_structural_problems(
     return problems
 
 
+def get_edge_intent(edge: ChatbotFlowEdge) -> str | None:
+    """The edge's stripped `data.intent`, or None when absent/blank/not a string."""
+    intent = edge.data.get(EDGE_INTENT_KEY)
+    if not isinstance(intent, str) or not intent.strip():
+        return None
+    return intent.strip()
+
+
+def _list_coordinator_problems(
+    *, nodes: list[ChatbotFlowNode], edges: list[ChatbotFlowEdge]
+) -> list[str]:
+    problems: list[str] = []
+
+    coordinator_nodes = [
+        node for node in nodes if node.type == ChatbotFlowNodeTypeEnum.COORDINATOR
+    ]
+    if len(coordinator_nodes) > MAX_COORDINATOR_NODES:
+        problems.append(
+            f"at most {MAX_COORDINATOR_NODES} coordinator node allowed "
+            f"(found {len(coordinator_nodes)})"
+        )
+
+    for coordinator in coordinator_nodes:
+        outgoing_edges = [edge for edge in edges if edge.source == coordinator.id]
+        if not outgoing_edges:
+            problems.append(
+                f"coordinator node '{coordinator.id}' needs at least one outgoing edge"
+            )
+            continue
+
+        seen_intents: set[str] = set()
+        for edge in outgoing_edges:
+            target = find_flow_node(nodes, edge.target)
+            # A missing target is already reported by the structural check.
+            if target is not None and target.type not in COORDINATOR_TARGET_NODE_TYPES:
+                problems.append(
+                    f"edge '{edge.id}' from coordinator '{coordinator.id}' must target "
+                    f"an {_COORDINATOR_TARGET_NODE_TYPES_LABEL} node "
+                    f"(target '{target.id}' is '{target.type.value}')"
+                )
+
+            intent = get_edge_intent(edge)
+            if intent is None:
+                problems.append(
+                    f"edge '{edge.id}' from coordinator '{coordinator.id}' is missing "
+                    "data.intent"
+                )
+                continue
+            # Casefolded to match runtime routing, which compares intents case-insensitively.
+            intent_key = intent.casefold()
+            if intent_key in seen_intents:
+                problems.append(
+                    f"coordinator '{coordinator.id}' has duplicate intent '{intent}'"
+                )
+            seen_intents.add(intent_key)
+    return problems
+
+
 def _pin_agent_node_config(
     *, session: Session, organization_id: int, project_id: int, node: ChatbotFlowNode
 ) -> tuple[ChatbotFlowNode, list[str]]:
@@ -210,7 +282,7 @@ def _pin_agent_node_config(
     if node.type not in SUPPORTED_AGENT_NODE_TYPES:
         return node, [
             f"node '{node.id}' has type '{node.type.value}', which is not supported yet "
-            f"(supported agent types: {_SUPPORTED_AGENT_NODE_TYPES_LABEL})"
+            f"(supported agent types: {SUPPORTED_AGENT_NODE_TYPES_LABEL})"
         ]
 
     node_data = node.agent_data()
@@ -267,6 +339,7 @@ def validate_flow_for_publish(
 ) -> list[ChatbotFlowNode]:
     """Strict publish-time checks; returns the nodes with every agent config_version pinned."""
     problems = _list_structural_problems(nodes=nodes, edges=edges)
+    problems.extend(_list_coordinator_problems(nodes=nodes, edges=edges))
 
     # Agent nodes call Anthropic with the project's own key, so a live flow needs one.
     if any(node.type in AGENT_NODE_TYPES for node in nodes):

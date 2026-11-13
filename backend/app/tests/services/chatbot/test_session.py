@@ -7,6 +7,7 @@ import anthropic
 import httpx
 import openai
 import pytest
+from langchain_core.exceptions import OutputParserException
 from sqlmodel import Session
 
 from app.crud import CollectionCrud
@@ -26,6 +27,10 @@ from app.models import (
 )
 from app.services.chatbot import config as config_service
 from app.services.chatbot import session as session_service
+from app.services.chatbot.agents.coordinator.graph import RouteDecision
+from app.services.chatbot.agents.coordinator.prompts import (
+    FALLBACK_CLARIFYING_QUESTION,
+)
 from app.services.chatbot.agents.onboarding import graph as onboarding_graph
 from app.services.chatbot.agents.onboarding.types import FieldExtraction
 from app.services.chatbot.session import (
@@ -35,9 +40,11 @@ from app.services.chatbot.session import (
 from app.services.chatbot.utils import ChatbotModelSettings
 from app.tests.utils.chatbot import (
     ANTHROPIC_REQUEST,
+    COORDINATOR_NODE_ID,
     DEFAULT_SYSTEM_PROMPT,
     FakeOpenAIClient,
     FakeVectorStores,
+    NOTHING_EXTRACTED,
     ONBOARDING_NODE_ID,
     WEBHOOK_URL,
     ScriptedChatModel,
@@ -49,8 +56,10 @@ from app.tests.utils.chatbot import (
     create_test_chatbot_session,
     create_test_flow_version,
     create_test_live_chatbot,
+    create_test_live_coordinator_chatbot,
     extracted_fields,
     patch_chat_model,
+    route_prompt,
     search_hit,
     tool_call_reply,
 )
@@ -729,21 +738,22 @@ class TestProcessChatbotSessionMessageFlowNode:
         callbacks: CallbackRecorder,
         unused_chat_model: ScriptedChatModel,
     ) -> None:
-        coordinator = build_onboarding_node(
-            config_id=config.id, node_id="router", node_type="coordinator"
+        output = build_onboarding_node(
+            config_id=config.id, node_id="done", node_type="output"
         )
         chatbot_session = _session_on_live_flow(
-            db, config, nodes=[coordinator], active_node_id="router"
+            db, config, nodes=[output], active_node_id="done"
         )
 
         _process(chatbot_session, db)
 
         assert unused_chat_model.calls == []
-        [payload] = callbacks.payloads
-        assert payload["success"] is False
-        assert "'router' has type 'coordinator'" in payload["error"]
-        # onboarding and rag both run now; only the others are rejected.
-        assert "only onboarding, rag nodes can run" in payload["error"]
+        _assert_single_failure_webhook(
+            callbacks,
+            chatbot_session,
+            "Active node 'done' has type 'output'",
+            "only coordinator, onboarding, rag nodes can run",
+        )
 
     @pytest.mark.parametrize(
         "node_overrides",
@@ -772,6 +782,384 @@ class TestProcessChatbotSessionMessageFlowNode:
         _assert_single_failure_webhook(
             callbacks, chatbot_session, "missing data.prompt or data.config_id"
         )
+
+
+ENROLL_NODE_ID = "enroll-agent"
+FEEDBACK_NODE_ID = "feedback-agent"
+COORDINATOR_ROUTES = {"Enroll": ENROLL_NODE_ID, "Feedback": FEEDBACK_NODE_ID}
+GREETING = "Hi! Do you want to enroll or share feedback?"
+
+
+@pytest.fixture
+def coordinator_chatbot(db: Session, config: Config) -> Chatbot:
+    return create_test_live_coordinator_chatbot(
+        db, config=config, routes=COORDINATOR_ROUTES
+    )[0]
+
+
+def _coordinator_session(
+    db: Session,
+    chatbot: Chatbot,
+    turns: ChatTurns,
+    *,
+    active_node_id: str = COORDINATOR_NODE_ID,
+) -> ChatbotSession:
+    chatbot_session = create_test_chatbot_session(
+        db, chatbot=chatbot, active_node_id=active_node_id
+    )
+    add_test_chatbot_messages(db, chatbot_session, turns)
+    return chatbot_session
+
+
+def _reload(db: Session, chatbot_session: ChatbotSession) -> ChatbotSession:
+    db.expire_all()
+    stored = db.get(ChatbotSession, chatbot_session.id)
+    assert stored is not None
+    return stored
+
+
+def _assistant_node_ids(
+    db: Session, chatbot_session: ChatbotSession
+) -> list[str | None]:
+    return [
+        m.node_id
+        for m in list_chatbot_session_messages(db, session_id=chatbot_session.id)
+        if m.role == ChatbotMessageRoleEnum.ASSISTANT
+    ]
+
+
+class TestCoordinatorTurns:
+    def test_opening_turn_clarifies_and_stays_on_coordinator(
+        self,
+        db: Session,
+        coordinator_chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # An intent on the opening turn must not hand off: there's no user message yet.
+        chat_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                extractions=[
+                    RouteDecision(intent="Enroll", clarifying_question=GREETING)
+                ]
+            ),
+        )
+        chatbot_session = _coordinator_session(db, coordinator_chatbot, [])
+
+        _process(chatbot_session, db)
+
+        assert chat_model.structured_output_schemas == [RouteDecision]
+        assert chat_model.calls == []
+        assert _transcript(db, chatbot_session) == [("assistant", GREETING)]
+        assert _assistant_node_ids(db, chatbot_session) == [COORDINATOR_NODE_ID]
+        assert callbacks.payloads == [
+            _success_webhook(
+                chatbot_session,
+                coordinator_chatbot,
+                reply=GREETING,
+                node_id=COORDINATOR_NODE_ID,
+            )
+        ]
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == COORDINATOR_NODE_ID
+        assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS
+
+    def test_ambiguous_message_asks_fallback_question_and_keeps_fields(
+        self,
+        db: Session,
+        coordinator_chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(extractions=[RouteDecision(intent=None)]),
+        )
+        chatbot_session = _coordinator_session(
+            db,
+            coordinator_chatbot,
+            [
+                (ChatbotMessageRoleEnum.ASSISTANT, GREETING),
+                (ChatbotMessageRoleEnum.USER, "hmm"),
+            ],
+        )
+        update_chatbot_session_progress(
+            db,
+            session_id=chatbot_session.id,
+            collected_fields={"name": "Asha"},
+            completion_status=ChatbotCompletionStatusEnum.IN_PROGRESS,
+        )
+
+        _process(chatbot_session, db)
+
+        assert callbacks.payloads == [
+            _success_webhook(
+                chatbot_session,
+                coordinator_chatbot,
+                reply=FALLBACK_CLARIFYING_QUESTION,
+                node_id=COORDINATOR_NODE_ID,
+                collected_fields={"name": "Asha"},
+            )
+        ]
+        assert _assistant_node_ids(db, chatbot_session) == [
+            COORDINATOR_NODE_ID,
+            COORDINATOR_NODE_ID,
+        ]
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == COORDINATOR_NODE_ID
+        assert stored.collected_fields == {"name": "Asha"}
+
+    def test_matched_intent_hands_off_to_target_in_the_same_turn(
+        self,
+        db: Session,
+        coordinator_chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        chat_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["Great, what's your child's name?"],
+                extractions=[
+                    RouteDecision(intent="enroll"),
+                    FieldExtraction(
+                        collected_fields=extracted_fields({"parent": "Asha"}),
+                        missing_fields=["child"],
+                        is_complete=False,
+                    ),
+                ],
+            ),
+        )
+        chatbot_session = _coordinator_session(
+            db,
+            coordinator_chatbot,
+            [
+                (ChatbotMessageRoleEnum.ASSISTANT, GREETING),
+                (ChatbotMessageRoleEnum.USER, "I'm Asha, I want to enroll my son"),
+            ],
+        )
+
+        _process(chatbot_session, db)
+
+        assert chat_model.structured_output_schemas == [RouteDecision, FieldExtraction]
+        [reply_call] = chat_model.calls
+        assert str(reply_call[0].content).startswith(route_prompt(ENROLL_NODE_ID))
+        assert _assistant_node_ids(db, chatbot_session) == [
+            COORDINATOR_NODE_ID,
+            ENROLL_NODE_ID,
+        ]
+        assert callbacks.payloads == [
+            _success_webhook(
+                chatbot_session,
+                coordinator_chatbot,
+                reply="Great, what's your child's name?",
+                node_id=ENROLL_NODE_ID,
+                collected_fields={"parent": "Asha"},
+            )
+        ]
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == ENROLL_NODE_ID
+        assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS
+
+    def test_target_completing_in_the_routed_turn_returns_to_coordinator(
+        self,
+        db: Session,
+        coordinator_chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["Thanks for the feedback!"],
+                extractions=[
+                    RouteDecision(intent="Feedback"),
+                    FieldExtraction(
+                        collected_fields=extracted_fields({"rating": "5"}),
+                        missing_fields=[],
+                        is_complete=True,
+                    ),
+                ],
+            ),
+        )
+        chatbot_session = _coordinator_session(
+            db,
+            coordinator_chatbot,
+            [
+                (ChatbotMessageRoleEnum.ASSISTANT, GREETING),
+                (ChatbotMessageRoleEnum.USER, "Feedback: 5 stars"),
+            ],
+        )
+
+        _process(chatbot_session, db)
+
+        [payload] = callbacks.payloads
+        assert payload["data"]["node_id"] == FEEDBACK_NODE_ID
+        assert payload["data"]["completion_status"] == "complete"
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == COORDINATOR_NODE_ID
+        assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
+        assert stored.collected_fields == {"rating": "5"}
+
+    def test_agent_completing_on_a_later_turn_returns_to_coordinator(
+        self,
+        db: Session,
+        coordinator_chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        chat_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["You're enrolled!"],
+                extractions=[
+                    RouteDecision(intent="Enroll"),
+                    FieldExtraction(
+                        collected_fields=extracted_fields({"child": "Ravi"}),
+                        missing_fields=[],
+                        is_complete=True,
+                    ),
+                ],
+            ),
+        )
+        chatbot_session = _coordinator_session(
+            db,
+            coordinator_chatbot,
+            [
+                (ChatbotMessageRoleEnum.ASSISTANT, "What's your child's name?"),
+                (ChatbotMessageRoleEnum.USER, "Ravi"),
+            ],
+            active_node_id=ENROLL_NODE_ID,
+        )
+
+        _process(chatbot_session, db)
+
+        assert chat_model.structured_output_schemas == [RouteDecision, FieldExtraction]
+        [payload] = callbacks.payloads
+        assert payload["data"]["node_id"] == ENROLL_NODE_ID
+        assert payload["data"]["completion_status"] == "complete"
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == COORDINATOR_NODE_ID
+        assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
+
+    def test_short_answer_without_a_matching_intent_continues_the_agent_in_progress(
+        self,
+        db: Session,
+        coordinator_chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["Thanks! How old is Ravi?"],
+                extractions=[
+                    RouteDecision(intent=None, clarifying_question=GREETING),
+                    FieldExtraction(
+                        collected_fields=extracted_fields({"child": "Ravi"}),
+                        missing_fields=["age"],
+                        is_complete=False,
+                    ),
+                ],
+            ),
+        )
+        chatbot_session = _coordinator_session(
+            db,
+            coordinator_chatbot,
+            [
+                (ChatbotMessageRoleEnum.ASSISTANT, "What's your child's name?"),
+                (ChatbotMessageRoleEnum.USER, "Ravi"),
+            ],
+            active_node_id=ENROLL_NODE_ID,
+        )
+
+        _process(chatbot_session, db)
+
+        assert callbacks.payloads == [
+            _success_webhook(
+                chatbot_session,
+                coordinator_chatbot,
+                reply="Thanks! How old is Ravi?",
+                node_id=ENROLL_NODE_ID,
+                collected_fields={"child": "Ravi"},
+            )
+        ]
+        assert ("assistant", GREETING) not in _transcript(db, chatbot_session)
+        assert _reload(db, chatbot_session).active_node_id == ENROLL_NODE_ID
+
+    def test_entry_onboarding_flow_stays_on_its_node_after_completion(
+        self,
+        db: Session,
+        chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        chat_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["All set!"],
+                extractions=[
+                    FieldExtraction(
+                        collected_fields=extracted_fields({"name": "Asha"}),
+                        missing_fields=[],
+                        is_complete=True,
+                    )
+                ],
+            ),
+        )
+        chatbot_session = _session_with_turns(
+            db, chatbot, [(ChatbotMessageRoleEnum.USER, "Asha")]
+        )
+
+        _process(chatbot_session, db)
+
+        # No coordinator in the flow, so no routing call precedes the agent.
+        assert chat_model.structured_output_schemas == [FieldExtraction]
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == ONBOARDING_NODE_ID
+        assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
+        assert callbacks.payloads[0]["data"]["node_id"] == ONBOARDING_NODE_ID
+
+    @pytest.mark.parametrize(
+        ("routing_error", "expected_message"),
+        [
+            (
+                anthropic.APITimeoutError(request=ANTHROPIC_REQUEST),
+                "(code: APITimeoutError)",
+            ),
+            (
+                OutputParserException("not valid JSON"),
+                "[ANTHROPIC] Coordinator routing returned malformed structured output",
+            ),
+        ],
+        ids=["timeout", "malformed"],
+    )
+    def test_routing_failure_posts_failure_webhook_and_stores_nothing(
+        self,
+        db: Session,
+        coordinator_chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+        routing_error: Exception,
+        expected_message: str,
+    ) -> None:
+        chat_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["should never be used"], extractions=[routing_error]
+            ),
+        )
+        chatbot_session = _coordinator_session(
+            db, coordinator_chatbot, [(ChatbotMessageRoleEnum.USER, "enroll")]
+        )
+
+        _process(chatbot_session, db)
+
+        assert chat_model.calls == []
+        _assert_single_failure_webhook(callbacks, chatbot_session, expected_message)
+        assert _transcript(db, chatbot_session) == [("user", "enroll")]
+        assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
 
 
 RAG_GOAL = "Answer questions about school fees from the documents."
@@ -926,3 +1314,432 @@ class TestRagSessionTurn:
         assert payload["data"] == {"session_id": str(chatbot_session.id)}
         assert _transcript(db, chatbot_session) == [("user", "What is the tuition?")]
         assert len(chat_model.calls) == 1
+
+
+APPLY_NODE_ID = "apply-agent"
+FAQ_NODE_ID = "faq-agent"
+
+
+def _coordinator_with_rag_route(
+    db: Session, project: Project
+) -> tuple[Chatbot, str, Config]:
+    """A live input -> coordinator flow routing "Apply" to onboarding and "Questions" to rag.
+
+    Only the rag target uses `rag_config`; the coordinator and onboarding target share another.
+    """
+    collection = get_vector_store_collection(db, project)
+    rag_config = create_test_anthropic_config(
+        db, project_id=project.id, knowledge_base_ids=[collection.knowledge_base_id]
+    )
+    chatbot, _flow_version = create_test_live_coordinator_chatbot(
+        db,
+        config=create_test_anthropic_config(db, project_id=project.id),
+        routes={"Apply": APPLY_NODE_ID},
+        rag_routes={"Questions": (FAQ_NODE_ID, rag_config.id)},
+    )
+    return chatbot, collection.knowledge_base_id, rag_config
+
+
+def _ask(db: Session, chatbot_session: ChatbotSession, text: str) -> None:
+    add_test_chatbot_messages(
+        db, chatbot_session, [(ChatbotMessageRoleEnum.USER, text)]
+    )
+    _process(chatbot_session, db)
+
+
+def _greet_then_complete_apply(
+    db: Session,
+    chatbot: Chatbot,
+    callbacks: CallbackRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> ChatbotSession:
+    """Run the greeting and a fully-answered "Apply" turn, leaving the session back on the coordinator."""
+    chatbot_session = _coordinator_session(db, chatbot, [])
+    patch_chat_model(
+        monkeypatch,
+        ScriptedChatModel(
+            extractions=[RouteDecision(intent=None, clarifying_question=GREETING)]
+        ),
+    )
+    _process(chatbot_session, db)
+    assert callbacks.payloads[-1]["success"] is True
+
+    patch_chat_model(
+        monkeypatch,
+        ScriptedChatModel(
+            replies=["You're registered!"],
+            extractions=[
+                RouteDecision(intent="Apply"),
+                FieldExtraction(
+                    collected_fields=extracted_fields({"name": "Asha"}),
+                    missing_fields=[],
+                    is_complete=True,
+                ),
+            ],
+        ),
+    )
+    _ask(db, chatbot_session, "I'm Asha and I want to apply")
+    assert callbacks.payloads[-1]["success"] is True
+    assert callbacks.payloads[-1]["data"]["node_id"] == APPLY_NODE_ID
+    assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
+    return chatbot_session
+
+
+class TestCoordinatorRagRoute:
+    def test_rag_handoff_answers_with_sources_and_stays_on_coordinator(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _credentials, project = create_test_credential(db)
+        chatbot, knowledge_base_id, _rag_config = _coordinator_with_rag_route(
+            db, project
+        )
+        vector_stores.hits[knowledge_base_id] = [
+            search_hit(file_id="file-fees", filename="fees.pdf", score=0.9)
+        ]
+        chat_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=[tool_call_reply("tuition fee"), "Tuition is 100 per term."],
+                extractions=[RouteDecision(intent="Questions")],
+            ),
+        )
+        chatbot_session = _coordinator_session(
+            db,
+            chatbot,
+            [
+                (ChatbotMessageRoleEnum.ASSISTANT, GREETING),
+                (ChatbotMessageRoleEnum.USER, "What is the tuition?"),
+            ],
+        )
+
+        _process(chatbot_session, db)
+
+        assert callbacks.payloads == [
+            _success_webhook(
+                chatbot_session,
+                chatbot,
+                reply="Tuition is 100 per term.",
+                node_id=FAQ_NODE_ID,
+                sources=[{"file_id": "file-fees", "filename": "fees.pdf"}],
+            )
+        ]
+        assert route_prompt(FAQ_NODE_ID) in str(chat_model.calls[0][0].content)
+        assert vector_stores.calls[0]["vector_store_id"] == knowledge_base_id
+        assert _assistant_node_ids(db, chatbot_session) == [
+            COORDINATOR_NODE_ID,
+            FAQ_NODE_ID,
+        ]
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == COORDINATOR_NODE_ID
+        assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS
+
+    def test_rag_target_without_openai_credentials_fails_only_turns_routed_to_it(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # A project with Anthropic credentials (from the config factory) but no OpenAI ones.
+        chatbot, _kb_id, _rag_config = _coordinator_with_rag_route(
+            db, create_test_project(db)
+        )
+        chatbot_session = _greet_then_complete_apply(
+            db, chatbot, callbacks, monkeypatch
+        )
+
+        rag_turn_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["should never be used"],
+                extractions=[RouteDecision(intent="Questions")],
+            ),
+        )
+        _ask(db, chatbot_session, "What is the tuition?")
+
+        assert rag_turn_model.calls == []
+        assert vector_stores.calls == []
+        assert len(callbacks.payloads) == 3
+        failure = callbacks.payloads[-1]
+        assert failure["success"] is False
+        assert "OpenAI credentials" in failure["error"]
+        assert failure["data"] == {"session_id": str(chatbot_session.id)}
+        assert _transcript(db, chatbot_session)[-1] == ("user", "What is the tuition?")
+        assert _assistant_node_ids(db, chatbot_session) == [
+            COORDINATOR_NODE_ID,
+            APPLY_NODE_ID,
+        ]
+        assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
+
+    def test_deleted_target_config_version_fails_only_turns_routed_to_it(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _credentials, project = create_test_credential(db)
+        chatbot, _kb_id, rag_config = _coordinator_with_rag_route(db, project)
+        ConfigVersionCrud(
+            session=db, project_id=project.id, config_id=rag_config.id
+        ).delete_or_raise(1)
+        chatbot_session = _greet_then_complete_apply(
+            db, chatbot, callbacks, monkeypatch
+        )
+
+        rag_turn_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["should never be used"],
+                extractions=[RouteDecision(intent="Questions")],
+            ),
+        )
+        _ask(db, chatbot_session, "What is the tuition?")
+
+        assert rag_turn_model.calls == []
+        assert vector_stores.calls == []
+        assert len(callbacks.payloads) == 3
+        assert callbacks.payloads[-1] == _failure_webhook(
+            chatbot_session,
+            f"Version with number '1' not found for config '{rag_config.id}'",
+        )
+        assert _assistant_node_ids(db, chatbot_session) == [
+            COORDINATOR_NODE_ID,
+            APPLY_NODE_ID,
+        ]
+        assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
+
+    def test_rag_and_onboarding_routes_interleave_across_turns(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _credentials, project = create_test_credential(db)
+        chatbot, knowledge_base_id, _rag_config = _coordinator_with_rag_route(
+            db, project
+        )
+        vector_stores.hits[knowledge_base_id] = [
+            search_hit(file_id="file-fees", filename="fees.pdf", score=0.9)
+        ]
+        chatbot_session = _coordinator_session(
+            db, chatbot, [(ChatbotMessageRoleEnum.ASSISTANT, GREETING)]
+        )
+
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=[tool_call_reply("fees"), "Fees are 100."],
+                extractions=[RouteDecision(intent="Questions")],
+            ),
+        )
+        _ask(db, chatbot_session, "What are the fees?")
+        assert callbacks.payloads[-1]["data"]["node_id"] == FAQ_NODE_ID
+        assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
+
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["What's your name?"],
+                extractions=[RouteDecision(intent="Apply"), NOTHING_EXTRACTED],
+            ),
+        )
+        _ask(db, chatbot_session, "I want to apply")
+        assert callbacks.payloads[-1]["data"]["node_id"] == APPLY_NODE_ID
+        assert _reload(db, chatbot_session).active_node_id == APPLY_NODE_ID
+
+        apply_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["You're registered!"],
+                extractions=[
+                    RouteDecision(intent="Apply"),
+                    FieldExtraction(
+                        collected_fields=extracted_fields({"name": "Asha"}),
+                        missing_fields=[],
+                        is_complete=True,
+                    ),
+                ],
+            ),
+        )
+        _ask(db, chatbot_session, "Asha")
+        assert apply_model.structured_output_schemas == [
+            RouteDecision,
+            FieldExtraction,
+        ]
+        assert callbacks.payloads[-1]["data"]["completion_status"] == "complete"
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == COORDINATOR_NODE_ID
+        assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
+
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=[tool_call_reply("exam date"), "The exam is in May."],
+                extractions=[RouteDecision(intent="Questions")],
+            ),
+        )
+        _ask(db, chatbot_session, "When is the exam?")
+
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session,
+            chatbot,
+            reply="The exam is in May.",
+            node_id=FAQ_NODE_ID,
+            collected_fields={"name": "Asha"},
+            sources=[{"file_id": "file-fees", "filename": "fees.pdf"}],
+        )
+        assert len(callbacks.payloads) == 4
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == COORDINATOR_NODE_ID
+        assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS
+        assert stored.collected_fields == {"name": "Asha"}
+        assert _assistant_node_ids(db, chatbot_session) == [
+            COORDINATOR_NODE_ID,
+            FAQ_NODE_ID,
+            APPLY_NODE_ID,
+            APPLY_NODE_ID,
+            FAQ_NODE_ID,
+        ]
+
+    def test_rag_detours_keep_registration_active_until_optional_fields_are_asked(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _credentials, project = create_test_credential(db)
+        chatbot, knowledge_base_id, _rag_config = _coordinator_with_rag_route(
+            db, project
+        )
+        vector_stores.hits[knowledge_base_id] = [
+            search_hit(file_id="file-fees", filename="fees.pdf", score=0.9)
+        ]
+        fees_source = [{"file_id": "file-fees", "filename": "fees.pdf"}]
+        in_progress_note = "The user is in the middle of 'Apply'."
+        chatbot_session = _coordinator_session(db, chatbot, [])
+
+        def _turn(
+            text: str | None, *, replies: list[Any], extractions: list[Any]
+        ) -> str:
+            chat_model = patch_chat_model(
+                monkeypatch, ScriptedChatModel(replies=replies, extractions=extractions)
+            )
+            if text is None:
+                _process(chatbot_session, db)
+            else:
+                _ask(db, chatbot_session, text)
+            return str(chat_model.extraction_calls[0][0].content)
+
+        _turn(
+            None,
+            replies=[],
+            extractions=[RouteDecision(intent=None, clarifying_question=GREETING)],
+        )
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session, chatbot, reply=GREETING, node_id=COORDINATOR_NODE_ID
+        )
+        assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
+
+        routing_prompt = _turn(
+            "I want to sign up",
+            replies=["What's your name and phone?"],
+            extractions=[RouteDecision(intent="Apply"), NOTHING_EXTRACTED],
+        )
+        assert in_progress_note not in routing_prompt
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session,
+            chatbot,
+            reply="What's your name and phone?",
+            node_id=APPLY_NODE_ID,
+        )
+        assert _reload(db, chatbot_session).active_node_id == APPLY_NODE_ID
+
+        routing_prompt = _turn(
+            "What are the fees?",
+            replies=[tool_call_reply("fees"), "Fees are 100."],
+            extractions=[RouteDecision(intent="Questions")],
+        )
+        assert in_progress_note in routing_prompt
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session,
+            chatbot,
+            reply="Fees are 100.",
+            node_id=FAQ_NODE_ID,
+            sources=fees_source,
+        )
+        assert _reload(db, chatbot_session).active_node_id == APPLY_NODE_ID
+
+        _turn(
+            "Asha, 98765",
+            replies=["Thanks Asha! Would you like to add an email?"],
+            extractions=[
+                RouteDecision(intent="Apply"),
+                FieldExtraction(
+                    collected_fields=extracted_fields(
+                        {"name": "Asha", "phone": "98765"}
+                    ),
+                    missing_fields=[],
+                    missing_optional_fields=["email"],
+                    is_complete=True,
+                ),
+            ],
+        )
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session,
+            chatbot,
+            reply="Thanks Asha! Would you like to add an email?",
+            node_id=APPLY_NODE_ID,
+            completion_status="complete",
+            collected_fields={"name": "Asha", "phone": "98765"},
+        )
+        assert _reload(db, chatbot_session).active_node_id == APPLY_NODE_ID
+
+        routing_prompt = _turn(
+            "When is the exam?",
+            replies=[tool_call_reply("exam date"), "The exam is in May."],
+            extractions=[RouteDecision(intent="Questions")],
+        )
+        assert in_progress_note in routing_prompt
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session,
+            chatbot,
+            reply="The exam is in May.",
+            node_id=FAQ_NODE_ID,
+            collected_fields={"name": "Asha", "phone": "98765"},
+            sources=fees_source,
+        )
+        assert _reload(db, chatbot_session).active_node_id == APPLY_NODE_ID
+
+        _turn(
+            "asha@example.com",
+            replies=["All set, Asha!"],
+            extractions=[
+                RouteDecision(intent="Apply"),
+                FieldExtraction(
+                    collected_fields=extracted_fields({"email": "asha@example.com"}),
+                    missing_fields=[],
+                    is_complete=True,
+                ),
+            ],
+        )
+        all_fields = {"name": "Asha", "phone": "98765", "email": "asha@example.com"}
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session,
+            chatbot,
+            reply="All set, Asha!",
+            node_id=APPLY_NODE_ID,
+            completion_status="complete",
+            collected_fields=all_fields,
+        )
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == COORDINATOR_NODE_ID
+        assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
+        assert stored.collected_fields == all_fields
+        assert len(callbacks.payloads) == 6

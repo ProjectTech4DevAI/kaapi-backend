@@ -53,7 +53,7 @@ APIKey → Organization, Project, User  # programmatic access
 | Chatbot | chatbot.py | Org, Project | ChatbotFlowVersion, ChatbotSession; soft-deleted (`deleted_at`) because sessions reference it |
 | ChatbotFlowVersion | chatbot.py | Chatbot (CASCADE) | ChatbotSession (`flow_version_id`, RESTRICT); React Flow editor in kaapi-frontend (logical); Config/ConfigVersion via node `data` (logical) |
 | ChatbotSession | chatbot.py | Chatbot (RESTRICT), ChatbotFlowVersion (RESTRICT) | ChatbotSessionMessage; Celery turn worker; caller webhook (logical) |
-| ChatbotSessionMessage | chatbot.py | ChatbotSession (CASCADE) | turn history for the onboarding agent (logical) |
+| ChatbotSessionMessage | chatbot.py | ChatbotSession (CASCADE) | turn history for the coordinator, onboarding and rag agents (logical) |
 
 ## External consumers (always check in blast radius)
 

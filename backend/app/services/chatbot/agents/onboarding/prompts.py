@@ -14,7 +14,10 @@ EXTRACTION_INSTRUCTION = (
     "collected_fields and keep the field in missing_fields.\n"
     "4. Never invent, guess, or infer a value the user did not give.\n"
     "5. missing_fields: the required fields not yet collected under these rules.\n"
-    "6. is_complete: true only when no required field is missing."
+    "6. is_complete: true only when no required field is missing.\n"
+    "7. missing_optional_fields: optional fields (only those the flow prompt explicitly "
+    "marks optional) not yet collected. Once the assistant has asked for one, or the "
+    "user declined or ignored it, it is no longer missing."
 )
 EXTRACTION_FLOW_PROMPT_TEMPLATE = "\n\n<flow_prompt>\n{flow_prompt}\n</flow_prompt>"
 EXTRACTION_PRIOR_FIELDS_TEMPLATE = (
@@ -26,4 +29,8 @@ PROGRESS_COLLECTED_TEMPLATE = (
     "Already collected (do not ask for these again): {collected}. "
 )
 PROGRESS_MISSING_TEMPLATE = "Still missing: {missing}. Ask only for the missing fields."
+PROGRESS_OPTIONAL_TEMPLATE = (
+    "Every required field is collected. Confirm them, then ask once for these optional "
+    "fields: {optional}; don't insist if the user declines."
+)
 PROGRESS_COMPLETE_NOTE = "Every required field is collected; confirm and wrap up as the flow prompt describes."
