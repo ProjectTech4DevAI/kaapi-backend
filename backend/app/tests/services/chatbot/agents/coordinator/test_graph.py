@@ -38,6 +38,7 @@ def _run(
     *,
     user_message: str | None = "I want to enroll my son",
     history: list[ChatbotMessageDict] | None = None,
+    in_progress_intent: str | None = None,
 ) -> CoordinatorDecision:
     return run_coordinator_turn(
         system_prompt=COORDINATOR_PROMPT,
@@ -45,6 +46,7 @@ def _run(
         user_message=user_message,
         routes=ROUTES,
         model_settings=ChatbotModelSettings(model=MODEL),
+        in_progress_intent=in_progress_intent,
     )
 
 
@@ -145,6 +147,73 @@ class TestRouting:
         with pytest.raises(ChatbotInputError, match="`message` is required"):
             _run(user_message=None, history=[{"role": "assistant", "content": "Hi!"}])
         assert chat_model.extraction_calls == []
+
+
+class TestInProgressRouting:
+    @pytest.mark.parametrize(
+        "intent", [None, "Billing"], ids=["null-intent", "unknown-intent"]
+    )
+    def test_no_matching_intent_continues_the_in_progress_route(
+        self, monkeypatch: pytest.MonkeyPatch, intent: str | None
+    ) -> None:
+        _scripted(
+            monkeypatch,
+            RouteDecision(
+                intent=intent, clarifying_question=CLARIFY.clarifying_question
+            ),
+        )
+
+        decision = _run(user_message="Ravi", in_progress_intent="Enroll")
+
+        assert decision == CoordinatorDecision(
+            target_node_id="enroll", clarifying_question=None
+        )
+
+    def test_matching_another_intent_switches_away_from_the_in_progress_route(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _scripted(monkeypatch, RouteDecision(intent="Feedback"))
+
+        decision = _run(user_message="I have feedback", in_progress_intent="Enroll")
+
+        assert decision == CoordinatorDecision(
+            target_node_id="feedback", clarifying_question=None
+        )
+
+    def test_opening_turn_still_clarifies_with_a_route_in_progress(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _scripted(
+            monkeypatch,
+            RouteDecision(intent=None, clarifying_question="Hi! How can I help?"),
+        )
+
+        decision = _run(user_message=None, in_progress_intent="Enroll")
+
+        assert decision == CoordinatorDecision(
+            target_node_id=None, clarifying_question="Hi! How can I help?"
+        )
+
+    @pytest.mark.parametrize(
+        ("in_progress_intent", "expected_in_prompt"),
+        [(None, False), ("Enroll", True)],
+        ids=["nothing-in-progress", "enroll-in-progress"],
+    )
+    def test_routing_prompt_names_the_in_progress_intent_only_when_set(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        in_progress_intent: str | None,
+        expected_in_prompt: bool,
+    ) -> None:
+        chat_model = _scripted(monkeypatch, RouteDecision(intent="Enroll"))
+
+        _run(in_progress_intent=in_progress_intent)
+
+        [sent] = chat_model.extraction_calls
+        system_prompt = str(sent[0].content)
+        assert ("The user is in the middle of 'Enroll'." in system_prompt) is (
+            expected_in_prompt
+        )
 
 
 class TestRoutingErrors:

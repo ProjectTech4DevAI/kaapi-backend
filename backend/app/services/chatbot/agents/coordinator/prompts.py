@@ -7,6 +7,11 @@ ROUTING_INSTRUCTION = (
     "user's language that helps them say which of the listed options they need; "
     "otherwise null."
 )
+IN_PROGRESS_TEMPLATE = (
+    "\n\nThe user is in the middle of '{intent}'. Choose it for anything that continues "
+    'it: answers, corrections, or short replies such as a name, a number, or "yes". '
+    "Switch only when the user clearly asks for something another intent covers."
+)
 ROUTES_TEMPLATE = "\n\n<intents>\n{routes}\n</intents>"
 
 FALLBACK_CLARIFYING_QUESTION = (

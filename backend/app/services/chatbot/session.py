@@ -308,10 +308,11 @@ def _resolve_turn_context(
     organization_id: int,
     project_id: int,
 ) -> TurnContext:
-    """The active node and its settings, plus (rag) its search client, (coordinator) its routes, or (agent) the coordinator it returns to.
+    """The turn node and its settings, plus (rag) its search client or (coordinator) its routes.
 
-    A coordinator's route targets are only parsed here; the chosen one loads its settings in its own
-    short DB session after routing, so no DB connection is held across an LLM call.
+    An agent active behind a coordinator is an in-progress sub-flow: the turn runs on the coordinator,
+    which defaults to it. A coordinator's route targets are only parsed here; the chosen one loads its
+    settings in its own short DB session after routing, so no DB connection is held across an LLM call.
     """
     flow_version = get_chatbot_flow_version_by_id(
         session, flow_version_id=chatbot_session.flow_version_id
@@ -323,6 +324,16 @@ def _resolve_turn_context(
     turn_node = _resolve_turn_node(
         flow_version=flow_version, active_node_id=chatbot_session.active_node_id
     )
+    in_progress_node_id: str | None = None
+    if turn_node.node_type != ChatbotFlowNodeTypeEnum.COORDINATOR:
+        coordinator_node_id = _find_return_coordinator(
+            flow_version=flow_version, node_id=turn_node.node_id
+        )
+        if coordinator_node_id is not None:
+            in_progress_node_id = turn_node.node_id
+            turn_node = _resolve_turn_node(
+                flow_version=flow_version, active_node_id=coordinator_node_id
+            )
 
     model_settings, openai_client = _resolve_node_runtime(
         session=session,
@@ -332,14 +343,9 @@ def _resolve_turn_context(
     )
     routes: list[CoordinatorRoute] = []
     route_target_nodes: dict[str, TurnNode] = {}
-    return_node_id: str | None = None
     if turn_node.node_type == ChatbotFlowNodeTypeEnum.COORDINATOR:
         routes, route_target_nodes = _resolve_coordinator_routes(
             flow_version=flow_version, coordinator_node_id=turn_node.node_id
-        )
-    else:
-        return_node_id = _find_return_coordinator(
-            flow_version=flow_version, node_id=turn_node.node_id
         )
     return TurnContext(
         chatbot_id=chatbot_session.chatbot_id,
@@ -351,7 +357,7 @@ def _resolve_turn_context(
         openai_client=openai_client,
         routes=routes,
         route_target_nodes=route_target_nodes,
-        return_node_id=return_node_id,
+        in_progress_node_id=in_progress_node_id,
     )
 
 
@@ -400,12 +406,17 @@ def _run_coordinator_turn_and_handoff(
 ) -> _TurnOutcome:
     """Route, then let the chosen agent reply in the same turn (silent handoff)."""
     coordinator_node = context.turn_node
+    in_progress_intent: str | None = None
+    for route in context.routes:
+        if route.target_node_id == context.in_progress_node_id:
+            in_progress_intent = route.intent
     decision = run_coordinator_turn(
         system_prompt=coordinator_node.prompt,
         history=history,
         user_message=user_message,
         routes=context.routes,
         model_settings=context.model_settings,
+        in_progress_intent=in_progress_intent,
     )
     if decision.target_node_id is None:
         # The fallback only narrows the type; run_coordinator_turn always sets a question when it doesn't route.
@@ -441,11 +452,11 @@ def _run_coordinator_turn_and_handoff(
         collected_fields=context.collected_fields,
         openai_client=target_openai_client,
     )
-    # rag never completes, so the session stays on the coordinator and every question is routed afresh.
+    # A rag detour leaves whatever was active (coordinator or in-progress sub-flow) in place.
     if target_node.node_type == ChatbotFlowNodeTypeEnum.RAG:
         next_active_node_id = None
-    # A finished sub-flow hands the session back so the next message is routed afresh.
-    elif turn_result.is_complete:
+    # Not on is_complete: a complete agent may still be asking its optional fields.
+    elif turn_result.is_done:
         next_active_node_id = coordinator_node.node_id
     else:
         next_active_node_id = target_node.node_id
@@ -481,7 +492,7 @@ def _run_turn(
     return _TurnOutcome(
         result=turn_result,
         reply_node_id=context.turn_node.node_id,
-        next_active_node_id=context.return_node_id if turn_result.is_complete else None,
+        next_active_node_id=None,
     )
 
 

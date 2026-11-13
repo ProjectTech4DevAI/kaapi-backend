@@ -20,6 +20,7 @@ from app.services.chatbot.agents.onboarding.prompts import (
     PROGRESS_COMPLETE_NOTE,
     PROGRESS_MISSING_TEMPLATE,
     PROGRESS_NOTE_PREFIX,
+    PROGRESS_OPTIONAL_TEMPLATE,
 )
 from app.services.chatbot.agents.onboarding.types import (
     FieldExtraction,
@@ -77,7 +78,10 @@ def _build_progress_note(state: OnboardingState) -> SystemMessage | None:
     if collected:
         note += PROGRESS_COLLECTED_TEMPLATE.format(collected=_format_fields(collected))
     missing = state.get("missing_fields", [])
-    if state["is_complete"]:
+    missing_optional = state.get("missing_optional_fields", [])
+    if state["is_complete"] and missing_optional:
+        note += PROGRESS_OPTIONAL_TEMPLATE.format(optional=", ".join(missing_optional))
+    elif state["is_complete"]:
         note += PROGRESS_COMPLETE_NOTE
     elif missing:
         note += PROGRESS_MISSING_TEMPLATE.format(missing=", ".join(missing))
@@ -120,7 +124,9 @@ def build_onboarding_graph(
             "context_messages": conversation_view,
             "collected_fields": merged_fields,
             "missing_fields": extraction.missing_fields,
+            "missing_optional_fields": extraction.missing_optional_fields,
             "is_complete": is_complete,
+            "is_done": is_complete and not extraction.missing_optional_fields,
         }
 
     def chatbot_node(state: OnboardingState) -> dict[str, list[BaseMessage]]:
@@ -184,4 +190,5 @@ def run_chatbot_turn(
         reply=extract_final_reply(result["messages"]),
         collected_fields=result["collected_fields"],
         is_complete=result.get("is_complete", False),
+        is_done=result.get("is_done", False),
     )

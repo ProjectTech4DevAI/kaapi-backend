@@ -25,6 +25,8 @@ class ChatbotTurnResult:
     collected_fields: dict[str, Any]
     is_complete: bool
     sources: list[ChatbotSource] = field(default_factory=list)
+    # Complete and no optional field left to ask; only this hands a sub-flow back to its coordinator.
+    is_done: bool = False
 
     @property
     def completion_status(self) -> ChatbotCompletionStatusEnum:
@@ -64,5 +66,5 @@ class TurnContext(NamedTuple):
     # Coordinator only: its routes and each target's node; the chosen target's settings load after routing.
     routes: list[CoordinatorRoute]
     route_target_nodes: dict[str, TurnNode]
-    # Agent behind a coordinator: where the session returns once the agent completes.
-    return_node_id: str | None
+    # Set when the active node is an agent behind the coordinator: the sub-flow the coordinator defaults to.
+    in_progress_node_id: str | None

@@ -433,6 +433,37 @@ class TestFieldExtraction:
 
         assert result.completion_status == expected_status
 
+    @pytest.mark.parametrize(
+        ("missing_optional_fields", "expected_is_done"),
+        [(["email"], False), ([], True)],
+        ids=["optional_missing", "nothing_missing"],
+    )
+    def test_done_only_when_no_optional_field_is_missing(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        missing_optional_fields: list[str],
+        expected_is_done: bool,
+    ) -> None:
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["Thanks! Want to add an email?"],
+                extractions=[
+                    FieldExtraction(
+                        collected_fields=extracted_fields({"name": "Asha"}),
+                        missing_fields=[],
+                        missing_optional_fields=missing_optional_fields,
+                        is_complete=True,
+                    )
+                ],
+            ),
+        )
+
+        result = _run_turn(history=[], user_message="I'm Asha")
+
+        assert result.completion_status == ChatbotCompletionStatusEnum.COMPLETE
+        assert result.is_done is expected_is_done
+
 
 class TestProgressNote:
     @pytest.mark.parametrize(
@@ -465,8 +496,19 @@ class TestProgressNote:
                 "Every required field is collected; confirm and wrap up as the "
                 "flow prompt describes.",
             ),
+            (
+                FieldExtraction(
+                    collected_fields=extracted_fields({"name": "Asha", "city": "Pune"}),
+                    missing_fields=[],
+                    missing_optional_fields=["email", "phone"],
+                    is_complete=True,
+                ),
+                f'{COLLECTED_PREFIX}{{"name": "Asha", "city": "Pune"}}. '
+                "Every required field is collected. Confirm them, then ask once for "
+                "these optional fields: email, phone; don't insist if the user declines.",
+            ),
         ],
-        ids=["collected_and_missing", "missing_only", "complete"],
+        ids=["collected_and_missing", "missing_only", "complete", "optional_missing"],
     )
     def test_note_follows_system_prompt_in_reply_call(
         self,

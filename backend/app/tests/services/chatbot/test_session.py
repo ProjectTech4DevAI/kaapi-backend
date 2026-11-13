@@ -1014,11 +1014,12 @@ class TestCoordinatorTurns:
             ScriptedChatModel(
                 replies=["You're enrolled!"],
                 extractions=[
+                    RouteDecision(intent="Enroll"),
                     FieldExtraction(
                         collected_fields=extracted_fields({"child": "Ravi"}),
                         missing_fields=[],
                         is_complete=True,
-                    )
+                    ),
                 ],
             ),
         )
@@ -1034,13 +1035,58 @@ class TestCoordinatorTurns:
 
         _process(chatbot_session, db)
 
-        assert chat_model.structured_output_schemas == [FieldExtraction]
+        assert chat_model.structured_output_schemas == [RouteDecision, FieldExtraction]
         [payload] = callbacks.payloads
         assert payload["data"]["node_id"] == ENROLL_NODE_ID
         assert payload["data"]["completion_status"] == "complete"
         stored = _reload(db, chatbot_session)
         assert stored.active_node_id == COORDINATOR_NODE_ID
         assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
+
+    def test_short_answer_without_a_matching_intent_continues_the_agent_in_progress(
+        self,
+        db: Session,
+        coordinator_chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["Thanks! How old is Ravi?"],
+                extractions=[
+                    RouteDecision(intent=None, clarifying_question=GREETING),
+                    FieldExtraction(
+                        collected_fields=extracted_fields({"child": "Ravi"}),
+                        missing_fields=["age"],
+                        is_complete=False,
+                    ),
+                ],
+            ),
+        )
+        chatbot_session = _coordinator_session(
+            db,
+            coordinator_chatbot,
+            [
+                (ChatbotMessageRoleEnum.ASSISTANT, "What's your child's name?"),
+                (ChatbotMessageRoleEnum.USER, "Ravi"),
+            ],
+            active_node_id=ENROLL_NODE_ID,
+        )
+
+        _process(chatbot_session, db)
+
+        assert callbacks.payloads == [
+            _success_webhook(
+                chatbot_session,
+                coordinator_chatbot,
+                reply="Thanks! How old is Ravi?",
+                node_id=ENROLL_NODE_ID,
+                collected_fields={"child": "Ravi"},
+            )
+        ]
+        assert ("assistant", GREETING) not in _transcript(db, chatbot_session)
+        assert _reload(db, chatbot_session).active_node_id == ENROLL_NODE_ID
 
     def test_entry_onboarding_flow_stays_on_its_node_after_completion(
         self,
@@ -1049,7 +1095,7 @@ class TestCoordinatorTurns:
         callbacks: CallbackRecorder,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        patch_chat_model(
+        chat_model = patch_chat_model(
             monkeypatch,
             ScriptedChatModel(
                 replies=["All set!"],
@@ -1068,6 +1114,8 @@ class TestCoordinatorTurns:
 
         _process(chatbot_session, db)
 
+        # No coordinator in the flow, so no routing call precedes the agent.
+        assert chat_model.structured_output_schemas == [FieldExtraction]
         stored = _reload(db, chatbot_session)
         assert stored.active_node_id == ONBOARDING_NODE_ID
         assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
@@ -1505,21 +1553,25 @@ class TestCoordinatorRagRoute:
         assert callbacks.payloads[-1]["data"]["node_id"] == APPLY_NODE_ID
         assert _reload(db, chatbot_session).active_node_id == APPLY_NODE_ID
 
-        sticky_model = patch_chat_model(
+        apply_model = patch_chat_model(
             monkeypatch,
             ScriptedChatModel(
                 replies=["You're registered!"],
                 extractions=[
+                    RouteDecision(intent="Apply"),
                     FieldExtraction(
                         collected_fields=extracted_fields({"name": "Asha"}),
                         missing_fields=[],
                         is_complete=True,
-                    )
+                    ),
                 ],
             ),
         )
         _ask(db, chatbot_session, "Asha")
-        assert sticky_model.structured_output_schemas == [FieldExtraction]
+        assert apply_model.structured_output_schemas == [
+            RouteDecision,
+            FieldExtraction,
+        ]
         assert callbacks.payloads[-1]["data"]["completion_status"] == "complete"
         stored = _reload(db, chatbot_session)
         assert stored.active_node_id == COORDINATOR_NODE_ID
@@ -1554,3 +1606,140 @@ class TestCoordinatorRagRoute:
             APPLY_NODE_ID,
             FAQ_NODE_ID,
         ]
+
+    def test_rag_detours_keep_registration_active_until_optional_fields_are_asked(
+        self,
+        db: Session,
+        callbacks: CallbackRecorder,
+        vector_stores: FakeVectorStores,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _credentials, project = create_test_credential(db)
+        chatbot, knowledge_base_id, _rag_config = _coordinator_with_rag_route(
+            db, project
+        )
+        vector_stores.hits[knowledge_base_id] = [
+            search_hit(file_id="file-fees", filename="fees.pdf", score=0.9)
+        ]
+        fees_source = [{"file_id": "file-fees", "filename": "fees.pdf"}]
+        in_progress_note = "The user is in the middle of 'Apply'."
+        chatbot_session = _coordinator_session(db, chatbot, [])
+
+        def _turn(
+            text: str | None, *, replies: list[Any], extractions: list[Any]
+        ) -> str:
+            chat_model = patch_chat_model(
+                monkeypatch, ScriptedChatModel(replies=replies, extractions=extractions)
+            )
+            if text is None:
+                _process(chatbot_session, db)
+            else:
+                _ask(db, chatbot_session, text)
+            return str(chat_model.extraction_calls[0][0].content)
+
+        _turn(
+            None,
+            replies=[],
+            extractions=[RouteDecision(intent=None, clarifying_question=GREETING)],
+        )
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session, chatbot, reply=GREETING, node_id=COORDINATOR_NODE_ID
+        )
+        assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
+
+        routing_prompt = _turn(
+            "I want to sign up",
+            replies=["What's your name and phone?"],
+            extractions=[RouteDecision(intent="Apply"), NOTHING_EXTRACTED],
+        )
+        assert in_progress_note not in routing_prompt
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session,
+            chatbot,
+            reply="What's your name and phone?",
+            node_id=APPLY_NODE_ID,
+        )
+        assert _reload(db, chatbot_session).active_node_id == APPLY_NODE_ID
+
+        routing_prompt = _turn(
+            "What are the fees?",
+            replies=[tool_call_reply("fees"), "Fees are 100."],
+            extractions=[RouteDecision(intent="Questions")],
+        )
+        assert in_progress_note in routing_prompt
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session,
+            chatbot,
+            reply="Fees are 100.",
+            node_id=FAQ_NODE_ID,
+            sources=fees_source,
+        )
+        assert _reload(db, chatbot_session).active_node_id == APPLY_NODE_ID
+
+        _turn(
+            "Asha, 98765",
+            replies=["Thanks Asha! Would you like to add an email?"],
+            extractions=[
+                RouteDecision(intent="Apply"),
+                FieldExtraction(
+                    collected_fields=extracted_fields(
+                        {"name": "Asha", "phone": "98765"}
+                    ),
+                    missing_fields=[],
+                    missing_optional_fields=["email"],
+                    is_complete=True,
+                ),
+            ],
+        )
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session,
+            chatbot,
+            reply="Thanks Asha! Would you like to add an email?",
+            node_id=APPLY_NODE_ID,
+            completion_status="complete",
+            collected_fields={"name": "Asha", "phone": "98765"},
+        )
+        assert _reload(db, chatbot_session).active_node_id == APPLY_NODE_ID
+
+        routing_prompt = _turn(
+            "When is the exam?",
+            replies=[tool_call_reply("exam date"), "The exam is in May."],
+            extractions=[RouteDecision(intent="Questions")],
+        )
+        assert in_progress_note in routing_prompt
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session,
+            chatbot,
+            reply="The exam is in May.",
+            node_id=FAQ_NODE_ID,
+            collected_fields={"name": "Asha", "phone": "98765"},
+            sources=fees_source,
+        )
+        assert _reload(db, chatbot_session).active_node_id == APPLY_NODE_ID
+
+        _turn(
+            "asha@example.com",
+            replies=["All set, Asha!"],
+            extractions=[
+                RouteDecision(intent="Apply"),
+                FieldExtraction(
+                    collected_fields=extracted_fields({"email": "asha@example.com"}),
+                    missing_fields=[],
+                    is_complete=True,
+                ),
+            ],
+        )
+        all_fields = {"name": "Asha", "phone": "98765", "email": "asha@example.com"}
+        assert callbacks.payloads[-1] == _success_webhook(
+            chatbot_session,
+            chatbot,
+            reply="All set, Asha!",
+            node_id=APPLY_NODE_ID,
+            completion_status="complete",
+            collected_fields=all_fields,
+        )
+        stored = _reload(db, chatbot_session)
+        assert stored.active_node_id == COORDINATOR_NODE_ID
+        assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
+        assert stored.collected_fields == all_fields
+        assert len(callbacks.payloads) == 6

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from app.services.chatbot.agents.coordinator.prompts import (
     FALLBACK_CLARIFYING_QUESTION,
+    IN_PROGRESS_TEMPLATE,
     ROUTES_TEMPLATE,
     ROUTING_INSTRUCTION,
 )
@@ -51,16 +52,24 @@ class CoordinatorDecision:
     clarifying_question: str | None
 
 
-def _build_routing_prompt(*, system_prompt: str, routes: list[CoordinatorRoute]) -> str:
+def _build_routing_prompt(
+    *,
+    system_prompt: str,
+    routes: list[CoordinatorRoute],
+    in_progress_intent: str | None,
+) -> str:
     route_lines = [
         f"- {route.intent}" + (f": {route.description}" if route.description else "")
         for route in routes
     ]
-    return (
+    prompt = (
         system_prompt
         + ROUTING_INSTRUCTION
         + ROUTES_TEMPLATE.format(routes="\n".join(route_lines))
     )
+    if in_progress_intent is not None:
+        prompt += IN_PROGRESS_TEMPLATE.format(intent=in_progress_intent)
+    return prompt
 
 
 def _decide_route(
@@ -96,12 +105,17 @@ def run_coordinator_turn(
     user_message: str | None,
     routes: list[CoordinatorRoute],
     model_settings: ChatbotModelSettings,
+    in_progress_intent: str | None = None,
 ) -> CoordinatorDecision:
-    """Classify the latest user message against `routes`, or return a clarifying question."""
+    """Classify the latest user message against `routes`, defaulting to `in_progress_intent`, else a clarifying question."""
     validate_turn_input(history=history, user_message=user_message)
 
     messages = to_langchain_messages(
-        system_prompt=_build_routing_prompt(system_prompt=system_prompt, routes=routes),
+        system_prompt=_build_routing_prompt(
+            system_prompt=system_prompt,
+            routes=routes,
+            in_progress_intent=in_progress_intent,
+        ),
         history=history,
         user_message=user_message,
     )
@@ -118,10 +132,13 @@ def run_coordinator_turn(
     # The opening turn has only the synthetic kickoff message, so it must never hand off.
     if user_message is not None:
         route = _match_route(decision.intent, routes)
+        # A sub-flow in progress keeps the message rather than interrupting it with a question.
+        if route is None:
+            route = _match_route(in_progress_intent, routes)
         if route is not None:
             logger.info(
                 f"[run_coordinator_turn] Routed | intent: {route.intent}, "
-                f"target_node_id: {route.target_node_id}"
+                f"model_intent: {decision.intent}, target_node_id: {route.target_node_id}"
             )
             return CoordinatorDecision(
                 target_node_id=route.target_node_id, clarifying_question=None

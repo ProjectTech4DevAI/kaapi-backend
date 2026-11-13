@@ -11,6 +11,8 @@ class OnboardingState(TypedDict):
     collected_fields: dict[str, Any]
     missing_fields: NotRequired[list[str]]
     is_complete: NotRequired[bool]
+    missing_optional_fields: NotRequired[list[str]]
+    is_done: NotRequired[bool]
 
 
 class ExtractedField(BaseModel):
@@ -28,6 +30,13 @@ class FieldExtraction(BaseModel):
     missing_fields: list[str] = Field(
         default_factory=list,
         description="snake_case names of required fields the user has not answered yet.",
+    )
+    missing_optional_fields: list[str] = Field(
+        default_factory=list,
+        description=(
+            "snake_case names of optional fields the flow prompt lists that the user has "
+            "not given, has not declined, and the assistant has not already asked for."
+        ),
     )
     is_complete: bool = Field(
         description="True only when no required field is missing.",
