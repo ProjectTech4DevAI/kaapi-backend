@@ -9,17 +9,17 @@ from enum import StrEnum
 import sentry_sdk
 from opentelemetry import trace
 
-logger = logging.getLogger(__name__)
-
-_log_context_var: ContextVar[dict[str, str] | None] = ContextVar(
-    "kaapi_log_context", default=None
-)
-
 from app.core.telemetry.constants import (
     LOG_LOCATION_FIELD,
     LOG_MODULE_FIELD,
     TENANT_ORG_ID,
     TENANT_PROJECT_ID,
+)
+
+logger = logging.getLogger(__name__)
+
+_log_context_var: ContextVar[dict[str, str] | None] = ContextVar(
+    "kaapi_log_context", default=None
 )
 
 

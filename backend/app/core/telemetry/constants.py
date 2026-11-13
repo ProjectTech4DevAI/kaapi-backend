@@ -4,6 +4,9 @@ Only keys used in more than one place, or that dashboards and alerts filter on, 
 A key used in a single file stays as a string at that call site.
 """
 
+from opentelemetry.semconv._incubating.attributes.db_attributes import (  # noqa: F401  (re-exported)
+    DB_SYSTEM,
+)
 from opentelemetry.semconv._incubating.attributes.gen_ai_attributes import (  # noqa: F401  (re-exported)
     GEN_AI_OPERATION_NAME,
     GEN_AI_PROVIDER_NAME,
@@ -18,9 +21,6 @@ from opentelemetry.semconv._incubating.attributes.gen_ai_attributes import (  # 
     GEN_AI_USAGE_INPUT_TOKENS,
     GEN_AI_USAGE_OUTPUT_TOKENS,
     GEN_AI_USAGE_REASONING_OUTPUT_TOKENS,
-)
-from opentelemetry.semconv._incubating.attributes.db_attributes import (  # noqa: F401  (re-exported)
-    DB_SYSTEM,
 )
 from opentelemetry.semconv._incubating.attributes.http_attributes import (  # noqa: F401  (re-exported)
     HTTP_REQUEST_BODY_SIZE,
