@@ -190,7 +190,7 @@ def start_job(
             job_update = JobUpdate(status=JobStatus.FAILED, error_message=str(e))
             job_crud.update(job_id=job.id, job_update=job_update)
             raise HTTPException(
-                status_code=500, detail="Internal server error while executing LLM call"
+                status_code=503, detail="Could not queue the LLM call. Retry shortly."
             )
 
         _set_traceability_attributes(span, task_id=str(task_id))
@@ -251,8 +251,8 @@ def start_chain_job(
             job_update = JobUpdate(status=JobStatus.FAILED, error_message=str(e))
             job_crud.update(job_id=job.id, job_update=job_update)
             raise HTTPException(
-                status_code=500,
-                detail="Internal server error while executing LLM chain job",
+                status_code=503,
+                detail="Could not queue the LLM chain job. Retry shortly.",
             )
 
         _set_traceability_attributes(span, task_id=str(task_id))
@@ -1433,7 +1433,8 @@ def execute_llm_call(
     except (Timeout, SoftTimeLimitExceeded):
         raise
     except HTTPException as e:
-        logger.error(
+        log = logger.error if e.status_code >= 500 else logger.warning
+        log(
             f"[execute_llm_call] HTTP error: {e.detail} | job_id={job_id}",
             exc_info=True,
         )

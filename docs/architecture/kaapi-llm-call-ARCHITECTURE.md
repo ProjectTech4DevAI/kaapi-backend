@@ -89,7 +89,7 @@ backend/app/
 │
 ├── celery/
 │   ├── tasks/job_execution.py     run_llm_job (high_priority, priority=9, soft timeout)
-│   └── utils.py                   start_llm_job() — enqueue with OTel trace headers
+│   └── utils.py                   start_llm_job() — enqueue; OTel's Celery instrumentation carries the trace
 
 > **Worker concurrency model:** Celery currently runs with the **prefork** pool.
 > Gevent is being evaluated and will replace prefork once validated in production.
@@ -518,7 +518,7 @@ erDiagram
 
 ## 9. Observability
 
-Three layers, all keyed off the same `trace_id` (the request `correlation_id`, propagated to Celery via injected OTel headers):
+Three layers, all keyed off the same `trace_id` (the request `correlation_id`, passed to Celery as the task's `trace_id` argument; the OTel trace itself is carried by the Celery instrumentation):
 
 ```mermaid
 flowchart TD

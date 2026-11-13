@@ -25,7 +25,7 @@ All paths relative to `backend/app/`.
 - `services/collections/` — `create_collection.py`, `delete_collection.py`, `providers/`, `helpers.py`
 - `services/documents/` — `helpers.py` (v1 upload path), `registration.py` (v2 upload policy), `validator.py`
 - `services/doctransform/` — `job.py`, `registry.py`, `transformer.py`, `zerox_transformer.py`
-- `crud/collection/`, `crud/document/`, `crud/document_collection.py`, `crud/rag/`, `crud/file.py`
+- `crud/collection/`, `crud/document/`, `crud/document_collection.py`, `crud/rag/` (`OpenAIVectorStoreCrud`: create/read/update/delete + `search`, used by the chatbot rag agent), `crud/file.py`
 
 ## Async
 - Collection create/delete and doc transforms run as Celery jobs (`collection_job`, `doc_transformation_job` track state).

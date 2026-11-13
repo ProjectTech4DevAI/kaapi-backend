@@ -25,6 +25,9 @@ class ChatbotModelSettings:
     reasoning_effort: AnthropicEffort | None = None
     thinking: dict[str, Any] = field(default_factory=default_thinking)
     history_token_limit: int = DEFAULT_HISTORY_TOKEN_LIMIT
+    instructions: str | None = None
+    knowledge_base_ids: tuple[str, ...] = ()
+    max_num_results: int | None = None
     api_key: str = field(default="", repr=False, compare=False)
 
 

@@ -1,16 +1,16 @@
 import logging
 from uuid import UUID
 
+from fastapi import HTTPException
 from sqlmodel import Session, and_, col, select
 
+from app.core.util import now
 from app.models import (
     DocTransformationJob,
     DocTransformJobCreate,
     DocTransformJobUpdate,
 )
 from app.models.document import Document
-from app.core.util import now
-from app.core.exception_handlers import HTTPException
 
 logger = logging.getLogger(__name__)
 

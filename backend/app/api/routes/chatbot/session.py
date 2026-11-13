@@ -15,6 +15,7 @@ from app.crud.chatbot import (
 )
 from app.models import (
     CONTACT_REF_MAX_LENGTH,
+    ChatbotFlowNodeTypeEnum,
     ChatbotMessageRoleEnum,
     ChatbotSessionStatusEnum,
     ChatbotSessionSummary,
@@ -23,7 +24,9 @@ from app.models import (
     SendChatbotSessionMessageRequest,
     SendChatbotSessionMessageResponse,
 )
+from app.services.chatbot.exceptions import RAG_MESSAGE_REQUIRED_MESSAGE
 from app.services.chatbot.session import (
+    get_active_node_type,
     get_latest_chatbot_session_summary,
     start_chatbot_session,
 )
@@ -110,6 +113,12 @@ def send_chatbot_session_message(
         )
 
     if request.message is None:
+        # A rag node only answers questions, so there is no opening greeting to fetch.
+        if (
+            get_active_node_type(session, chatbot_session=chatbot_session)
+            == ChatbotFlowNodeTypeEnum.RAG
+        ):
+            raise HTTPException(status_code=422, detail=RAG_MESSAGE_REQUIRED_MESSAGE)
         if list_chatbot_session_messages(session, session_id=session_id):
             raise HTTPException(
                 status_code=422,

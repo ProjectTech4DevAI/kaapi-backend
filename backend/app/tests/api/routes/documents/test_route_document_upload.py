@@ -320,7 +320,7 @@ class TestDocumentRouteUpload:
 
         try:
             response = uploader.put(route, unsupported_file, target_format="markdown")
-            assert response.status_code == 400
+            assert response.status_code == 422
             error_data = response.json()
             assert "Unsupported file extension: .xyz" in error_data["error"]
         finally:

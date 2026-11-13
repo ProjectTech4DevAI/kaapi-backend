@@ -307,6 +307,27 @@ class TestOpenAIVectorStoreCrudUpdateOpenAIExceptions:
         assert "something else" in msg, msg
 
 
+class TestOpenAIVectorStoreCrudSearch:
+    def test_returns_the_page_hits_for_the_query(self, crud, mock_client):
+        hits = [MagicMock(file_id="file-1"), MagicMock(file_id="file-2")]
+        mock_client.vector_stores.search.return_value = MagicMock(data=hits)
+
+        results = crud.search("vs_fees", query="tuition", max_num_results=5)
+
+        assert results == hits
+        mock_client.vector_stores.search.assert_called_once_with(
+            "vs_fees", query="tuition", max_num_results=5
+        )
+
+    def test_openai_errors_propagate_to_the_caller(self, crud, mock_client):
+        mock_client.vector_stores.search.side_effect = openai.APIConnectionError(
+            request=MagicMock()
+        )
+
+        with pytest.raises(openai.APIConnectionError):
+            crud.search("vs_fees", query="tuition", max_num_results=5)
+
+
 class TestOpenAIVectorStoreCrudInit:
     """The base OpenAICrud init rejects a None client; subclasses inherit it."""
 

@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
@@ -8,6 +9,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable, RunnableLambda
+from openai.types import VectorStoreSearchResponse
+from openai.types.vector_store_search_response import Content
 from pydantic import Field
 from sqlmodel import Session, select
 
@@ -36,6 +39,7 @@ from app.models import (
 )
 from app.models.provider_credentials import Provider
 from app.services.chatbot.agents.onboarding import graph as onboarding_graph
+from app.services.chatbot.agents.rag import graph as rag_graph
 from app.services.chatbot.agents.onboarding.types import (
     ExtractedField,
     FieldExtraction,
@@ -98,7 +102,8 @@ NOTHING_EXTRACTED = FieldExtraction(
 class ScriptedChatModel(BaseChatModel):
     """Stands in for ChatAnthropic: replies from a script and records each call."""
 
-    replies: list[str] = Field(default_factory=list)
+    # A str becomes a plain AIMessage; pass an AIMessage to script tool calls.
+    replies: list[str | AIMessage] = Field(default_factory=list)
     token_count: int = 0
     error: Exception | None = None
     calls: list[list[BaseMessage]] = Field(default_factory=list)
@@ -107,6 +112,9 @@ class ScriptedChatModel(BaseChatModel):
     extractions: list[Any] = Field(default_factory=list)
     extraction_calls: list[list[BaseMessage]] = Field(default_factory=list)
     structured_output_methods: list[str | None] = Field(default_factory=list)
+    # tool_choice each call was bound with (None = unbound or default "auto").
+    call_tool_choices: list[Any] = Field(default_factory=list)
+    bound_tool_names: list[list[str]] = Field(default_factory=list)
 
     @property
     def _llm_type(self) -> str:
@@ -120,10 +128,18 @@ class ScriptedChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         self.calls.append(list(messages))
+        self.call_tool_choices.append(kwargs.get("tool_choice"))
         if self.error is not None:
             raise self.error
-        reply = AIMessage(content=self.replies.pop(0))
+        scripted = self.replies.pop(0)
+        reply = scripted if isinstance(scripted, AIMessage) else AIMessage(scripted)
         return ChatResult(generations=[ChatGeneration(message=reply)])
+
+    def bind_tools(
+        self, tools: Sequence[Any], *, tool_choice: Any = None, **kwargs: Any
+    ) -> Runnable[Any, BaseMessage]:
+        self.bound_tool_names.append([tool.name for tool in tools])
+        return self.bind(tool_choice=tool_choice)
 
     def get_num_tokens_from_messages(
         self, messages: list[BaseMessage], tools: Sequence[Any] | None = None
@@ -149,10 +165,26 @@ def patch_chat_model(
     monkeypatch: pytest.MonkeyPatch, chat_model: ScriptedChatModel
 ) -> ScriptedChatModel:
     # The Anthropic SDK is the external boundary; everything above it runs for real.
-    monkeypatch.setattr(
-        onboarding_graph, "get_chat_model", lambda _settings: chat_model
-    )
+    for graph_module in (onboarding_graph, rag_graph):
+        monkeypatch.setattr(
+            graph_module, "get_chat_model", lambda _settings: chat_model
+        )
     return chat_model
+
+
+def tool_call_reply(*queries: str, text: str = "") -> AIMessage:
+    """An agent reply that calls the knowledge-base search once per query."""
+    return AIMessage(
+        content=text,
+        tool_calls=[
+            {
+                "name": "search_knowledge_base",
+                "args": {"query": query},
+                "id": f"toolu_{index}_{query.replace(' ', '_')}",
+            }
+            for index, query in enumerate(queries)
+        ],
+    )
 
 
 def create_test_anthropic_credential(
@@ -307,6 +339,51 @@ def create_test_live_chatbot(
         is_live=True,
     )
     return chatbot, flow_version
+
+
+def search_hit(
+    *, file_id: str, filename: str, score: float, texts: Sequence[str] = ("text",)
+) -> VectorStoreSearchResponse:
+    return VectorStoreSearchResponse(
+        attributes=None,
+        content=[Content(text=text, type="text") for text in texts],
+        file_id=file_id,
+        filename=filename,
+        score=score,
+    )
+
+
+@dataclass
+class _SearchPage:
+    data: list[VectorStoreSearchResponse]
+
+
+@dataclass
+class FakeVectorStores:
+    hits: dict[str, list[VectorStoreSearchResponse]] = field(default_factory=dict)
+    error: Exception | None = None
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    def search(
+        self, vector_store_id: str, *, query: str, max_num_results: int
+    ) -> _SearchPage:
+        self.calls.append(
+            {
+                "vector_store_id": vector_store_id,
+                "query": query,
+                "max_num_results": max_num_results,
+            }
+        )
+        if self.error is not None:
+            raise self.error
+        return _SearchPage(data=list(self.hits.get(vector_store_id, [])))
+
+
+@dataclass
+class FakeOpenAIClient:
+    """Stands in for openai.OpenAI; only vector-store search is used by the rag agent."""
+
+    vector_stores: FakeVectorStores = field(default_factory=FakeVectorStores)
 
 
 def create_test_chatbot_session(

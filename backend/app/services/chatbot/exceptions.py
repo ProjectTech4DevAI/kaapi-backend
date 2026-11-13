@@ -4,6 +4,10 @@ CONCURRENT_SESSION_CONFLICT_MESSAGE = (
 CONCURRENT_FLOW_CONFLICT_MESSAGE = (
     "The chatbot flow was changed concurrently; reload the flow and retry"
 )
+RAG_MESSAGE_REQUIRED_MESSAGE = (
+    "[KAAPI] `message` is required for a rag node: it only answers the user's "
+    "questions and has no opening greeting."
+)
 
 
 class ChatbotInputError(ValueError):

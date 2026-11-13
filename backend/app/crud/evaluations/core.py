@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from typing import Any, cast
 from uuid import UUID
 
+from asgi_correlation_id import correlation_id
 from langfuse import Langfuse
 from sqlmodel import Session, col, select
 
@@ -17,8 +18,8 @@ from app.crud.evaluations.score import (
     EvaluationScore,
 )
 from app.models import EvaluationRun, EvaluationRunUpdate
-from app.models.evaluation import RunModeEnum, TraceData
 from app.models.config.config import ConfigTag
+from app.models.evaluation import RunModeEnum, TraceData
 from app.models.llm.request import ConfigBlob, LLMCallConfig
 from app.models.stt_evaluation import EvaluationType
 from app.services.llm.jobs import resolve_config_blob
@@ -285,9 +286,14 @@ def _enqueue_eval_completion_notification(eval_run: EvaluationRun) -> None:
     back through `app.crud` package init.
     """
     try:
-        from app.celery.tasks.job_execution import send_eval_completion_notification
+        from app.celery.tasks.job_execution import (
+            DEFAULT_TRACE_ID,
+            send_eval_completion_notification,
+        )
 
-        send_eval_completion_notification.delay(eval_run.id)
+        send_eval_completion_notification.delay(
+            eval_run.id, trace_id=correlation_id.get() or DEFAULT_TRACE_ID
+        )
         logger.info(
             f"[update_evaluation_run] Enqueued completion notification | "
             f"evaluation_id={eval_run.id} | status={eval_run.status}"
@@ -302,9 +308,14 @@ def _enqueue_eval_completion_notification(eval_run: EvaluationRun) -> None:
 
 def _enqueue_eval_completion_callback(eval_run: EvaluationRun) -> None:
     try:
-        from app.celery.tasks.job_execution import send_eval_completion_callback
+        from app.celery.tasks.job_execution import (
+            DEFAULT_TRACE_ID,
+            send_eval_completion_callback,
+        )
 
-        send_eval_completion_callback.delay(eval_run.id)
+        send_eval_completion_callback.delay(
+            eval_run.id, trace_id=correlation_id.get() or DEFAULT_TRACE_ID
+        )
     except Exception as e:
         logger.error(
             f"[update_evaluation_run] Failed to enqueue completion callback | "

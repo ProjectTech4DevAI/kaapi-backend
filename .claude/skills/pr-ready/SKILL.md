@@ -1,6 +1,6 @@
 ---
 name: pr-ready
-description: "Use when writing or updating a PR body. Produces Summary (visual), Evidence (before/after), and Merge Danger (door + blast radius) sections."
+description: "Use when writing or updating a PR body. Produces What Changed (bullet summary), Summary (visual), Evidence (before/after), and Merge Danger (door + blast radius) sections."
 metadata:
   credits:
     skill: show-me
@@ -12,6 +12,10 @@ metadata:
 Use this template for writing the PR body:
 
 ```markdown
+## What Changed
+
+- <3-5 bullets, one change each>
+
 ## Summary
 
 <diagram, diff-sketch, or tree>
@@ -35,6 +39,10 @@ Use this template for writing the PR body:
 ## Sections
 
 Skip all preambles and keep prose brief. Use the user's domain language from `GLOSSARY.md`.
+
+### What Changed
+
+The 30-second read for a reviewer. 3-5 bullets, one change per bullet, most important first. Name the concrete thing (field, function, default, dependency), not the file. Show old → new values inline (`threshold 0.9 → 0.5`). Call out removed or renamed fields in **bold**. End with one headline number if there is evidence (e.g. `F1 0.74 → 0.85`). No rationale paragraphs; that goes in Summary or Merge Danger.
 
 ### Summary
 

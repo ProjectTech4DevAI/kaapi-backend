@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from httpx import Response
 from sqlmodel import Session
 
-from app.models import Chatbot, Config
+from app.models import Chatbot, Config, Project
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.chatbot import (
     CHATBOTS_URL,
@@ -27,6 +27,7 @@ from app.tests.utils.chatbot import (
     random_contact_ref,
     sessions_url,
 )
+from app.tests.utils.collection import get_vector_store_collection
 from app.tests.utils.test_data import create_test_config
 
 INVALID_FLOW_PREFIX = "[KAAPI] Chatbot flow is invalid: "
@@ -430,6 +431,33 @@ class TestPublishChatbotFlow:
         assert previous.is_live is False
         assert published.is_live is True
 
+    def test_rag_node_with_knowledge_bases_publishes_as_entry_node(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        chatbot: Chatbot,
+        save: Callable[..., Response],
+        publish: Callable[[], Response],
+        live_v1: dict[str, Any],
+    ) -> None:
+        project = db.get(Project, user_api_key.project_id)
+        assert project is not None
+        collection = get_vector_store_collection(db, project)
+        rag_config = create_test_anthropic_config(
+            db,
+            project_id=user_api_key.project_id,
+            knowledge_base_ids=[collection.knowledge_base_id],
+        )
+        save([build_onboarding_node(config_id=rag_config.id, node_type="rag")])
+
+        resp = publish()
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["version"] == 2
+        _, stored = list_stored_flow_versions(db, chatbot)
+        assert (stored.version, stored.is_live) == (2, True)
+        assert stored.nodes[0]["type"] == "rag"
+
     def test_missing_config_version_is_pinned_to_latest_and_stored(
         self,
         db: Session,
@@ -585,9 +613,10 @@ INVALID_FLOW_CASES: dict[str, tuple[FlowBuilder, str]] = {
         ),
         f"node '{ONBOARDING_NODE_ID}' has type 'coordinator', which is not supported yet",
     ),
-    "rag-node": (
+    "rag-node-without-knowledge-bases": (
         lambda cid: ([build_onboarding_node(config_id=cid, node_type="rag")], []),
-        f"node '{ONBOARDING_NODE_ID}' has type 'rag', which is not supported yet",
+        f"node '{ONBOARDING_NODE_ID}': The rag agent needs a config with non-empty "
+        "completion.params.knowledge_base_ids",
     ),
     "missing-config-id": (
         lambda cid: ([build_onboarding_node(config_id=None)], []),

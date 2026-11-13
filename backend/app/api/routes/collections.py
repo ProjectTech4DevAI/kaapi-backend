@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Body, Depends
 from fastapi import Path as FastPath
 
 from app.api.deps import SessionDep, AuthContextDep
+from app.crud.collection.collection import CollectionNameConflictError
 from app.api.permissions import Permission, require_permission
 from app.core.telemetry import log_context
 from app.core.rate_monitor import monitor_rate
@@ -14,7 +15,6 @@ from app.crud import (
     CollectionJobCrud,
     DocumentCollectionCrud,
 )
-from app.crud.collection.collection import CollectionNameConflictError
 from app.core.cloud import get_cloud_storage
 from app.models import (
     CollectionJobStatus,

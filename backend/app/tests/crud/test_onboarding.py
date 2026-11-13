@@ -1,6 +1,8 @@
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
+
 
 from app.crud.onboarding import onboard_project
 from app.crud import (
@@ -19,7 +21,11 @@ from app.models import (
     APIKey,
     Credential,
 )
-from app.tests.utils.utils import random_lower_string, random_email
+from app.tests.utils.utils import (
+    make_integrity_error,
+    random_email,
+    random_lower_string,
+)
 from app.tests.utils.test_data import create_test_organization, create_test_project
 from app.tests.utils.user import create_random_user
 
@@ -289,3 +295,51 @@ def test_onboard_project_response_data_integrity(db: Session) -> None:
     assert project.name == response.project_name
     assert project.organization_id == response.organization_id
     assert user.email == response.user_email
+
+
+def test_onboard_kms_failure_raises_502(db: Session, monkeypatch) -> None:
+    """A KMS outage while encrypting credentials is upstream, not our bug."""
+    monkeypatch.setattr(
+        "app.crud.onboarding.encrypt_credentials",
+        lambda _: (_ for _ in ()).throw(
+            HTTPException(status_code=502, detail="kms down")
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        onboard_project(
+            session=db,
+            onboard_in=OnboardingRequest(
+                organization_name=random_lower_string(),
+                project_name=random_lower_string(),
+                email=random_email(),
+                user_name=random_lower_string(),
+                password=random_lower_string(),
+                credentials=[{"openai": {"api_key": "sk-test"}}],
+            ),
+        )
+
+    assert exc.value.status_code == 502
+
+
+def test_onboard_concurrent_commit_conflict_propagates(
+    db: Session, monkeypatch
+) -> None:
+    """A commit-time unique violation reaches the central DB handler (409)."""
+
+    def _raise_integrity_error() -> None:
+        raise make_integrity_error("23505")
+
+    monkeypatch.setattr(db, "commit", _raise_integrity_error)
+
+    with pytest.raises(IntegrityError):
+        onboard_project(
+            session=db,
+            onboard_in=OnboardingRequest(
+                organization_name=random_lower_string(),
+                project_name=random_lower_string(),
+                email=random_email(),
+                user_name=random_lower_string(),
+                password=random_lower_string(),
+            ),
+        )
