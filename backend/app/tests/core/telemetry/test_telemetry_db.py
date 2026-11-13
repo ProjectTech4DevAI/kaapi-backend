@@ -253,7 +253,7 @@ class TestInstrumentDbEngine:
         rows_calls = [
             c
             for c in span.set_attribute.call_args_list
-            if c.args[0] == telemetry.DB_ROWS_ATTRIBUTE
+            if c.args[0] == telemetry.DB_ROWS_AFFECTED
         ]
         assert rows_calls
         assert 1 in [c.args[1] for c in rows_calls]

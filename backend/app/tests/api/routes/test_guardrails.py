@@ -9,6 +9,12 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from app.core.config import settings
+from app.core.telemetry.constants import (
+    CALLBACK_ENABLED,
+    JOB_ID,
+    TENANT_ORG_ID,
+    TENANT_PROJECT_ID,
+)
 from app.crud import JobCrud
 from app.models import Job, JobStatus, JobType, JobUpdate
 from app.services.llm.guardrails import EXPOSED_VALIDATOR_TYPES
@@ -145,6 +151,30 @@ def test_apply_guardrails_callback_variant_message(
     assert resp.status_code == 200
     assert "callback" in resp.json()["data"]["message"].lower()
     mock_validate.assert_called_once_with("https://example.com/cb")
+
+
+def test_apply_guardrails_sets_tenant_and_job_span_attributes(
+    client: TestClient,
+    user_api_key_header: dict[str, str],
+    user_api_key: TestAuthContext,
+) -> None:
+    span = MagicMock()
+    span.is_recording.return_value = True
+    job = _stub_job()
+
+    with (
+        patch("app.api.routes.guardrails.start_job", return_value=job),
+        patch("app.api.routes.guardrails.trace.get_current_span", return_value=span),
+    ):
+        resp = client.post(
+            "api/v1/guardrails", json=_payload(), headers=user_api_key_header
+        )
+
+    assert resp.status_code == 200
+    span.set_attribute.assert_any_call(TENANT_PROJECT_ID, str(user_api_key.project_id))
+    span.set_attribute.assert_any_call(TENANT_ORG_ID, str(user_api_key.organization_id))
+    span.set_attribute.assert_any_call(CALLBACK_ENABLED, False)
+    span.set_attribute.assert_any_call(JOB_ID, str(job.id))
 
 
 def test_apply_guardrails_invalid_callback_url_rejected(

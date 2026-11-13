@@ -6,6 +6,11 @@ from typing import Literal
 
 import sentry_sdk
 
+from app.core.telemetry.constants import (
+    ALERT_TYPE,
+    TENANT_PROJECT_ID,
+)
+
 logger = logging.getLogger(__name__)
 
 MetricType = Literal["count", "gauge", "distribution"]
@@ -96,9 +101,9 @@ def record_rate_threshold(
         if not sentry_sdk.get_client().is_active():
             return
         with sentry_sdk.new_scope() as scope:
-            scope.set_tag("alert.type", "threshold_rate_monitor")
-            scope.set_tag("tenant.project_id", project_id)
-            scope.set_tag("route_category", category)
+            scope.set_tag(ALERT_TYPE, "threshold_rate_monitor")
+            scope.set_tag(TENANT_PROJECT_ID, str(project_id))
+            scope.set_tag("http.route_category", category)
             scope.set_extra("request_count", request_count)
             scope.set_extra("threshold", threshold)
             sentry_sdk.capture_message(

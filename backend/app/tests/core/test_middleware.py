@@ -256,6 +256,41 @@ class TestBodySizeSpanAttribute:
         assert span.attributes is not None
         assert span.attributes["http.request.body.size"] == 2048
 
+    @pytest.mark.asyncio
+    async def test_mock_recording_span_and_sentry_get_constant_keys(self) -> None:
+        from asgi_correlation_id import correlation_id
+
+        from app.core.middleware import _log_http_request
+        from app.core.telemetry.constants import (
+            CORRELATION_ID,
+            HTTP_METHOD,
+            HTTP_REQUEST_BODY_SIZE,
+        )
+
+        span = MagicMock()
+        span.is_recording.return_value = True
+        fake = _active_sentry()
+
+        async def call_next(_: Request) -> Response:
+            return Response(status_code=200)
+
+        token = correlation_id.set("req-123")
+        try:
+            with (
+                patch.object(middleware.trace, "get_current_span", return_value=span),
+                patch.object(middleware, "sentry_sdk", fake),
+                patch.object(metrics, "sentry_sdk", fake),
+            ):
+                await _log_http_request(
+                    _build_request({"content-length": "64"}), call_next
+                )
+        finally:
+            correlation_id.reset(token)
+
+        span.set_attribute.assert_any_call(HTTP_REQUEST_BODY_SIZE, 64)
+        fake.set_tag.assert_any_call(HTTP_METHOD, "POST")
+        fake.set_tag.assert_any_call(CORRELATION_ID, "req-123")
+
 
 class TestSentryBodySizeMetric:
     @pytest.mark.asyncio

@@ -26,10 +26,10 @@ class TestRecordLlmCallMetrics:
                 "openai", "gpt-4o", "chat", organization_id=1, project_id=2
             )
 
-        attrs = _metric_calls(fake)["llm.call.total"]["attributes"]
+        attrs = _metric_calls(fake)["llm.call.count"]["attributes"]
         assert attrs["gen_ai.system"] == "openai"
-        assert attrs["kaapi.organization_id"] == "1"
-        assert attrs["kaapi.project_id"] == "2"
+        assert attrs["tenant.org_id"] == "1"
+        assert attrs["tenant.project_id"] == "2"
 
     def test_finished_emits_duration_tokens_and_error(self) -> None:
         fake = _active_sentry()
@@ -47,11 +47,11 @@ class TestRecordLlmCallMetrics:
 
         names = _metric_calls(fake)
         assert names["llm.call.duration"]["value"] == 120.5
-        assert names["llm.call.errors"]["value"] == 1
+        assert names["llm.call.error"]["value"] == 1
         assert names["llm.tokens.input"]["value"] == 10
         assert names["llm.tokens.output"]["value"] == 20
         assert names["llm.tokens.total"]["value"] == 30
-        assert "kaapi.organization_id" not in names["llm.call.duration"]["attributes"]
+        assert "tenant.org_id" not in names["llm.call.duration"]["attributes"]
 
 
 class TestGenAiSpanAttributes:
@@ -68,7 +68,7 @@ class TestGenAiSpanAttributes:
         )
         set_calls = {c.args[0]: c.args[1] for c in span.set_attribute.call_args_list}
         assert set_calls["gen_ai.request.model"] == "gpt-4o"
-        assert set_calls["kaapi.organization_id"] == 1
+        assert set_calls["tenant.org_id"] == "1"
         assert set_calls["gen_ai.request.temperature"] == 0.2
         assert "gen_ai.request.max_tokens" not in set_calls
         assert set_calls["gen_ai.request.available_tools"] == '[{"name": "t"}]'

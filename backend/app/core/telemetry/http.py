@@ -1,5 +1,10 @@
 """HTTP request metrics (count, duration, body size, errors) emitted from core/middleware.py."""
 
+from app.core.telemetry.constants import (
+    HTTP_METHOD,
+    HTTP_ROUTE,
+    HTTP_STATUS_CODE,
+)
 from app.core.telemetry.metrics import emit_sentry_metric
 
 HTTP_ERROR_STATUS_THRESHOLD: int = 400
@@ -16,9 +21,9 @@ def record_http_request(
 ) -> None:
     """Emit HTTP traffic, latency, payload-size and error counters to Sentry."""
     attrs: dict[str, str | int | float] = {
-        "http.method": method,
-        "http.route": http_route,
-        "http.status_code": str(status),
+        HTTP_METHOD: method,
+        HTTP_ROUTE: http_route,
+        HTTP_STATUS_CODE: str(status),
     }
     emit_sentry_metric("count", "http.server.request.count", 1, attributes=attrs)
     emit_sentry_metric(
@@ -45,5 +50,5 @@ def record_unmatched_request(*, method: str) -> None:
         "count",
         "http.server.request.unmatched",
         1,
-        attributes={"http.method": method},
+        attributes={HTTP_METHOD: method},
     )
