@@ -2,6 +2,7 @@
 Utility functions for easy Celery integration across the application.
 Business logic modules can use these functions without knowing Celery internals.
 """
+
 import logging
 import functools
 from typing import Any, Dict, TypeVar
@@ -9,6 +10,7 @@ from collections.abc import Callable
 
 from celery.result import AsyncResult
 from gevent import Timeout
+from opentelemetry import propagate
 
 from app.celery.celery_app import celery_app
 
@@ -30,6 +32,25 @@ def start_llm_job(project_id: int, job_id: str, trace_id: str = "N/A", **kwargs)
     ).id
     logger.info(f"[start_llm_job] Started job {job_id} with Celery task {task_id}")
     return task_id
+
+
+def start_duplicate_detection(assessment_id: str, trace_id: str = "N/A") -> str:
+    from app.celery.tasks.job_execution import (
+        fail_duplicate_detection,
+        run_duplicate_detection,
+    )
+
+    kwargs = {"assessment_id": assessment_id, "trace_id": trace_id}
+
+    # The worker's parent sends the failure task outside any span, so the request's
+    # trace context travels as an argument for that task to continue.
+    trace_headers: dict[str, str] = {}
+    propagate.inject(trace_headers)
+
+    return run_duplicate_detection.apply_async(
+        kwargs=kwargs,
+        link_error=fail_duplicate_detection.s(**kwargs, trace_headers=trace_headers),
+    ).id
 
 
 def start_llm_chain_job(

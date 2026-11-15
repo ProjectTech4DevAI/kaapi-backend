@@ -1,0 +1,274 @@
+"""Duplicate detector: the Google GCP provider plus RAG Engine search.
+
+Network only: the caller resolves configs and credentials first, so no database
+connection is held while a provider call is in flight.
+"""
+
+import logging
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
+
+import requests
+from google.auth.transport.requests import AuthorizedSession
+from google.genai import types as genai_types
+from opentelemetry import context as otel_context
+from opentelemetry import trace
+from opentelemetry.sdk.trace import ReadableSpan
+from opentelemetry.trace import NonRecordingSpan, Status, StatusCode
+from pydantic import BaseModel, ValidationError
+
+from app.core.cloud.storage import build_gcp_sa_credentials
+from app.core.config import settings
+from app.core.telemetry import (
+    set_gen_ai_request_attributes,
+    set_gen_ai_response_attributes,
+)
+from app.models.assessment.duplicate_detection import (
+    DetectionErrors,
+    DetectionLevel,
+    DuplicateDetectionResult,
+    LenientMatch,
+    StrictVerdict,
+)
+from app.models.config.assessment_blob import AssessmentConfigBlob
+from app.models.llm import NativeCompletionConfig, QueryParams
+from app.models.llm.request import CompletionType
+from app.services.assessment.api.batch import PipelineStage, stage_params, stage_prompt
+from app.services.assessment.validators import normalize_llm_text
+from app.services.llm.mappers import map_kaapi_to_google_params
+from app.services.llm.providers.google_gcp import GoogleGCPClient, GoogleGCPProvider
+
+logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
+
+MS_PER_SECOND = 1000
+LLM_OPERATION = "chat"
+
+
+class _LenientOutput(BaseModel):
+    matches: list[LenientMatch]
+
+
+class DuplicateDetector(GoogleGCPProvider):
+    """Runs the strict and lenient checks: search the corpus, ask the model, validate."""
+
+    def __init__(self, client: GoogleGCPClient):
+        super().__init__(client)
+        self._http = AuthorizedSession(build_gcp_sa_credentials(client.sa_info))
+
+    def close(self) -> None:
+        self._http.close()
+        self.client.genai.close()
+
+    @staticmethod
+    def _build_text_config(params: dict[str, Any]) -> genai_types.GenerateContentConfig:
+        """The provider's config plus the temperature and a short per-call timeout."""
+        config = GoogleGCPProvider._build_text_config(params)
+
+        config.temperature = params.get("temperature")
+        config.http_options = genai_types.HttpOptions(
+            timeout=settings.DEDUP_MODEL_TIMEOUT * MS_PER_SECOND,
+            retry_options=genai_types.HttpRetryOptions(
+                attempts=settings.DEDUP_MODEL_ATTEMPTS
+            ),
+        )
+
+        return config
+
+    def search(
+        self, corpora: list[str], query: str, top_k: int
+    ) -> tuple[list[str], str | None]:
+        """Top corpus entries for the query, chunks of one source merged in rank order."""
+        _, project, _, location, *_ = corpora[0].split("/")
+
+        try:
+            response = self._http.post(
+                f"https://{location}-aiplatform.googleapis.com/v1/projects/{project}"
+                f"/locations/{location}:retrieveContexts",
+                json={
+                    "vertex_rag_store": {
+                        "rag_resources": [{"rag_corpus": c} for c in corpora]
+                    },
+                    "query": {"text": query, "rag_retrieval_config": {"top_k": top_k}},
+                },
+                timeout=settings.DEDUP_SEARCH_TIMEOUT,
+            )
+            response.raise_for_status()
+
+        except requests.RequestException as exc:
+            status = getattr(exc.response, "status_code", None)
+
+            error = (
+                f"[VERTEX] Corpus search failed (code: {status or type(exc).__name__}). "
+                f"Check the corpus name, its region and the service account's access."
+            )
+
+            logger.error(f"[DuplicateDetector.search] {error}", exc_info=True)
+
+            return [], error
+
+        by_source: dict[str, list[str]] = {}
+
+        for context in response.json().get("contexts", {}).get("contexts", []):
+            by_source.setdefault(context.get("sourceUri", ""), []).append(
+                context.get("text", "").strip()
+            )
+
+        return ["\n".join(chunks) for chunks in by_source.values()], None
+
+    def _ask(
+        self, blob: AssessmentConfigBlob, query: str, level: DetectionLevel
+    ) -> tuple[str | None, dict[str, str], str | None]:
+        """Model output for one level, with the tag -> corpus text map it may cite."""
+        params = stage_params(blob, PipelineStage.ASSESSMENT)
+
+        with tracer.start_as_current_span(
+            f"duplicate_detection.{level}.search"
+        ) as span:
+            candidates, error = self.search(
+                params["knowledge_base_ids"], query, params["max_num_results"]
+            )
+
+            span.set_attribute("duplicate_detection.candidates", len(candidates))
+
+            if error:
+                span.set_status(Status(StatusCode.ERROR, error))
+
+        if error or not candidates:
+            return None, {}, error
+
+        by_tag = {f"C{i}": text for i, text in enumerate(candidates, start=1)}
+
+        listing = "\n\n".join(
+            f'<candidate id="{tag}">\n{text}\n</candidate>'
+            for tag, text in by_tag.items()
+        )
+
+        prompt = normalize_llm_text(stage_prompt(blob, PipelineStage.ASSESSMENT) or "")
+        for column in blob.input_schema:
+            prompt = prompt.replace("{" + column + "}", query)
+
+        prompt = f"{prompt}\n\n<candidates>\n{listing}\n</candidates>"
+
+        mapped, _ = map_kaapi_to_google_params(params)
+        mapped["temperature"] = params.get("temperature")
+
+        with tracer.start_as_current_span(f"duplicate_detection.{level}.model") as span:
+            set_gen_ai_request_attributes(
+                span,
+                provider=blob.assessment.provider,
+                model=params["model"],
+                operation=LLM_OPERATION,
+                organization_id=None,
+                project_id=None,
+                params=params,
+            )
+
+            response, error = self.execute(
+                completion_config=NativeCompletionConfig(
+                    provider=f"{blob.assessment.provider}-native",
+                    type=CompletionType.TEXT,
+                    params=mapped,
+                ),
+                query=QueryParams(input=prompt),
+                resolved_input=prompt,
+            )
+
+            if response is None:
+                span.set_status(Status(StatusCode.ERROR, error))
+                return None, by_tag, error
+
+            set_gen_ai_response_attributes(span, response=response)
+
+        return response.response.output.content.value, by_tag, None
+
+    def check_strict(
+        self, blob: AssessmentConfigBlob, query: str
+    ) -> tuple[StrictVerdict | None, str | None]:
+        """Strict verdict; a duplicate is accepted only when it cites a retrieved entry."""
+        text, by_tag, error = self._ask(blob, query, DetectionLevel.STRICT)
+
+        if error:
+            return None, error
+
+        if text is None:
+            return StrictVerdict(is_duplicate=False), None
+
+        try:
+            verdict = StrictVerdict.model_validate_json(text)
+
+            if not verdict.is_duplicate:
+                return StrictVerdict(is_duplicate=False), None
+
+            return (
+                StrictVerdict(is_duplicate=True, citation=by_tag[verdict.citation]),
+                None,
+            )
+
+        except (ValidationError, KeyError):
+            return None, self._invalid_output(DetectionLevel.STRICT)
+
+    def check_lenient(
+        self, blob: AssessmentConfigBlob, query: str
+    ) -> tuple[list[LenientMatch] | None, str | None]:
+        """Scored matches, highest first; an entry cited twice keeps its higher score."""
+        text, by_tag, error = self._ask(blob, query, DetectionLevel.LENIENT)
+
+        if error:
+            return None, error
+
+        if text is None:
+            return [], None
+
+        try:
+            best: dict[str, int] = {}
+
+            for match in _LenientOutput.model_validate_json(text).matches:
+                best[match.citation] = max(match.score, best.get(match.citation, 0))
+
+            ranked = sorted(best.items(), key=lambda item: item[1], reverse=True)
+
+            return [
+                LenientMatch(score=score, citation=by_tag[tag]) for tag, score in ranked
+            ], None
+
+        except (ValidationError, KeyError):
+            return None, self._invalid_output(DetectionLevel.LENIENT)
+
+    @staticmethod
+    def _invalid_output(level: DetectionLevel) -> str:
+        error = (
+            f"[KAAPI] The model's answer for the {level} check did not match the "
+            f"expected shape. Retry; if it persists, review the config's output schema."
+        )
+
+        logger.warning(f"[DuplicateDetector._invalid_output] {error}")
+
+        return error
+
+    def detect(
+        self, *, query: str, strict: AssessmentConfigBlob, lenient: AssessmentConfigBlob
+    ) -> DuplicateDetectionResult:
+        """Run both checks in parallel; each level reports its own result or error."""
+        task_span = trace.get_current_span()
+        steps = otel_context.get_current()
+
+        # Steps hang off the span that enqueued the task, not the task span: Sentry then
+        # sends each step when it ends, so finished steps survive a worker dying mid-run.
+        if isinstance(task_span, ReadableSpan) and task_span.parent:
+            steps = trace.set_span_in_context(NonRecordingSpan(task_span.parent))
+
+        with ThreadPoolExecutor(
+            max_workers=2, initializer=otel_context.attach, initargs=(steps,)
+        ) as pool:
+            strict_future = pool.submit(self.check_strict, strict, query)
+            lenient_future = pool.submit(self.check_lenient, lenient, query)
+
+            verdict, strict_error = strict_future.result()
+            matches, lenient_error = lenient_future.result()
+
+        return DuplicateDetectionResult(
+            strict=verdict,
+            lenient=matches,
+            errors=DetectionErrors(strict=strict_error, lenient=lenient_error),
+        )
