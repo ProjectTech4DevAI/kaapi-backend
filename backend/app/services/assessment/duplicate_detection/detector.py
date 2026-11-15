@@ -22,6 +22,7 @@ from app.core.config import settings
 from app.core.telemetry import (
     set_gen_ai_request_attributes,
     set_gen_ai_response_attributes,
+    suppress_http_instrumentation,
 )
 from app.models.assessment.duplicate_detection import (
     DetectionErrors,
@@ -43,6 +44,21 @@ tracer = trace.get_tracer(__name__)
 
 MS_PER_SECOND = 1000
 LLM_OPERATION = "chat"
+GEN_AI_CHAT_OP = "gen_ai.chat"
+
+
+def step_context() -> otel_context.Context:
+    """
+    Context for a step span: parented to the span that enqueued the task, not the task.
+    Sentry then sends each step when it ends, in time order beside the task, so
+    finished steps stay visible if the worker dies mid-run.
+    """
+    task_span = trace.get_current_span()
+
+    if isinstance(task_span, ReadableSpan) and task_span.parent:
+        return trace.set_span_in_context(NonRecordingSpan(task_span.parent))
+
+    return otel_context.get_current()
 
 
 class _LenientOutput(BaseModel):
@@ -122,9 +138,10 @@ class DuplicateDetector(GoogleGCPProvider):
         """Model output for one level, with the tag -> corpus text map it may cite."""
         params = stage_params(blob, PipelineStage.ASSESSMENT)
 
-        with tracer.start_as_current_span(
-            f"duplicate_detection.{level}.search"
-        ) as span:
+        with (
+            tracer.start_as_current_span(f"duplicate_detection.{level}.search") as span,
+            suppress_http_instrumentation(),
+        ):
             candidates, error = self.search(
                 params["knowledge_base_ids"], query, params["max_num_results"]
             )
@@ -153,7 +170,13 @@ class DuplicateDetector(GoogleGCPProvider):
         mapped, _ = map_kaapi_to_google_params(params)
         mapped["temperature"] = params.get("temperature")
 
-        with tracer.start_as_current_span(f"duplicate_detection.{level}.model") as span:
+        with (
+            tracer.start_as_current_span(f"chat {params['model']}") as span,
+            suppress_http_instrumentation(),
+        ):
+            # Named and typed like the app's other LLM calls so Sentry lists its model and tokens.
+            span.set_attribute("sentry.op", GEN_AI_CHAT_OP)
+            span.set_attribute("duplicate_detection.level", level)
             set_gen_ai_request_attributes(
                 span,
                 provider=blob.assessment.provider,
@@ -250,16 +273,8 @@ class DuplicateDetector(GoogleGCPProvider):
         self, *, query: str, strict: AssessmentConfigBlob, lenient: AssessmentConfigBlob
     ) -> DuplicateDetectionResult:
         """Run both checks in parallel; each level reports its own result or error."""
-        task_span = trace.get_current_span()
-        steps = otel_context.get_current()
-
-        # Steps hang off the span that enqueued the task, not the task span: Sentry then
-        # sends each step when it ends, so finished steps survive a worker dying mid-run.
-        if isinstance(task_span, ReadableSpan) and task_span.parent:
-            steps = trace.set_span_in_context(NonRecordingSpan(task_span.parent))
-
         with ThreadPoolExecutor(
-            max_workers=2, initializer=otel_context.attach, initargs=(steps,)
+            max_workers=2, initializer=otel_context.attach, initargs=(step_context(),)
         ) as pool:
             strict_future = pool.submit(self.check_strict, strict, query)
             lenient_future = pool.submit(self.check_lenient, lenient, query)

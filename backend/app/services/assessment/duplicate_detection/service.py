@@ -5,12 +5,15 @@ from uuid import UUID
 
 from asgi_correlation_id import correlation_id
 from fastapi import HTTPException
+from opentelemetry import context as otel_context
 from opentelemetry import trace
+from opentelemetry.instrumentation.utils import suppress_instrumentation
 from pydantic import JsonValue, ValidationError
 from sqlmodel import Session
 
 from app.celery.utils import start_duplicate_detection
 from app.core.db import engine
+from app.core.telemetry import suppress_http_instrumentation
 from app.crud.assessment import api
 from app.crud.assessment import duplicate_detection as crud
 from app.crud.config import ConfigVersionCrud
@@ -29,7 +32,10 @@ from app.models.assessment.duplicate_detection import (
 from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.config.config import ConfigTag
 from app.models.provider_credentials import Provider
-from app.services.assessment.duplicate_detection.detector import DuplicateDetector
+from app.services.assessment.duplicate_detection.detector import (
+    DuplicateDetector,
+    step_context,
+)
 from app.utils import send_callback, validate_callback_url
 
 logger = logging.getLogger(__name__)
@@ -113,26 +119,28 @@ def submit(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    for level, ref in request.config:
-        version = ConfigVersionCrud(
+    # This feature's queries are a few ms each; spans for them only bury its steps.
+    with suppress_instrumentation():
+        for level, ref in request.config:
+            version = ConfigVersionCrud(
+                session=session,
+                config_id=ref.id,
+                project_id=project_id,
+                tag=ConfigTag.ASSESSMENT,
+            ).exists_or_raise(version_number=ref.version)
+
+            _require_usable(level, version.config_blob)
+
+        assessment, runs = crud.create_assessment(
             session=session,
-            config_id=ref.id,
+            request=request,
+            organization_id=organization_id,
             project_id=project_id,
-            tag=ConfigTag.ASSESSMENT,
-        ).exists_or_raise(version_number=ref.version)
+        )
 
-        _require_usable(level, version.config_blob)
-
-    assessment, runs = crud.create_assessment(
-        session=session,
-        request=request,
-        organization_id=organization_id,
-        project_id=project_id,
-    )
-
-    trace.get_current_span().set_attribute(
-        "duplicate_detection.assessment_id", str(assessment.id)
-    )
+        trace.get_current_span().set_attribute(
+            "duplicate_detection.assessment_id", str(assessment.id)
+        )
 
     try:
         start_duplicate_detection(str(assessment.id), correlation_id.get() or "N/A")
@@ -149,28 +157,31 @@ def submit(
             detail="Failed to dispatch the duplicate detection. Please retry.",
         ) from exc
 
-    return _to_public(assessment, runs)
+    with suppress_instrumentation():
+        return _to_public(assessment, runs)
 
 
 def get_status(
     *, session: Session, assessment_id: UUID, organization_id: int, project_id: int
 ) -> DuplicateDetectionPublic:
     """A job's status and any results it has so far; 404 when it is not this project's."""
-    assessment = crud.get_assessment(
-        session=session,
-        assessment_id=assessment_id,
-        organization_id=organization_id,
-        project_id=project_id,
-    )
-
-    if assessment is None:
-        raise HTTPException(
-            status_code=404, detail=f"Duplicate detection {assessment_id} not found"
+    with suppress_instrumentation():
+        assessment = crud.get_assessment(
+            session=session,
+            assessment_id=assessment_id,
+            organization_id=organization_id,
+            project_id=project_id,
         )
 
-    return _to_public(
-        assessment, api.list_executions(session=session, assessment_id=assessment_id)
-    )
+        if assessment is None:
+            raise HTTPException(
+                status_code=404, detail=f"Duplicate detection {assessment_id} not found"
+            )
+
+        return _to_public(
+            assessment,
+            api.list_executions(session=session, assessment_id=assessment_id),
+        )
 
 
 def _store(
@@ -226,22 +237,32 @@ def _deliver(
     webhook: dict[str, str] | None,
 ) -> None:
     """Send the stored outcome to the caller's callback URL."""
-    with tracer.start_as_current_span("duplicate_detection.send_callback"):
-        sent = send_callback(
-            request["callback_url"],
-            {
-                "success": status != AssessmentStatus.FAILED,
-                "data": {
-                    "id": str(assessment_id),
-                    "status": status,
-                    **result.model_dump(),
-                    "request_metadata": request.get("request_metadata"),
+    # Its own step, so it shows after the checks instead of inside the task's span.
+    token = otel_context.attach(step_context())
+
+    try:
+        with (
+            tracer.start_as_current_span("duplicate_detection.send_callback"),
+            suppress_http_instrumentation(),
+        ):
+            sent = send_callback(
+                request["callback_url"],
+                {
+                    "success": status != AssessmentStatus.FAILED,
+                    "data": {
+                        "id": str(assessment_id),
+                        "status": status,
+                        **result.model_dump(),
+                        "request_metadata": request.get("request_metadata"),
+                    },
+                    "error": None,
+                    "metadata": None,
                 },
-                "error": None,
-                "metadata": None,
-            },
-            webhook_secret=webhook.get("webhook_secret") if webhook else None,
-        )
+                webhook_secret=webhook.get("webhook_secret") if webhook else None,
+            )
+
+    finally:
+        otel_context.detach(token)
 
     if not sent:
         logger.error(
@@ -251,7 +272,7 @@ def _deliver(
 
 def run_duplicate_detection(*, assessment_id: UUID) -> None:
     """Run a claimed job: one session, no connection held during the provider calls."""
-    with Session(engine) as session:
+    with suppress_instrumentation(), Session(engine) as session:
         assessment = crud.claim_assessment(
             session=session,
             assessment_id=assessment_id,
@@ -337,7 +358,7 @@ def run_duplicate_detection(*, assessment_id: UUID) -> None:
 
 def fail_interrupted(*, assessment_id: UUID) -> None:
     """Fail a job its worker left PROCESSING and deliver that outcome; no-op in any other status."""
-    with Session(engine) as session:
+    with suppress_instrumentation(), Session(engine) as session:
         assessment = crud.claim_assessment(
             session=session,
             assessment_id=assessment_id,
