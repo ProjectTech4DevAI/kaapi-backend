@@ -41,7 +41,7 @@ def aws_credentials():
 @mock_aws
 class TestDocumentRoutePermanentRemove:
     @openai_responses.mock()
-    @patch("app.api.routes.documents.get_openai_client")
+    @patch("app.api.routes.documents.document.get_openai_client")
     def test_permanent_delete_document_from_s3(
         self,
         mock_get_openai_client,

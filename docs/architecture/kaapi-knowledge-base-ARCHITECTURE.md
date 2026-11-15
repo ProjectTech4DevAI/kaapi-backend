@@ -43,7 +43,7 @@ flowchart LR
     Caller([Client])
 
     subgraph API["FastAPI process (web)"]
-        DocRoute["POST /documents\nroutes/documents.py"]
+        DocRoute["POST /documents\nroutes/documents/document.py"]
         ColRoute["POST /collections\nroutes/collections.py"]
         StartJob["create_collection.start_job()"]
     end
@@ -101,7 +101,7 @@ the worker.
 backend/app/
 ├── api/
 │   ├── routes/
-│   │   ├── documents.py            POST/GET/DELETE /documents · /documents/{id}/permanent
+│   │   ├── documents/document.py       POST/GET/DELETE /documents · /documents/{id}/permanent
 │   │   ├── collections.py          POST/GET/PATCH/DELETE /collections (+ callback OpenAPI spec)
 │   │   └── collection_job.py       GET /collections/jobs/{job_id}  (status polling)
 │   └── docs/collections/*.md       Swagger descriptions (load_description)
@@ -146,7 +146,7 @@ is the spine of knowledge-base creation.
 
 ## 3. Act I — document upload (`POST /documents`)
 
-[routes/documents.py → `upload_doc`](../../backend/app/api/routes/documents.py)
+[routes/documents/document.py → `upload_doc`](../../backend/app/api/routes/documents/document.py)
 
 ```mermaid
 sequenceDiagram
@@ -525,7 +525,7 @@ other collections.
 
 ### Synchronous doc delete → cascade (`DELETE /documents/{id}`)
 
-[routes/documents.py → `remove_doc` / `permanent_delete_doc`](../../backend/app/api/routes/documents.py)
+[routes/documents/document.py → `remove_doc` / `permanent_delete_doc`](../../backend/app/api/routes/documents/document.py)
 takes a very different, **fully synchronous** route:
 
 ```mermaid
@@ -685,12 +685,12 @@ watch stalled `PROCESSING` jobs is still open.
 
 ## 13. Where to start reading
 
-1. [api/routes/documents.py](../../backend/app/api/routes/documents.py) — upload + (synchronous) delete surface.
+1. [api/routes/documents/document.py](../../backend/app/api/routes/documents/document.py) — upload + (synchronous) delete surface.
 2. [api/routes/collections.py](../../backend/app/api/routes/collections.py) — the thin create/list/get/patch/delete surface + callback spec.
 3. [services/collections/create_collection.py](../../backend/app/services/collections/create_collection.py) — **`execute_setup_job` → `execute_batch_job`** (the batched pipeline).
 4. [services/collections/helpers.py](../../backend/app/services/collections/helpers.py) — `batch_documents` + the size/count constants.
 5. [services/collections/providers/openai.py](../../backend/app/services/collections/providers/openai.py) + [providers/base.py](../../backend/app/services/collections/providers/base.py) — the provider contract and reuse logic.
-6. [services/collections/delete_collection.py](../../backend/app/services/collections/delete_collection.py) — async deletion (contrast with the synchronous doc cascade in `routes/documents.py`).
+6. [services/collections/delete_collection.py](../../backend/app/services/collections/delete_collection.py) — async deletion (contrast with the synchronous doc cascade in `routes/documents/document.py`).
 
 ---
 
