@@ -276,7 +276,7 @@ def run_duplicate_detection(*, assessment_id: UUID) -> None:
         assessment = crud.claim_assessment(
             session=session,
             assessment_id=assessment_id,
-            status=AssessmentStatus.PENDING,
+            statuses=(AssessmentStatus.PENDING,),
         )
 
         if assessment is None:
@@ -357,16 +357,22 @@ def run_duplicate_detection(*, assessment_id: UUID) -> None:
 
 
 def fail_interrupted(*, assessment_id: UUID) -> None:
-    """Fail a job its worker left PROCESSING and deliver that outcome; no-op in any other status."""
+    """Fail a job its worker left unfinished and deliver that outcome; no-op once it has a result."""
     with suppress_instrumentation(), Session(engine) as session:
         assessment = crud.claim_assessment(
             session=session,
             assessment_id=assessment_id,
-            status=AssessmentStatus.PROCESSING,
+            # PENDING too: the worker can die after taking the task but before claiming it.
+            statuses=(AssessmentStatus.PENDING, AssessmentStatus.PROCESSING),
         )
 
         if assessment is None:
             return
+
+        logger.error(
+            f"[fail_interrupted] Duplicate detection worker stopped before finishing; "
+            f"failing the job | assessment_id: {assessment_id}"
+        )
 
         request = assessment.input
 

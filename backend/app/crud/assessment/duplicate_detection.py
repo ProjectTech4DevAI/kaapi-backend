@@ -66,14 +66,14 @@ def get_assessment(
 
 
 def claim_assessment(
-    *, session: Session, assessment_id: UUID, status: AssessmentStatus
+    *, session: Session, assessment_id: UUID, statuses: tuple[AssessmentStatus, ...]
 ) -> Assessment | None:
-    """Take a job that is in `status` and mark it PROCESSING; None when it is not in that status."""
+    """Take a job in one of `statuses` and mark it PROCESSING; None when it is in none of them."""
     claimed = session.exec(
         update(Assessment)
         .where(
             col(Assessment.id) == assessment_id,
-            col(Assessment.status) == status,
+            col(Assessment.status).in_(statuses),
         )
         .values(status=AssessmentStatus.PROCESSING, updated_at=now())
     )
