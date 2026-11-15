@@ -1591,20 +1591,40 @@ class TestCoordinatorRagRoute:
             chatbot,
             reply="The exam is in May.",
             node_id=FAQ_NODE_ID,
+            completion_status="complete",
             collected_fields={"name": "Asha"},
             sources=[{"file_id": "file-fees", "filename": "fees.pdf"}],
         )
-        assert len(callbacks.payloads) == 4
         stored = _reload(db, chatbot_session)
         assert stored.active_node_id == COORDINATOR_NODE_ID
-        assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS
+        assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
         assert stored.collected_fields == {"name": "Asha"}
+
+        patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=[],
+                extractions=[
+                    RouteDecision(intent=None, clarifying_question="Anything else?")
+                ],
+            ),
+        )
+        _ask(db, chatbot_session, "hmm")
+
+        assert callbacks.payloads[-1]["data"]["node_id"] == COORDINATOR_NODE_ID
+        assert callbacks.payloads[-1]["data"]["completion_status"] == "complete"
+        assert len(callbacks.payloads) == 5
+        assert (
+            _reload(db, chatbot_session).completion_status
+            == ChatbotCompletionStatusEnum.COMPLETE
+        )
         assert _assistant_node_ids(db, chatbot_session) == [
             COORDINATOR_NODE_ID,
             FAQ_NODE_ID,
             APPLY_NODE_ID,
             APPLY_NODE_ID,
             FAQ_NODE_ID,
+            COORDINATOR_NODE_ID,
         ]
 
     def test_rag_detours_keep_registration_active_until_optional_fields_are_asked(
@@ -1712,6 +1732,7 @@ class TestCoordinatorRagRoute:
             chatbot,
             reply="The exam is in May.",
             node_id=FAQ_NODE_ID,
+            completion_status="complete",
             collected_fields={"name": "Asha", "phone": "98765"},
             sources=fees_source,
         )

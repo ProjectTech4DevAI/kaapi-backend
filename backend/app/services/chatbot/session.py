@@ -1,4 +1,5 @@
 import logging
+from dataclasses import replace
 from typing import NamedTuple
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from app.crud.chatbot import (
 )
 from app.models import (
     AGENT_NODE_TYPES,
+    ChatbotCompletionStatusEnum,
     ChatbotFlowNodeTypeEnum,
     ChatbotFlowVersion,
     ChatbotMessageRoleEnum,
@@ -351,6 +353,8 @@ def _resolve_turn_context(
         chatbot_id=chatbot_session.chatbot_id,
         session_status=chatbot_session.status.value,
         collected_fields=dict(chatbot_session.collected_fields),
+        is_complete=chatbot_session.completion_status
+        == ChatbotCompletionStatusEnum.COMPLETE,
         stored_messages=stored_messages,
         turn_node=turn_node,
         model_settings=model_settings,
@@ -424,7 +428,7 @@ def _run_coordinator_turn_and_handoff(
             result=ChatbotTurnResult(
                 reply=decision.clarifying_question or FALLBACK_CLARIFYING_QUESTION,
                 collected_fields=context.collected_fields,
-                is_complete=False,
+                is_complete=context.is_complete,
             ),
             reply_node_id=coordinator_node.node_id,
             next_active_node_id=None,
@@ -454,6 +458,7 @@ def _run_coordinator_turn_and_handoff(
     )
     # A rag detour leaves whatever was active (coordinator or in-progress sub-flow) in place.
     if target_node.node_type == ChatbotFlowNodeTypeEnum.RAG:
+        turn_result = replace(turn_result, is_complete=context.is_complete)
         next_active_node_id = None
     # Not on is_complete: a complete agent may still be asking its optional fields.
     elif turn_result.is_done:

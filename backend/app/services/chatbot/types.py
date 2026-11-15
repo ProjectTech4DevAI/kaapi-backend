@@ -58,6 +58,8 @@ class TurnContext(NamedTuple):
     chatbot_id: UUID
     session_status: str
     collected_fields: dict[str, Any]
+    # Stored status; only onboarding turns change it, rag and clarifying replies carry it over.
+    is_complete: bool
     stored_messages: list[ChatbotSessionMessage]
     turn_node: TurnNode
     model_settings: ChatbotModelSettings
