@@ -14,7 +14,7 @@ from app.services.assessment.duplicate_detection import service
 from app.utils import APIResponse, load_description
 
 router = APIRouter(
-    prefix="/assessments/duplicate-detection",
+    prefix="/assessments/duplicates",
     tags=["Assessment (API)"],
 )
 

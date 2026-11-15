@@ -22,7 +22,7 @@ from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_config
 from app.tests.utils.utils import random_lower_string
 
-URL = f"{settings.API_V1_STR}/assessments/duplicate-detection"
+URL = f"{settings.API_V1_STR}/assessments/duplicates"
 SERVICE = "app.services.assessment.duplicate_detection.service"
 CALLBACK = "https://hook.example.com/dedup"
 
