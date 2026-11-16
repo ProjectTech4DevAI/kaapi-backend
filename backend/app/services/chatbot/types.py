@@ -70,3 +70,5 @@ class TurnContext(NamedTuple):
     route_target_nodes: dict[str, TurnNode]
     # Set when the active node is an agent behind the coordinator: the sub-flow the coordinator defaults to.
     in_progress_node_id: str | None
+    # Set only when the turn runs on a coordinator and CHATBOT_COORDINATOR_ROUTER is decisions.
+    coordinator_openai_api_key: str | None = None

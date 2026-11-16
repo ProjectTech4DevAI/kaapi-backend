@@ -538,3 +538,70 @@ def list_stored_sessions_for_contact(
             select(ChatbotSession).where(ChatbotSession.contact_ref == contact_ref)
         ).all()
     )
+
+
+def create_test_openai_credential(db: Session, *, project_id: int) -> str:
+    """The project's stored OpenAI key (used by the Decisions-API coordinator router),
+    storing one first if the project has none."""
+    project = db.get(Project, project_id)
+    assert project is not None
+    existing = get_provider_credential(
+        session=db,
+        org_id=project.organization_id,
+        project_id=project_id,
+        provider=Provider.OPENAI.value,
+    )
+    if isinstance(existing, dict):
+        return existing["api_key"]
+    api_key = f"sk-{random_lower_string()}"
+    set_creds_for_org(
+        session=db,
+        creds_add=CredsCreate(
+            is_active=True,
+            credential={Provider.OPENAI.value: {"api_key": api_key}},
+        ),
+        organization_id=project.organization_id,
+        project_id=project_id,
+    )
+    return api_key
+
+
+def decisions_answer(choice: str, confidence: float) -> dict[str, Any]:
+    return {
+        "answers": [
+            {
+                "type": "choice",
+                "name": "intent",
+                "choice": choice,
+                "confidence": confidence,
+                "probabilities": [
+                    {"value": choice, "probability": confidence},
+                    {"value": "other", "probability": round(1 - confidence, 2)},
+                ],
+            }
+        ]
+    }
+
+
+class FakeDecisionsPost:
+    """Stands in for `httpx.post` to OpenAI's Decisions API; records each request."""
+
+    def __init__(self, outcome: httpx.Response | Exception) -> None:
+        self.outcome = outcome
+        self.requests: list[dict[str, Any]] = []
+
+    def __call__(self, url: str, **kwargs: Any) -> httpx.Response:
+        self.requests.append({"url": url, **kwargs})
+        if isinstance(self.outcome, Exception):
+            raise self.outcome
+        return self.outcome
+
+
+def patch_decisions_api(
+    monkeypatch: pytest.MonkeyPatch, outcome: httpx.Response | Exception
+) -> FakeDecisionsPost:
+    fake = FakeDecisionsPost(outcome)
+    monkeypatch.setattr(
+        "app.services.chatbot.agents.coordinator.decisions.httpx.post", fake
+    )
+    return fake

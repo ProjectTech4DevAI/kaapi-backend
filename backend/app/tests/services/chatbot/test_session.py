@@ -10,6 +10,8 @@ import pytest
 from langchain_core.exceptions import OutputParserException
 from sqlmodel import Session
 
+from app.core.config import CoordinatorRouterEnum, settings
+
 from app.crud import CollectionCrud
 from app.crud.chatbot import (
     list_chatbot_session_messages,
@@ -57,8 +59,11 @@ from app.tests.utils.chatbot import (
     create_test_flow_version,
     create_test_live_chatbot,
     create_test_live_coordinator_chatbot,
+    create_test_openai_credential,
+    decisions_answer,
     extracted_fields,
     patch_chat_model,
+    patch_decisions_api,
     route_prompt,
     search_hit,
     tool_call_reply,
@@ -1165,6 +1170,88 @@ class TestCoordinatorTurns:
 RAG_GOAL = "Answer questions about school fees from the documents."
 RAG_NODE_ID = "rag-1"
 _OPENAI_REQUEST = httpx.Request("POST", "https://api.openai.com/v1/vector_stores")
+
+
+class TestDecisionsRoutedCoordinatorTurns:
+    @pytest.fixture(autouse=True)
+    def _decisions_router(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            settings, "CHATBOT_COORDINATOR_ROUTER", CoordinatorRouterEnum.DECISIONS
+        )
+
+    def test_missing_openai_credentials_posts_failure_webhook(
+        self,
+        db: Session,
+        coordinator_chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        unused_chat_model: ScriptedChatModel,
+    ) -> None:
+        chatbot_session = _coordinator_session(
+            db,
+            coordinator_chatbot,
+            [
+                (ChatbotMessageRoleEnum.ASSISTANT, GREETING),
+                (ChatbotMessageRoleEnum.USER, "I want to enroll my son"),
+            ],
+        )
+
+        _process(chatbot_session, db)
+
+        assert unused_chat_model.extraction_calls == []
+        assert _assistant_node_ids(db, chatbot_session) == [COORDINATOR_NODE_ID]
+        _assert_single_failure_webhook(callbacks, chatbot_session, "OpenAI credentials")
+
+    def test_routed_turn_hands_off_without_an_anthropic_routing_call(
+        self,
+        db: Session,
+        coordinator_chatbot: Chatbot,
+        callbacks: CallbackRecorder,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        openai_key = create_test_openai_credential(
+            db, project_id=coordinator_chatbot.project_id
+        )
+        decisions_api = patch_decisions_api(
+            monkeypatch, httpx.Response(200, json=decisions_answer("Enroll", 0.9))
+        )
+        chat_model = patch_chat_model(
+            monkeypatch,
+            ScriptedChatModel(
+                replies=["Great, what's your child's name?"],
+                extractions=[
+                    FieldExtraction(
+                        collected_fields=extracted_fields({"parent": "Asha"}),
+                        missing_fields=["child"],
+                        is_complete=False,
+                    ),
+                ],
+            ),
+        )
+        chatbot_session = _coordinator_session(
+            db,
+            coordinator_chatbot,
+            [
+                (ChatbotMessageRoleEnum.ASSISTANT, GREETING),
+                (ChatbotMessageRoleEnum.USER, "I'm Asha, I want to enroll my son"),
+            ],
+        )
+
+        _process(chatbot_session, db)
+
+        [request] = decisions_api.requests
+        assert request["headers"]["Authorization"] == f"Bearer {openai_key}"
+        assert chat_model.structured_output_schemas == [FieldExtraction]
+        assert len(chat_model.calls) == 1
+        assert callbacks.payloads == [
+            _success_webhook(
+                chatbot_session,
+                coordinator_chatbot,
+                reply="Great, what's your child's name?",
+                node_id=ENROLL_NODE_ID,
+                collected_fields={"parent": "Asha"},
+            )
+        ]
+        assert _reload(db, chatbot_session).active_node_id == ENROLL_NODE_ID
 
 
 @pytest.fixture
