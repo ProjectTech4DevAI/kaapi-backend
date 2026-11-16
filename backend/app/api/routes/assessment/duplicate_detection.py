@@ -15,7 +15,7 @@ from app.utils import APIResponse, load_description
 
 router = APIRouter(
     prefix="/assessments/duplicates",
-    tags=["Assessment (API)"],
+    tags=["Assessment (Experimental)"],
 )
 
 
