@@ -8,6 +8,8 @@ from fastapi.testclient import TestClient
 from httpx import Response
 from sqlmodel import Session
 
+from app.core.config import CoordinatorRouterEnum, settings
+from app.crud.credentials import remove_provider_credential
 from app.models import Chatbot, Config, Project
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.chatbot import (
@@ -25,6 +27,7 @@ from app.tests.utils.chatbot import (
     create_test_anthropic_config,
     create_test_chatbot,
     create_test_flow_version,
+    create_test_openai_credential,
     flow_url,
     list_stored_flow_versions,
     publish_url,
@@ -1064,6 +1067,65 @@ class TestMissingAnthropicCredentials:
         live, draft = list_stored_flow_versions(db, chatbot)
         assert (live.version, live.is_live) == (1, True)
         assert (draft.version, draft.is_live) == (2, False)
+
+
+class TestDecisionsRouterOpenAICredentials:
+    @pytest.fixture(autouse=True)
+    def _decisions_router(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            settings, "CHATBOT_COORDINATOR_ROUTER", CoordinatorRouterEnum.DECISIONS
+        )
+
+    def test_coordinator_publish_without_openai_credentials_returns_422(
+        self,
+        db: Session,
+        config: Config,
+        chatbot: Chatbot,
+        save: Callable[..., Response],
+        publish: Callable[[], Response],
+        live_v1: dict[str, Any],
+        user_api_key: TestAuthContext,
+    ) -> None:
+        # The seeded caller project ships with OpenAI credentials.
+        remove_provider_credential(
+            db,
+            org_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            provider="openai",
+        )
+        assert save(*_coordinator_flow_with(config.id)).status_code == 200
+
+        resp = publish()
+
+        assert resp.status_code == 422
+        error = resp.json()["error"]
+        assert error.startswith(INVALID_FLOW_PREFIX)
+        assert (
+            "The coordinator routes with the project's OpenAI credentials "
+            "(CHATBOT_COORDINATOR_ROUTER=decisions), but none are configured; add "
+            "OpenAI credentials to this project." in error
+        )
+        live, draft = list_stored_flow_versions(db, chatbot)
+        assert (live.version, live.is_live) == (1, True)
+        assert (draft.version, draft.is_live) == (2, False)
+
+    def test_coordinator_publish_with_openai_credentials_goes_live(
+        self,
+        db: Session,
+        config: Config,
+        chatbot: Chatbot,
+        save: Callable[..., Response],
+        publish: Callable[[], Response],
+        live_v1: dict[str, Any],
+    ) -> None:
+        create_test_openai_credential(db, project_id=chatbot.project_id)
+        assert save(*_coordinator_flow_with(config.id)).status_code == 200
+
+        resp = publish()
+
+        assert resp.status_code == 200
+        _, stored = list_stored_flow_versions(db, chatbot)
+        assert (stored.version, stored.is_live) == (2, True)
 
 
 def _stored_updated_at(db: Session, chatbot: Chatbot) -> datetime:

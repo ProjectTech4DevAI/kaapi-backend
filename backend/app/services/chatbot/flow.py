@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlmodel import Session
 
+from app.core.config import CoordinatorRouterEnum, settings
 from app.core.util import now
 
 from app.crud.chatbot import (
@@ -28,6 +29,7 @@ from app.services.chatbot.config import (
     build_chatbot_model_settings,
     get_anthropic_api_key,
     get_chatbot_config_version,
+    get_coordinator_openai_api_key,
     prepare_rag_search_client,
 )
 from app.services.chatbot.exceptions import (
@@ -345,6 +347,16 @@ def validate_flow_for_publish(
     if any(node.type in AGENT_NODE_TYPES for node in nodes):
         try:
             get_anthropic_api_key(
+                session=session, organization_id=organization_id, project_id=project_id
+            )
+        except ChatbotInputError as e:
+            problems.append(str(e).removeprefix(KAAPI_ERROR_TAG).strip())
+
+    if settings.CHATBOT_COORDINATOR_ROUTER == CoordinatorRouterEnum.DECISIONS and any(
+        node.type == ChatbotFlowNodeTypeEnum.COORDINATOR for node in nodes
+    ):
+        try:
+            get_coordinator_openai_api_key(
                 session=session, organization_id=organization_id, project_id=project_id
             )
         except ChatbotInputError as e:

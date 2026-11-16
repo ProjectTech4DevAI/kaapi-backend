@@ -17,3 +17,10 @@ ROUTES_TEMPLATE = "\n\n<intents>\n{routes}\n</intents>"
 FALLBACK_CLARIFYING_QUESTION = (
     "Could you tell me a bit more about what you need help with?"
 )
+
+# The intent list travels as the question's `choices`, so it is not repeated here.
+DECISIONS_ROUTING_INSTRUCTION = (
+    "Decide which intent the user's latest message expresses. Choose an intent only "
+    "when the user's need clearly matches it; otherwise choose 'other'."
+)
+DECISIONS_OTHER_DESCRIPTION = "None of the listed intents clearly matches."

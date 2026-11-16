@@ -10,6 +10,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
 
+from app.core.config import CoordinatorRouterEnum, settings
+from app.services.chatbot.agents.coordinator.decisions import decide_intent
 from app.services.chatbot.agents.coordinator.prompts import (
     FALLBACK_CLARIFYING_QUESTION,
     IN_PROGRESS_TEMPLATE,
@@ -17,6 +19,8 @@ from app.services.chatbot.agents.coordinator.prompts import (
     ROUTING_INSTRUCTION,
 )
 from app.services.chatbot.agents.onboarding.prompts import EXTRACTION_METHOD
+from app.services.chatbot.config import COORDINATOR_OPENAI_CREDENTIALS_MISSING_MESSAGE
+from app.services.chatbot.exceptions import ChatbotInputError
 from app.services.chatbot.history import (
     summarize_if_needed,
     to_langchain_messages,
@@ -106,9 +110,38 @@ def run_coordinator_turn(
     routes: list[CoordinatorRoute],
     model_settings: ChatbotModelSettings,
     in_progress_intent: str | None = None,
+    openai_api_key: str | None = None,
 ) -> CoordinatorDecision:
     """Classify the latest user message against `routes`, defaulting to `in_progress_intent`, else a clarifying question."""
     validate_turn_input(history=history, user_message=user_message)
+
+    # Decisions only classifies; the Anthropic call below still writes the greeting and clarifying question.
+    routed_by_decisions = (
+        settings.CHATBOT_COORDINATOR_ROUTER == CoordinatorRouterEnum.DECISIONS
+    )
+    if routed_by_decisions and user_message is not None:
+        if openai_api_key is None:
+            raise ChatbotInputError(COORDINATOR_OPENAI_CREDENTIALS_MISSING_MESSAGE)
+        intent_decision = decide_intent(
+            api_key=openai_api_key,
+            system_prompt=system_prompt,
+            routes=routes,
+            history=history,
+            user_message=user_message,
+            in_progress_intent=in_progress_intent,
+        )
+        route = _match_route(intent_decision.intent, routes)
+        if route is None:
+            route = _match_route(in_progress_intent, routes)
+        if route is not None:
+            logger.info(
+                f"[run_coordinator_turn] Routed | intent: {route.intent}, "
+                f"model_intent: {intent_decision.intent}, router: decisions, "
+                f"target_node_id: {route.target_node_id}"
+            )
+            return CoordinatorDecision(
+                target_node_id=route.target_node_id, clarifying_question=None
+            )
 
     messages = to_langchain_messages(
         system_prompt=_build_routing_prompt(
@@ -130,7 +163,8 @@ def run_coordinator_turn(
         raise to_provider_error(e, model=model_settings.model) from e
 
     # The opening turn has only the synthetic kickoff message, so it must never hand off.
-    if user_message is not None:
+    # Under decisions this call only writes the question; its intent is ignored.
+    if user_message is not None and not routed_by_decisions:
         route = _match_route(decision.intent, routes)
         # A sub-flow in progress keeps the message rather than interrupting it with a question.
         if route is None:

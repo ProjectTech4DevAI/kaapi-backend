@@ -2,6 +2,7 @@ import multiprocessing
 import os
 import secrets
 import warnings
+from enum import Enum
 from typing import Any, Literal, Self
 
 from pydantic import (
@@ -24,6 +25,11 @@ def parse_cors(origins: Any) -> list[str] | str:
     elif isinstance(origins, (list, str)):
         return origins
     raise ValueError(f"Invalid CORS origins format: {origins!r}")
+
+
+class CoordinatorRouterEnum(str, Enum):
+    ANTHROPIC = "anthropic"
+    DECISIONS = "decisions"
 
 
 class Settings(BaseSettings):
@@ -57,6 +63,8 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = ""
     KAAPI_GUARDRAILS_AUTH: str = ""
     KAAPI_GUARDRAILS_URL: str = ""
+    # ponytail: spike flag; delete with the losing router once routing latency/misroutes are measured.
+    CHATBOT_COORDINATOR_ROUTER: CoordinatorRouterEnum = CoordinatorRouterEnum.ANTHROPIC
 
     # Google OAuth
     GOOGLE_CLIENT_ID: str = ""

@@ -22,6 +22,7 @@ from app.services.chatbot.utils import (
     ChatbotModelSettings,
     default_thinking,
 )
+from app.utils import get_openai_client
 
 _ANTHROPIC_EFFORT_LEVELS: tuple[AnthropicEffort, ...] = get_args(AnthropicEffort)
 THINKING_TYPE_ENABLED = "enabled"
@@ -29,6 +30,11 @@ CREDENTIAL_API_KEY = "api_key"
 ANTHROPIC_CREDENTIALS_MISSING_MESSAGE = (
     "[KAAPI] Anthropic credentials are not configured for this project; add an "
     "Anthropic API key in the project's credentials."
+)
+COORDINATOR_OPENAI_CREDENTIALS_MISSING_MESSAGE = (
+    "[KAAPI] The coordinator routes with the project's OpenAI credentials "
+    "(CHATBOT_COORDINATOR_ROUTER=decisions), but none are configured; add OpenAI "
+    "credentials to this project."
 )
 
 
@@ -45,6 +51,19 @@ def get_anthropic_api_key(
     if not isinstance(credentials, dict) or not credentials.get(CREDENTIAL_API_KEY):
         raise ChatbotInputError(ANTHROPIC_CREDENTIALS_MISSING_MESSAGE)
     return credentials[CREDENTIAL_API_KEY]
+
+
+def get_coordinator_openai_api_key(
+    *, session: Session, organization_id: int, project_id: int
+) -> str:
+    """The project's OpenAI key for the Decisions-API coordinator router."""
+    try:
+        client = get_openai_client(session, organization_id, project_id)
+    except HTTPException as e:
+        raise ChatbotInputError(COORDINATOR_OPENAI_CREDENTIALS_MISSING_MESSAGE) from e
+    if not client.api_key:
+        raise ChatbotInputError(COORDINATOR_OPENAI_CREDENTIALS_MISSING_MESSAGE)
+    return client.api_key
 
 
 def get_chatbot_config_version(

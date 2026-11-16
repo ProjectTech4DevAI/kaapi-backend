@@ -3,6 +3,8 @@ import httpx
 import pytest
 from langchain_core.exceptions import OutputParserException
 
+from app.core.config import CoordinatorRouterEnum, settings
+
 from app.services.chatbot.agents.coordinator.graph import (
     CoordinatorDecision,
     CoordinatorRoute,
@@ -19,7 +21,9 @@ from app.tests.utils.chatbot import (
     ANTHROPIC_REQUEST,
     COORDINATOR_PROMPT,
     ScriptedChatModel,
+    decisions_answer,
     patch_chat_model,
+    patch_decisions_api,
 )
 
 MODEL = "claude-sonnet-4-6"
@@ -39,6 +43,7 @@ def _run(
     user_message: str | None = "I want to enroll my son",
     history: list[ChatbotMessageDict] | None = None,
     in_progress_intent: str | None = None,
+    openai_api_key: str | None = None,
 ) -> CoordinatorDecision:
     return run_coordinator_turn(
         system_prompt=COORDINATOR_PROMPT,
@@ -47,6 +52,7 @@ def _run(
         routes=ROUTES,
         model_settings=ChatbotModelSettings(model=MODEL),
         in_progress_intent=in_progress_intent,
+        openai_api_key=openai_api_key,
     )
 
 
@@ -274,3 +280,90 @@ class TestRoutingErrors:
             _run()
 
         assert expected_message in str(exc_info.value)
+
+
+class TestDecisionsRouter:
+    @pytest.fixture(autouse=True)
+    def _decisions_router(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            settings, "CHATBOT_COORDINATOR_ROUTER", CoordinatorRouterEnum.DECISIONS
+        )
+
+    def test_routed_turn_makes_no_anthropic_call(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        chat_model = _scripted(monkeypatch)
+        decisions_api = patch_decisions_api(
+            monkeypatch, httpx.Response(200, json=decisions_answer("Enroll", 0.9))
+        )
+
+        decision = _run(openai_api_key="sk-test")
+
+        assert decision == CoordinatorDecision(
+            target_node_id="enroll", clarifying_question=None
+        )
+        assert len(decisions_api.requests) == 1
+        assert chat_model.extraction_calls == []
+
+    def test_unrouted_turn_asks_anthropics_question_ignoring_its_intent(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Anthropic naming an intent must not route: only Decisions classifies here.
+        chat_model = _scripted(
+            monkeypatch,
+            RouteDecision(
+                intent="Enroll", clarifying_question=CLARIFY.clarifying_question
+            ),
+        )
+        patch_decisions_api(
+            monkeypatch, httpx.Response(200, json=decisions_answer("other", 0.9))
+        )
+
+        decision = _run(user_message="hmm", openai_api_key="sk-test")
+
+        assert decision == CLARIFY
+        assert len(chat_model.extraction_calls) == 1
+
+    def test_opening_turn_clarifies_via_anthropic_without_decisions(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _scripted(
+            monkeypatch,
+            RouteDecision(intent=None, clarifying_question="Hi! How can I help?"),
+        )
+        decisions_api = patch_decisions_api(
+            monkeypatch, httpx.Response(200, json=decisions_answer("Enroll", 0.9))
+        )
+
+        decision = _run(user_message=None)
+
+        assert decision == CoordinatorDecision(
+            target_node_id=None, clarifying_question="Hi! How can I help?"
+        )
+        assert decisions_api.requests == []
+
+    def test_missing_openai_key_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        chat_model = _scripted(monkeypatch)
+
+        with pytest.raises(ChatbotInputError, match="OpenAI credentials"):
+            _run(openai_api_key=None)
+        assert chat_model.extraction_calls == []
+
+    def test_other_continues_the_in_progress_route(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        chat_model = _scripted(monkeypatch)
+        patch_decisions_api(
+            monkeypatch, httpx.Response(200, json=decisions_answer("other", 0.9))
+        )
+
+        decision = _run(
+            user_message="Ravi", in_progress_intent="Enroll", openai_api_key="sk-test"
+        )
+
+        assert decision == CoordinatorDecision(
+            target_node_id="enroll", clarifying_question=None
+        )
+        assert chat_model.extraction_calls == []

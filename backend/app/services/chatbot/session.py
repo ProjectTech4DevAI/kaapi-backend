@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from openai import OpenAI
 from sqlmodel import Session
 
+from app.core.config import CoordinatorRouterEnum, settings
 from app.core.db import engine
 from app.crud.chatbot import (
     create_chatbot_session,
@@ -35,6 +36,7 @@ from app.services.chatbot.agents.coordinator.prompts import (
 )
 from app.services.chatbot.agents.registry import run_agent_turn
 from app.services.chatbot.config import (
+    get_coordinator_openai_api_key,
     prepare_rag_search_client,
     resolve_chatbot_model_settings,
 )
@@ -345,10 +347,17 @@ def _resolve_turn_context(
     )
     routes: list[CoordinatorRoute] = []
     route_target_nodes: dict[str, TurnNode] = {}
+    coordinator_openai_api_key: str | None = None
     if turn_node.node_type == ChatbotFlowNodeTypeEnum.COORDINATOR:
         routes, route_target_nodes = _resolve_coordinator_routes(
             flow_version=flow_version, coordinator_node_id=turn_node.node_id
         )
+        if settings.CHATBOT_COORDINATOR_ROUTER == CoordinatorRouterEnum.DECISIONS:
+            coordinator_openai_api_key = get_coordinator_openai_api_key(
+                session=session,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
     return TurnContext(
         chatbot_id=chatbot_session.chatbot_id,
         session_status=chatbot_session.status.value,
@@ -362,6 +371,7 @@ def _resolve_turn_context(
         routes=routes,
         route_target_nodes=route_target_nodes,
         in_progress_node_id=in_progress_node_id,
+        coordinator_openai_api_key=coordinator_openai_api_key,
     )
 
 
@@ -421,6 +431,7 @@ def _run_coordinator_turn_and_handoff(
         routes=context.routes,
         model_settings=context.model_settings,
         in_progress_intent=in_progress_intent,
+        openai_api_key=context.coordinator_openai_api_key,
     )
     if decision.target_node_id is None:
         # The fallback only narrows the type; run_coordinator_turn always sets a question when it doesn't route.
