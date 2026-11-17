@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/assessments",
-    tags=["Assessment (API)"],
+    tags=["Assessment (Experimental)"],
 )
 
 
