@@ -4,10 +4,12 @@ import pytest
 from langchain_core.exceptions import OutputParserException
 
 from app.services.chatbot.agents.coordinator.graph import (
-    CoordinatorDecision,
     CoordinatorRoute,
-    RouteDecision,
     run_coordinator_turn,
+)
+from app.services.chatbot.agents.coordinator.types import (
+    CoordinatorDecision,
+    RouteDecision,
 )
 from app.services.chatbot.agents.coordinator.prompts import (
     FALLBACK_CLARIFYING_QUESTION,

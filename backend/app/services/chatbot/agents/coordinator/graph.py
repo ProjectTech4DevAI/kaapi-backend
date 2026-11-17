@@ -1,15 +1,11 @@
-"""Coordinator turn: one structured-output call that routes the user to an agent or asks to clarify.
-
-No LangGraph here — a single model call doesn't need a graph.
-"""
-
-import logging
-from dataclasses import dataclass
+"""Coordinator turn: one structured-output call that routes the user to an agent or asks to clarify."""
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
-from pydantic import BaseModel, Field
-
+from app.services.chatbot.agents.coordinator.types import (
+    CoordinatorDecision,
+    RouteDecision,
+)
 from app.services.chatbot.agents.coordinator.prompts import (
     FALLBACK_CLARIFYING_QUESTION,
     IN_PROGRESS_TEMPLATE,
@@ -29,27 +25,6 @@ from app.services.chatbot.provider_errors import (
 )
 from app.services.chatbot.types import ChatbotMessageDict, CoordinatorRoute
 from app.services.chatbot.utils import ChatbotModelSettings, get_chat_model
-
-logger = logging.getLogger(__name__)
-
-
-class RouteDecision(BaseModel):
-    intent: str | None = Field(
-        default=None,
-        description="Exactly one intent name from the list, or null when none clearly matches.",
-    )
-    clarifying_question: str | None = Field(
-        default=None,
-        description="Question to ask the user when intent is null; otherwise null.",
-    )
-
-
-@dataclass(frozen=True)
-class CoordinatorDecision:
-    """Exactly one of `target_node_id` / `clarifying_question` is set."""
-
-    target_node_id: str | None
-    clarifying_question: str | None
 
 
 def _build_routing_prompt(
@@ -136,10 +111,6 @@ def run_coordinator_turn(
         if route is None:
             route = _match_route(in_progress_intent, routes)
         if route is not None:
-            logger.info(
-                f"[run_coordinator_turn] Routed | intent: {route.intent}, "
-                f"model_intent: {decision.intent}, target_node_id: {route.target_node_id}"
-            )
             return CoordinatorDecision(
                 target_node_id=route.target_node_id, clarifying_question=None
             )
@@ -147,8 +118,4 @@ def run_coordinator_turn(
     question = decision.clarifying_question
     if question is None or not question.strip():
         question = FALLBACK_CLARIFYING_QUESTION
-    logger.info(
-        f"[run_coordinator_turn] Clarifying | model_intent: {decision.intent}, "
-        f"opening_turn: {user_message is None}"
-    )
     return CoordinatorDecision(target_node_id=None, clarifying_question=question)

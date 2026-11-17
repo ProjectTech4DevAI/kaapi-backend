@@ -1,4 +1,3 @@
-import logging
 from dataclasses import replace
 from typing import NamedTuple
 from uuid import UUID
@@ -63,8 +62,6 @@ from app.services.chatbot.types import (
 )
 from app.services.chatbot.utils import ChatbotModelSettings
 from app.utils import APIResponse, get_webhook_secret, send_callback
-
-logger = logging.getLogger(__name__)
 
 SUPERSEDED_SESSION_ERROR = (
     "[KAAPI] Chatbot session was superseded by a newer session; start a new session."
@@ -435,10 +432,6 @@ def _run_coordinator_turn_and_handoff(
         )
 
     target_node = context.route_target_nodes[decision.target_node_id]
-    logger.info(
-        f"[_run_coordinator_turn_and_handoff] Loading route target | "
-        f"target_node_id: {target_node.node_id}, node_type: {target_node.node_type.value}"
-    )
     # Only the chosen target loads, so a broken sibling target can't fail this turn.
     with Session(engine) as session:
         target_settings, target_openai_client = _resolve_node_runtime(
@@ -588,11 +581,6 @@ def process_chatbot_session_message(
         return
 
     _persist_turn(session_id=session_id, outcome=outcome)
-    logger.info(
-        f"[process_chatbot_session_message] Turn stored | session_id: {session_id}, "
-        f"reply_node_id: {outcome.reply_node_id}, "
-        f"next_active_node_id: {outcome.next_active_node_id}"
-    )
     _send_success_webhook(
         session_id=session_id,
         context=context,

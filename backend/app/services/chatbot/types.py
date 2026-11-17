@@ -58,12 +58,10 @@ class TurnContext(NamedTuple):
     chatbot_id: UUID
     session_status: str
     collected_fields: dict[str, Any]
-    # Stored status; only onboarding turns change it, rag and clarifying replies carry it over.
     is_complete: bool
     stored_messages: list[ChatbotSessionMessage]
     turn_node: TurnNode
     model_settings: ChatbotModelSettings
-    # Knowledge-base search client: set only when the active node is rag.
     openai_client: OpenAI | None
     # Coordinator only: its routes and each target's node; the chosen target's settings load after routing.
     routes: list[CoordinatorRoute]

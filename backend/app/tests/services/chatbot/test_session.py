@@ -27,7 +27,7 @@ from app.models import (
 )
 from app.services.chatbot import config as config_service
 from app.services.chatbot import session as session_service
-from app.services.chatbot.agents.coordinator.graph import RouteDecision
+from app.services.chatbot.agents.coordinator.types import RouteDecision
 from app.services.chatbot.agents.coordinator.prompts import (
     FALLBACK_CLARIFYING_QUESTION,
 )
