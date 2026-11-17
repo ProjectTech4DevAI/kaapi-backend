@@ -43,6 +43,18 @@ class UserRegister(SQLModel):
     password: str = Field(min_length=8, max_length=40)
     full_name: str | None = Field(default=None, max_length=255)
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "email": "jane.doe@example.com",
+                    "password": "ChangeMe123!",
+                    "full_name": "Jane Doe",
+                }
+            ]
+        }
+    }
+
 
 # Properties to receive via API on update, all are optional
 class UserUpdate(UserBase):
@@ -54,6 +66,12 @@ class UserUpdateMe(SQLModel):
     full_name: str | None = Field(default=None, max_length=255)
     email: EmailStr | None = Field(default=None, max_length=255)
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{"full_name": "Jane Smith", "email": "jane.smith@example.com"}]
+        }
+    }
+
 
 class NewPassword(SQLModel):
     token: str
@@ -63,6 +81,14 @@ class NewPassword(SQLModel):
 class UpdatePassword(SQLModel):
     current_password: str = Field(min_length=8, max_length=40)
     new_password: str = Field(min_length=8, max_length=40)
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {"current_password": "ChangeMe123!", "new_password": "NewSecret456!"}
+            ]
+        }
+    }
 
 
 # Database model, database table inferred from class name

@@ -172,7 +172,39 @@ class ModelConfig(ModelConfigBase, table=True):
 
 
 class ModelConfigCreate(ModelConfigBase):
-    pass
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "provider": "openai",
+                    "model_name": "gpt-4o-mini",
+                    "completion_type": ["text"],
+                    "config": {
+                        "temperature": {
+                            "type": "float",
+                            "default": 1.0,
+                            "min": 0.0,
+                            "max": 2.0,
+                            "description": "Controls randomness.",
+                        }
+                    },
+                    "input_modalities": ["TEXT", "IMAGE"],
+                    "output_modalities": ["TEXT"],
+                    "pricing": {
+                        "response": {
+                            "input_token_cost": 0.15,
+                            "output_token_cost": 0.6,
+                        },
+                        "batch": {
+                            "input_token_cost": 0.075,
+                            "output_token_cost": 0.3,
+                        },
+                    },
+                    "is_active": True,
+                }
+            ]
+        }
+    }
 
 
 class ModelConfigUpdate(SQLModel):

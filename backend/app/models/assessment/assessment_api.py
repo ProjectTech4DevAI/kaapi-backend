@@ -139,6 +139,47 @@ def derive_method(input_: AssessmentInput) -> AssessmentMethod:
 class AssessmentCreate(BaseModel):
     """New API create request; one config, method inferred from the input type."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "config": {
+                        "id": "7a3c9e1b-2d4f-4b8a-9c6e-1f0d3b5a7e92",
+                        "version": 2,
+                    },
+                    "input": {
+                        "data": [
+                            {
+                                "title": "Solar-powered cold storage",
+                                "description": "Low-cost cold rooms for smallholder farmers.",
+                            },
+                            {
+                                "title": "SMS crop advisory",
+                                "description": "Weekly weather-based tips sent over SMS.",
+                            },
+                        ]
+                    },
+                    "experiment_name": "Idea scoring - Nov cohort",
+                    "callback_url": "https://example.com/webhooks/assessments",
+                    "request_metadata": {"cohort": "2026-11"},
+                },
+                {
+                    "config": {
+                        "id": "7a3c9e1b-2d4f-4b8a-9c6e-1f0d3b5a7e92",
+                        "version": 2,
+                    },
+                    "input": {
+                        "data": {
+                            "title": "Solar-powered cold storage",
+                            "description": "Low-cost cold rooms for smallholder farmers.",
+                        }
+                    },
+                    "callback_url": "https://example.com/webhooks/assessments",
+                },
+            ]
+        }
+    )
+
     config: AssessmentConfigRef
     input: AssessmentInput
     experiment_name: str | None = Field(

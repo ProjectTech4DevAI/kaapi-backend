@@ -42,6 +42,52 @@ def inject_component_schemas(openapi_schema: dict[str, Any]) -> dict[str, Any]:
     return openapi_schema
 
 
+def _schema_example(schema: Any, components: dict[str, Any]) -> Any:
+    """The first example declared on a (possibly `$ref`'d or optional) schema."""
+    for _ in range(10):  # bounded: a self-referencing $ref must not loop forever
+        if not isinstance(schema, dict):
+            return None
+        if "$ref" in schema:
+            schema = components.get(schema["$ref"].rsplit("/", 1)[-1])
+            continue
+        # An optional body (`Model | None`) renders as anyOf[Model, null].
+        branches = [b for b in schema.get("anyOf", []) if b.get("type") != "null"]
+        if len(branches) == 1 and not schema.get("examples"):
+            schema = branches[0]
+            continue
+        break
+    if not isinstance(schema, dict):
+        return None
+    examples = schema.get("examples")
+    if isinstance(examples, list) and examples:
+        return examples[0]
+    return schema.get("example")
+
+
+def hoist_request_examples(openapi_schema: dict[str, Any]) -> dict[str, Any]:
+    """Copy each JSON request body's model-level example onto the body itself.
+
+    Pydantic puts `json_schema_extra` examples on the component schema. Swagger
+    reads them there, but other OpenAPI consumers (notably the Postman
+    converter) only reliably read `requestBody.content.<media>.example`, so
+    without this their requests fall back to `<string>` placeholders.
+    An example already set on the body (e.g. via `doc()`) is left untouched.
+    """
+    components = openapi_schema.get("components", {}).get("schemas", {})
+    for path_item in openapi_schema.get("paths", {}).values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict):
+                continue
+            content = operation.get("requestBody", {}).get("content", {})
+            body = content.get(JSON_MEDIA_TYPE)
+            if not body or "example" in body or "examples" in body:
+                continue
+            example = _schema_example(body.get("schema"), components)
+            if example is not None:
+                body["example"] = example
+    return openapi_schema
+
+
 def ref(name: str) -> dict[str, str]:
     """A `$ref` to a component schema, registered or FastAPI-generated."""
     return {"$ref": f"#/components/schemas/{name}"}

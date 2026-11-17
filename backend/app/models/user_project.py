@@ -71,6 +71,21 @@ class AddUsersToProjectRequest(SQLModel):
     project_id: int
     users: list[UserEntry] = Field(min_length=1)
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "organization_id": 1,
+                    "project_id": 1,
+                    "users": [
+                        {"email": "jane.doe@example.com", "full_name": "Jane Doe"},
+                        {"email": "ravi.kumar@example.com", "full_name": "Ravi Kumar"},
+                    ],
+                }
+            ]
+        }
+    }
+
 
 class UserProjectPublic(SQLModel):
     """Public response model for a user in a project."""

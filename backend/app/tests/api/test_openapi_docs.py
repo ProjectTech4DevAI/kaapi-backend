@@ -7,6 +7,7 @@ from app.api.openapi_docs import (
     JSON_MEDIA_TYPE,
     ResponseDoc,
     doc,
+    hoist_request_examples,
     infer_schema,
     inject_component_schemas,
     ref,
@@ -199,3 +200,93 @@ class TestDoc:
 
     def test_empty_responses_adds_no_key(self) -> None:
         assert doc(responses={}) == {}
+
+
+def _spec(body_schema: dict[str, Any], **media: Any) -> dict[str, Any]:
+    """A one-route spec whose JSON request body uses `body_schema`."""
+    return {
+        "paths": {
+            "/things": {
+                "post": {
+                    "requestBody": {
+                        "content": {JSON_MEDIA_TYPE: {"schema": body_schema, **media}}
+                    }
+                }
+            }
+        },
+        "components": {
+            "schemas": {
+                "Thing": {"type": "object", "examples": [{"name": "pen"}, {"x": 1}]},
+                "Legacy": {"type": "object", "example": {"name": "legacy"}},
+                "Plain": {"type": "object"},
+            }
+        },
+    }
+
+
+def _hoisted(spec: dict[str, Any]) -> dict[str, Any]:
+    return hoist_request_examples(spec)["paths"]["/things"]["post"]["requestBody"][
+        "content"
+    ][JSON_MEDIA_TYPE]
+
+
+class TestHoistRequestExamples:
+    def test_first_model_example_is_copied_onto_the_body(self) -> None:
+        assert _hoisted(_spec(ref("Thing")))["example"] == {"name": "pen"}
+
+    def test_singular_model_example_is_supported(self) -> None:
+        assert _hoisted(_spec(ref("Legacy")))["example"] == {"name": "legacy"}
+
+    def test_optional_body_is_unwrapped(self) -> None:
+        schema = {"anyOf": [ref("Thing"), {"type": "null"}]}
+
+        assert _hoisted(_spec(schema))["example"] == {"name": "pen"}
+
+    def test_existing_body_examples_are_left_alone(self) -> None:
+        body = _hoisted(_spec(ref("Thing"), examples={"a": {"value": {"k": 1}}}))
+
+        assert "example" not in body
+
+    def test_schema_without_example_adds_nothing(self) -> None:
+        assert "example" not in _hoisted(_spec(ref("Plain")))
+
+    def test_unknown_ref_is_ignored(self) -> None:
+        assert "example" not in _hoisted(_spec(ref("Missing")))
+
+
+class TestRequestExamplesMatchTheirModels:
+    """Every documented request example must pass the route's own validation.
+
+    A stale example ships straight to Swagger and the synced Postman
+    collection, so a model change that invalidates one should fail CI.
+    """
+
+    def test_every_json_request_example_validates(self) -> None:
+        from fastapi.routing import APIRoute
+
+        from app.main import app
+
+        spec = app.openapi()
+        failures: list[str] = []
+        for route in app.routes:
+            if not isinstance(route, APIRoute) or route.body_field is None:
+                continue
+            for method in route.methods:
+                operation = spec["paths"].get(route.path_format, {}).get(method.lower())
+                body = (operation or {}).get("requestBody", {}).get("content", {})
+                media = body.get(JSON_MEDIA_TYPE)
+                if not media:
+                    continue
+                examples = [("example", media["example"])] if "example" in media else []
+                examples += [
+                    (name, item.get("value"))
+                    for name, item in (media.get("examples") or {}).items()
+                ]
+                for name, value in examples:
+                    _, errors = route.body_field.validate(value, {}, loc=("body",))
+                    if errors:
+                        failures.append(
+                            f"{method} {route.path_format} [{name}]: {errors}"
+                        )
+
+        assert not failures, "\n".join(failures)

@@ -150,6 +150,21 @@ class EvaluationIterationRunUpdate(SQLModel):
 class EvaluationIterationCreateRequest(SQLModel):
     """Body for POST /api/v2/evaluations/iterations."""
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "dataset_id": 42,
+                    "experiment_name": "faq-bot-prompt-tuning",
+                    "config_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                    "config_version": 1,
+                    "max_rounds": 5,
+                    "callback_url": "https://example.com/webhooks/kaapi",
+                }
+            ]
+        }
+    }
+
     dataset_id: int = Field(description="ID of the evaluation dataset")
     experiment_name: str = Field(
         min_length=3, description="Base name for this iteration loop's per-round runs"

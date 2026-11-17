@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Column, Text
 from sqlmodel import SQLModel
 from sqlalchemy.dialects.postgresql import JSONB
@@ -272,6 +272,17 @@ class STTResultWithSample(STTResultPublic):
 class STTSampleUpdate(BaseModel):
     """Request model for updating an STT sample's language and ground truth."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "language_id": 2,
+                    "ground_truth": "मुझे अपने खाते की शेष राशि जाननी है",
+                }
+            ]
+        }
+    )
+
     language_id: int | None = Field(None, description="Language ID for this sample")
     ground_truth: str | None = Field(None, description="Reference transcription")
 
@@ -279,12 +290,42 @@ class STTSampleUpdate(BaseModel):
 class STTFeedbackUpdate(BaseModel):
     """Request model for updating human feedback on a result."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "is_correct": False,
+                    "comment": "Missed the word 'balance' in the second sentence",
+                }
+            ]
+        }
+    )
+
     is_correct: bool | None = Field(None, description="Is the transcription correct?")
     comment: str | None = Field(None, description="Feedback comment")
 
 
 class STTDatasetCreate(BaseModel):
     """Request model for creating an STT dataset."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "hindi-banking-queries",
+                    "description": "Customer support voice notes in Hindi",
+                    "language_id": 2,
+                    "samples": [
+                        {
+                            "file_id": 101,
+                            "ground_truth": "मुझे अपने खाते की शेष राशि जाननी है",
+                        },
+                        {"file_id": 102},
+                    ],
+                }
+            ]
+        }
+    )
 
     name: str = Field(..., description="Dataset name", min_length=1)
     description: str | None = Field(None, description="Dataset description")
@@ -320,6 +361,18 @@ class STTDatasetWithSamples(STTDatasetPublic):
 
 class STTEvaluationRunCreate(BaseModel):
     """Request model for starting an STT evaluation run."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "run_name": "hindi-banking-gemini-baseline",
+                    "dataset_id": 12,
+                    "models": ["gemini-2.5-pro"],
+                }
+            ]
+        }
+    )
 
     run_name: str = Field(..., description="Name for this evaluation run", min_length=1)
     dataset_id: int = Field(..., description="ID of the STT dataset to evaluate")

@@ -1,0 +1,93 @@
+name: Sync Postman Collection
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "backend/**"
+      - ".github/workflows/sync-postman-collection.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: postman-sync
+  cancel-in-progress: true
+
+env:
+  OPENAPI_TO_POSTMAN_VERSION: "4"
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Prepare env file
+        run: cp .env.test.example .env.test
+
+      - name: Export OpenAPI schema
+        working-directory: backend
+        env:
+          ENVIRONMENT: testing
+        run: |
+          uv sync --frozen
+          uv run python scripts/kaapi_export_openapi.py "$GITHUB_WORKSPACE/openapi.yaml"
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Convert to Postman collection
+        run: |
+          set -euo pipefail
+          npx --yes "openapi-to-postmanv2@${OPENAPI_TO_POSTMAN_VERSION}" \
+            -s openapi.yaml -o collection.json -p \
+            -O folderStrategy=Tags,requestParametersResolution=Example
+          echo "Generated $(jq '[.. | objects | select(has("request"))] | length' collection.json) requests"
+
+      - name: Update Postman collection
+        env:
+          POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
+          POSTMAN_COLLECTION_UID: ${{ secrets.POSTMAN_COLLECTION_UID }}
+        run: |
+          set -euo pipefail
+          api="https://api.getpostman.com/collections/${POSTMAN_COLLECTION_UID}"
+
+          curl -sS --fail-with-body "$api" -H "X-Api-Key: ${POSTMAN_API_KEY}" -o current.json
+
+          jq -n --slurpfile cur current.json --slurpfile gen collection.json '
+            ($cur[0].collection) as $c | $gen[0] as $g |
+            {collection: ({
+              info: {
+                _postman_id: $c.info._postman_id,
+                name: $c.info.name,
+                description: ($c.info.description // $g.info.description),
+                schema: $c.info.schema
+              },
+              item: $g.item,
+              variable: ($c.variable // $g.variable),
+              auth: ($c.auth // $g.auth),
+              event: ($c.event // $g.event)
+            } | with_entries(select(.value != null)))}
+          ' > payload.json
+
+          curl -sS --fail-with-body -X PUT "$api" \
+            -H "X-Api-Key: ${POSTMAN_API_KEY}" \
+            -H "Content-Type: application/json" \
+            --data @payload.json -o /dev/null
+
+          echo "Postman collection updated ✅" | tee -a "$GITHUB_STEP_SUMMARY"

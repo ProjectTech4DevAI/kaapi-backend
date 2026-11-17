@@ -9,7 +9,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Column, Index, Text, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.dialects.postgresql import JSONB
@@ -355,6 +355,36 @@ class AssessmentExportRow(BaseModel):
 
 # NOTE: Only used for UI. The API-client Assessment pipeline does not use this.
 class AssessmentRunCreate(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "experiment_name": "Idea scoring - Nov cohort",
+                    "submission_id": "5b9e2c7a-1f3d-4e8b-a6c2-9d0f7e3b1a24",
+                    "input_binding": {
+                        "prompt": "Assess this idea.\nTitle: {title}\nDescription: {description}",
+                        "text_columns": ["title", "description"],
+                        "attachments": [
+                            {"column": "pitch_deck", "type": "pdf", "format": "url"}
+                        ],
+                    },
+                    "configs": [
+                        {"id": "7a3c9e1b-2d4f-4b8a-9c6e-1f0d3b5a7e92", "version": 2}
+                    ],
+                    "post_processing_config": {
+                        "computed_columns": [
+                            {
+                                "name": "Total_Score",
+                                "formula": "@Novelty_score + @Usefulness_score",
+                            }
+                        ],
+                        "sort": [{"column": "Total_Score", "direction": "desc"}],
+                    },
+                }
+            ]
+        }
+    )
+
     experiment_name: str
     submission_id: UUID
     input_binding: InputBinding

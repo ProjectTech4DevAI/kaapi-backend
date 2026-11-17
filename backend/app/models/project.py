@@ -42,12 +42,35 @@ class ProjectBase(SQLModel):
 class ProjectCreate(ProjectBase):
     organization_id: int
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "name": "WhatsApp Helpline Bot",
+                    "description": "AI assistant answering maternal health questions over WhatsApp",
+                    "is_active": True,
+                    "organization_id": 1,
+                }
+            ]
+        }
+    }
+
 
 # Properties to receive via API on update, all are optional
 class ProjectUpdate(SQLModel):
     name: str | None = Field(default=None, max_length=255)
     description: str | None = Field(default=None, max_length=500)
     is_active: bool | None = Field(default=None)
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "description": "AI assistant answering maternal and child health questions over WhatsApp"
+                }
+            ]
+        }
+    }
 
 
 # Properties to receive via API when patching project settings.
@@ -56,6 +79,8 @@ class ProjectSettingsUpdate(SQLModel):
         default=None,
         description="Enable/disable Langfuse tracing for this project.",
     )
+
+    model_config = {"json_schema_extra": {"examples": [{"tracing": True}]}}
 
 
 # Database model for Project

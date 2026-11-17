@@ -289,7 +289,25 @@ def update_post_processing(
     run_id: int,
     session: SessionDep,
     auth_context: AuthContextDep,
-    config: dict[str, Any] | None = Body(default=None),
+    config: dict[str, Any]
+    | None = Body(
+        default=None,
+        openapi_examples={
+            "computed_sort_filter": {
+                "summary": "Total score column, filtered and sorted",
+                "value": {
+                    "computed_columns": [
+                        {
+                            "name": "Total_Score",
+                            "formula": "@Novelty_score + @Usefulness_score",
+                        }
+                    ],
+                    "filter": [{"column": "Total_Score", "op": "gt", "value": 5}],
+                    "sort": [{"column": "Total_Score", "direction": "desc"}],
+                },
+            },
+        },
+    ),
 ) -> APIResponse[AssessmentRunPublic]:
     """Save post-processing config (computed columns, sort, filter) for a run."""
     run = get_run_by_id(

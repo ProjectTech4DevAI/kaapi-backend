@@ -33,11 +33,21 @@ class OrganizationBase(SQLModel):
 class OrganizationCreate(OrganizationBase):
     pass
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{"name": "Acme Health Foundation", "is_active": True}]
+        }
+    }
+
 
 # Properties to receive via API on update, all are optional
 class OrganizationUpdate(SQLModel):
     name: str | None = Field(default=None, max_length=255)
     is_active: bool | None = Field(default=None)
+
+    model_config = {
+        "json_schema_extra": {"examples": [{"name": "Acme Health Foundation India"}]}
+    }
 
 
 # Database model for Organization

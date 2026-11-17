@@ -138,6 +138,30 @@ def _enforce_tag_immutable(
 class ConfigCreate(ConfigBase):
     """Create new configuration"""
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "name": "helpline-assistant",
+                    "description": "Answers beneficiary questions about the program",
+                    "config_blob": {
+                        "completion": {
+                            "provider": "openai",
+                            "type": "text",
+                            "params": {
+                                "model": "gpt-4o-mini",
+                                "instructions": "You are a helpful assistant. Answer briefly and politely.",
+                                "temperature": 0.3,
+                                "max_output_tokens": 1024,
+                            },
+                        }
+                    },
+                    "commit_message": "Initial configuration",
+                }
+            ]
+        }
+    }
+
     tag: ConfigTag = Field(
         default=ConfigTag.DEFAULT,
         description=(
@@ -196,7 +220,17 @@ class ConfigUpdate(SQLModel):
     # field (e.g. `tag`, `config_blob`) with a 422 instead of silently ignoring it —
     # `tag` is fixed at creation (it selects the config_blob shape) and `config_blob`
     # is changed only through versioning.
-    model_config = {"extra": "forbid"}
+    model_config = {
+        "extra": "forbid",
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "name": "helpline-assistant-v2",
+                    "description": "Answers beneficiary questions in English and Hindi",
+                }
+            ]
+        },
+    }
 
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = Field(

@@ -27,6 +27,8 @@ class ModelEvaluationBase(SQLModel):
 
 
 class ModelEvaluationCreate(SQLModel):
+    model_config = {"json_schema_extra": {"examples": [{"fine_tuning_ids": [7, 8]}]}}
+
     fine_tuning_ids: list[int]
 
     @field_validator("fine_tuning_ids")

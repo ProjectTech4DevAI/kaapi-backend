@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
@@ -160,6 +160,22 @@ class TTSSampleCreate(BaseModel):
 class TTSDatasetCreate(BaseModel):
     """Request model for creating a TTS dataset."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "hindi-ivr-prompts",
+                    "description": "IVR prompts for the Hindi helpline",
+                    "language_id": 2,
+                    "samples": [
+                        {"text": "नमस्ते, हमारी हेल्पलाइन पर आपका स्वागत है।"},
+                        {"text": "कृपया अपना पंजीकृत मोबाइल नंबर दर्ज करें।"},
+                    ],
+                }
+            ]
+        }
+    )
+
     name: str = Field(..., description="Dataset name", min_length=1, max_length=255)
     description: str | None = Field(None, description="Dataset description")
     language_id: int | None = Field(
@@ -263,6 +279,21 @@ class TTSResultPublic(BaseModel):
 class TTSFeedbackUpdate(BaseModel):
     """Request model for updating human feedback on a TTS result."""
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "is_correct": True,
+                    "comment": "Clear audio, slightly robotic intonation",
+                    "score": {
+                        "Speech Naturalness": "medium",
+                        "Pronunciation Accuracy": "high",
+                    },
+                }
+            ]
+        }
+    )
+
     is_correct: bool | None = Field(
         None, description="Is the synthesized audio correct?"
     )
@@ -281,6 +312,18 @@ class TTSFeedbackUpdate(BaseModel):
 
 class TTSEvaluationRunCreate(BaseModel):
     """Request model for starting a TTS evaluation run."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "run_name": "hindi-ivr-gemini-tts",
+                    "dataset_id": 15,
+                    "models": ["gemini-2.5-pro-preview-tts"],
+                }
+            ]
+        }
+    )
 
     run_name: str = Field(..., description="Name for this evaluation run", min_length=1)
     dataset_id: int = Field(..., description="ID of the TTS dataset to evaluate")

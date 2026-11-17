@@ -113,6 +113,12 @@ class CollectionOptions(SQLModel):
 
 
 class CallbackRequest(SQLModel):
+    model_config = {
+        "json_schema_extra": {
+            "examples": [{"callback_url": "https://example.com/webhooks/collections"}]
+        }
+    }
+
     callback_url: HttpUrl | None = Field(
         default=None,
         description="URL to call to report endpoint status",
@@ -133,6 +139,23 @@ class CreationRequest(
     ProviderOptions,
     CallbackRequest,
 ):
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "name": "Program FAQs",
+                    "description": "FAQ and policy documents for the helpline assistant",
+                    "documents": [
+                        "6f1c2b9e-4a3d-4c8e-9b7a-2d5e8f1a3c47",
+                        "a2d4e6f8-1b3c-4d5e-8f9a-0b1c2d3e4f5a",
+                    ],
+                    "provider": "openai",
+                    "callback_url": "https://example.com/webhooks/collections",
+                }
+            ]
+        }
+    }
+
     def extract_super_type(self, cls: "CreationRequest"):
         for field_name in type(cls).model_fields.keys():
             field_value = getattr(self, field_name)
@@ -144,6 +167,17 @@ class DeletionRequest(CallbackRequest):
 
 
 class CollectionUpdate(SQLModel):
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "name": "Program FAQs 2026",
+                    "description": "Updated FAQ and policy documents",
+                }
+            ]
+        }
+    }
+
     name: str | None = Field(
         default=None,
         min_length=1,

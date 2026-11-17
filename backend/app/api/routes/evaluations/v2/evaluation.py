@@ -23,6 +23,22 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation v2"])
     "",
     description=load_description("evaluation/v2/create_evaluation.md"),
     response_model=APIResponse[EvaluationRunPublic],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "example": {
+                        "dataset_id": 42,
+                        "experiment_name": "faq-bot-judged-run",
+                        "config_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                        "config_version": 2,
+                        "duplication_factor": 3,
+                        "callback_url": "https://example.com/webhooks/kaapi",
+                    }
+                }
+            }
+        }
+    },
     dependencies=[
         Depends(require_permission(Permission.REQUIRE_PROJECT)),
         Depends(monitor_rate("evaluations")),

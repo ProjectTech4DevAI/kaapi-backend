@@ -1,7 +1,7 @@
 import logging
 from collections import defaultdict
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import SessionDep
 from app.api.permissions import Permission, require_permission
@@ -26,6 +26,10 @@ from app.utils import APIResponse, load_description
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/models", tags=["Model Config"])
+
+_MODEL_CREATE_EXAMPLE = ModelConfigCreate.model_config["json_schema_extra"]["examples"][
+    0
+]
 
 
 @router.get(
@@ -107,7 +111,29 @@ def get_model(
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
 def create_models(
-    session: SessionDep, data: ModelConfigCreate | list[ModelConfigCreate]
+    session: SessionDep,
+    data: ModelConfigCreate
+    | list[ModelConfigCreate] = Body(
+        openapi_examples={
+            "single": {
+                "summary": "Register one model",
+                "value": _MODEL_CREATE_EXAMPLE,
+            },
+            "bulk": {
+                "summary": "Register several models at once",
+                "value": [
+                    _MODEL_CREATE_EXAMPLE,
+                    {
+                        "provider": "openai",
+                        "model_name": "gpt-4o-mini-transcribe",
+                        "completion_type": ["stt"],
+                        "input_modalities": ["AUDIO"],
+                        "output_modalities": ["TEXT"],
+                    },
+                ],
+            },
+        }
+    ),
 ) -> APIResponse[list[ModelConfigPublic]]:
     items = data if isinstance(data, list) else [data]
     models = bulk_create_model_configs(session=session, items=items)
@@ -137,7 +163,31 @@ def update_model(
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
 )
 def bulk_update_models(
-    session: SessionDep, items: list[ModelConfigBulkUpdateItem]
+    session: SessionDep,
+    items: list[ModelConfigBulkUpdateItem] = Body(
+        openapi_examples={
+            "bulk_update": {
+                "summary": "Update pricing and deactivate a model",
+                "value": [
+                    {
+                        "provider": "openai",
+                        "model_name": "gpt-4o-mini",
+                        "pricing": {
+                            "response": {
+                                "input_token_cost": 0.15,
+                                "output_token_cost": 0.6,
+                            }
+                        },
+                    },
+                    {
+                        "provider": "google",
+                        "model_name": "gemini-2.0-flash",
+                        "is_active": False,
+                    },
+                ],
+            }
+        }
+    ),
 ) -> APIResponse[list[ModelConfigPublic]]:
     models = bulk_update_model_configs(session=session, items=items)
     return APIResponse.success_response(models)
