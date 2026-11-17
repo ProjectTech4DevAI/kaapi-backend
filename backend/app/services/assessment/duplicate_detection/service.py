@@ -129,6 +129,7 @@ def submit(
                 tag=ConfigTag.ASSESSMENT,
             ).exists_or_raise(version_number=ref.version)
 
+            # Checked at submit so a broken config is a 422 now, not a failed webhook later.
             _require_usable(level, version.config_blob)
 
         assessment, runs = crud.create_assessment(
@@ -195,6 +196,7 @@ def _store(
     errors = [e for e in (result.errors.strict, result.errors.lenient) if e]
     span = trace.get_current_span()
 
+    # One check failing still delivers the other's result (COMPLETED_WITH_ERRORS).
     if not errors:
         status = AssessmentStatus.COMPLETED
     elif len(errors) == len(DetectionLevel):
@@ -273,6 +275,7 @@ def _deliver(
 def run_duplicate_detection(*, assessment_id: UUID) -> None:
     """Run a claimed job: one session, no connection held during the provider calls."""
     with suppress_instrumentation(), Session(engine) as session:
+        # Only one worker can move the job out of PENDING, so a redelivered task never runs it twice.
         assessment = crud.claim_assessment(
             session=session,
             assessment_id=assessment_id,
@@ -327,6 +330,7 @@ def run_duplicate_detection(*, assessment_id: UUID) -> None:
             finally:
                 detector.close()
 
+        # Any failure still becomes a stored FAILED result and a webhook, so the caller is never left waiting.
         except Exception as exc:
             error = (
                 f"[KAAPI] Duplicate detection could not run "
@@ -347,6 +351,7 @@ def run_duplicate_detection(*, assessment_id: UUID) -> None:
             session=session, assessment=assessment, runs=runs, result=result
         )
 
+    # Sent after the session closes, so a slow callback endpoint does not hold a DB connection.
     _deliver(
         assessment_id=assessment_id,
         request=request,

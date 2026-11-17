@@ -11,7 +11,18 @@ MAX_SIMILARITY_SCORE = 5
 
 
 class DetectionLevel(StrEnum):
-    """The two checks of a job; also marks which run row belongs to which check."""
+    """
+    The two checks of a job; each searches its own vector store, set by its config.
+    NOTE: create two separate ASSESSMENT configs through the config API, one for strict and
+    one for lenient, each with its own prompt, knowledge_base_ids (vector store) and
+    max_num_results (how many entries the search returns for that check).
+
+    STRICT: searches the strict store (e.g. shortlisted entries); answers yes/no, is the
+    submission an exact duplicate of one entry, and returns that entry.
+
+    LENIENT: searches the lenient store (e.g. all earlier entries); returns the similar
+    entries, each scored 1 (loosely related) to 5 (same idea).
+    """
 
     STRICT = "strict"
     LENIENT = "lenient"
