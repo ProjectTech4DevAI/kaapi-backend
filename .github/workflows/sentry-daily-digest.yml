@@ -1,0 +1,46 @@
+name: Sentry Daily Error Digest
+
+on:
+  schedule:
+    - cron: "30 15 * * *" # 9:00 PM IST daily
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "Look-back window in hours"
+        default: "24"
+
+permissions:
+  contents: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: kaapi-production
+            webhook_secret: SENTRY_DIGEST_WEBHOOK_PRODUCTION # #ops-production
+          - project: kaapi-staging
+            webhook_secret: SENTRY_DIGEST_WEBHOOK_STAGING # #ops
+    name: digest (${{ matrix.project }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Post digest to Discord
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets[matrix.webhook_secret] }}
+          DISCORD_ROLE_ID: ${{ vars.SENTRY_DIGEST_DISCORD_ROLE_ID }}
+          PROJECT: ${{ matrix.project }}
+          HOURS: ${{ github.event.inputs.hours || '24' }}
+        run: |
+          python scripts/python/sentry_daily_digest.py \
+            --project "$PROJECT" \
+            --hours "$HOURS" \
+            --send
