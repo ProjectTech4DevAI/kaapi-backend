@@ -407,10 +407,14 @@ def _run_coordinator_turn_and_handoff(
 ) -> _TurnOutcome:
     """Route, then let the chosen agent reply in the same turn (silent handoff)."""
     coordinator_node = context.turn_node
-    in_progress_intent: str | None = None
-    for route in context.routes:
-        if route.target_node_id == context.in_progress_node_id:
-            in_progress_intent = route.intent
+    in_progress_intent = next(
+        (
+            route.intent
+            for route in context.routes
+            if route.target_node_id == context.in_progress_node_id
+        ),
+        None,
+    )
     decision = run_coordinator_turn(
         system_prompt=coordinator_node.prompt,
         history=history,
