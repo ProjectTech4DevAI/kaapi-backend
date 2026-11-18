@@ -190,3 +190,96 @@ class TestRunChatbotSessionMessage:
                 "webhook_url": "https://hooks.example.com/chatbot",
             }
         ]
+
+
+class TestRunDuplicateDetection:
+    def test_runs_the_service_for_the_job(self):
+        job_id = uuid4()
+        received: list = []
+        with (
+            patch.object(job_execution, "_set_trace", lambda trace_id: None),
+            patch(
+                "app.services.assessment.duplicate_detection.service.run_duplicate_detection",
+                lambda *, assessment_id: received.append(assessment_id),
+            ),
+        ):
+            job_execution.run_duplicate_detection(
+                assessment_id=str(job_id), trace_id="trace-1"
+            )
+
+        assert received == [job_id]
+
+
+class TestFailDuplicateDetection:
+    def _request_trace(self) -> tuple[int, dict[str, str]]:
+        from opentelemetry import propagate, trace
+        from opentelemetry.trace import (
+            NonRecordingSpan,
+            SpanContext,
+            TraceFlags,
+        )
+
+        trace_id = 0x4C53557F3479295AB5D96C9A6EC0F05D
+        request = trace.set_span_in_context(
+            NonRecordingSpan(
+                SpanContext(
+                    trace_id=trace_id,
+                    span_id=0x1234567890ABCDEF,
+                    is_remote=True,
+                    trace_flags=TraceFlags(TraceFlags.SAMPLED),
+                )
+            )
+        )
+        headers: dict[str, str] = {}
+        propagate.inject(headers, context=request)
+        return trace_id, headers
+
+    def test_fails_the_job_inside_the_requests_trace(self):
+        from opentelemetry import trace
+
+        job_id = uuid4()
+        trace_id, headers = self._request_trace()
+        received: list = []
+
+        def _fail(*, assessment_id):
+            received.append(
+                (assessment_id, trace.get_current_span().get_span_context().trace_id)
+            )
+
+        with (
+            patch.object(job_execution, "_set_trace", lambda trace_id: None),
+            patch(
+                "app.services.assessment.duplicate_detection.service.fail_interrupted",
+                _fail,
+            ),
+        ):
+            # Celery calls a link_error handler with the failed task's id first.
+            job_execution.fail_duplicate_detection(
+                "failed-task-id",
+                assessment_id=str(job_id),
+                trace_id="trace-1",
+                trace_headers=headers,
+            )
+
+        assert received == [(job_id, trace_id)]
+
+    def test_leaves_no_trace_context_behind(self):
+        from opentelemetry import trace
+
+        _, headers = self._request_trace()
+        with (
+            patch.object(job_execution, "_set_trace", lambda trace_id: None),
+            patch(
+                "app.services.assessment.duplicate_detection.service.fail_interrupted",
+                lambda *, assessment_id: None,
+            ),
+        ):
+            job_execution.fail_duplicate_detection(
+                "failed-task-id",
+                assessment_id=str(uuid4()),
+                trace_id="trace-1",
+                trace_headers=headers,
+            )
+
+        # A leaked context would put the worker's next task into this request's trace.
+        assert not trace.get_current_span().get_span_context().is_valid

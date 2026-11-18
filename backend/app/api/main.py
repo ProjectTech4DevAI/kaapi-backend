@@ -39,6 +39,7 @@ from app.api.routes import (
     assessment as assessment_routes,
 )
 from app.api.routes.assessment import api as assessment_api_routes
+from app.api.routes.assessment import duplicate_detection
 from app.api.routes.evaluations.v2 import router as evaluations_v2_router
 
 api_router = APIRouter()
@@ -56,6 +57,7 @@ api_router.include_router(credentials.router)
 api_router.include_router(cron.router)
 api_router.include_router(doc_transformation_job.router)
 api_router.include_router(documents.router)
+api_router.include_router(duplicate_detection.router)
 api_router.include_router(evaluations.router)
 api_router.include_router(features.router)
 api_router.include_router(fine_tuning.router)
