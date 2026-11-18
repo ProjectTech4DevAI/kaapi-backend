@@ -21,9 +21,9 @@ jobs:
       matrix:
         include:
           - project: kaapi-production
-            webhook_secret: SENTRY_DIGEST_WEBHOOK_PRODUCTION # #ops-production
+            webhook_secret: SENTRY_DIGEST_WEBHOOK_PRODUCTION
           - project: kaapi-staging
-            webhook_secret: SENTRY_DIGEST_WEBHOOK_STAGING # #ops
+            webhook_secret: SENTRY_DIGEST_WEBHOOK_STAGING
     name: digest (${{ matrix.project }})
     steps:
       - uses: actions/checkout@v4
