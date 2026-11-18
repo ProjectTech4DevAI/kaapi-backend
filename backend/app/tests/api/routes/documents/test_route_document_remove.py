@@ -23,7 +23,7 @@ def route():
 
 class TestDocumentRouteRemove:
     @openai_responses.mock()
-    @patch("app.api.routes.documents.get_openai_client")
+    @patch("app.api.routes.documents.document.get_openai_client")
     def test_response_is_success(
         self,
         mock_get_openai_client: Any,
@@ -42,7 +42,7 @@ class TestDocumentRouteRemove:
             assert response.is_success
 
     @openai_responses.mock()
-    @patch("app.api.routes.documents.get_openai_client")
+    @patch("app.api.routes.documents.document.get_openai_client")
     def test_item_is_soft_removed(
         self,
         mock_get_openai_client: Any,
@@ -66,7 +66,7 @@ class TestDocumentRouteRemove:
             assert result.deleted_at is not None
 
     @openai_responses.mock()
-    @patch("app.api.routes.documents.get_openai_client")
+    @patch("app.api.routes.documents.document.get_openai_client")
     def test_cannot_remove_unknown_document(
         self,
         mock_get_openai_client: Any,
