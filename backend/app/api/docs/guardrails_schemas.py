@@ -661,9 +661,12 @@ VALIDATOR_TYPES: tuple[ValidatorType, ...] = (
                 "metrics",
                 {"type": "object"},
                 (
-                    "Metric name to a plain-English description of "
-                    'what earns a high score, e.g. `{"clarity": "Is the '
-                    'answer easy to follow?"}`.'
+                    "Metric name to `{description, threshold}`: a plain-English "
+                    "description of what earns a high score, and the minimum "
+                    "passing score (at most `max_score`), e.g. "
+                    '`{"clarity": {"description": "Is the answer easy to '
+                    'follow?", "threshold": 3}}`. A bare description string '
+                    "crashes the run."
                 ),
             ),
             ConfigKey(

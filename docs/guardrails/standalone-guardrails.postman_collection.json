@@ -1,0 +1,4446 @@
+{
+  "info": {
+    "_postman_id": "4782f29b-c6b9-4694-a1d9-cfbdbc97f00d",
+    "name": "Kaapi Standalone Guardrails",
+    "description": "Run Kaapi guardrails on any text with `POST /api/v1/guardrails`, then fetch the result with `GET /api/v1/guardrails/{job_id}`.\n\n**Setup:** set the collection variables `base_url` (e.g. `http://localhost:8000`) and `API_KEY` (the full value, e.g. `ApiKey abc…`).\n\nEvery submit request stores `job_id`, so run **Get result** right after it. Each `config` entry is either an inline spec (`{\"type\": \"pii_remover\", ...}`) or a stored config (`{\"validator_config_id\": \"...\"}`). Full guide: `docs/guardrails/standalone-guardrails.md`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "value",
+        "value": "{{API_KEY}}",
+        "type": "string"
+      },
+      {
+        "key": "key",
+        "value": "X-API-KEY",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "API_KEY",
+      "value": ""
+    },
+    {
+      "key": "job_id",
+      "value": ""
+    },
+    {
+      "key": "validator_config_id",
+      "value": ""
+    },
+    {
+      "key": "ban_list_id",
+      "value": ""
+    },
+    {
+      "key": "llm_prompt_config_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Quick start",
+      "item": [
+        {
+          "name": "Submit text (PII remover)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Smallest useful request: one inline validator, results by polling."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Smallest useful request: one inline validator, results by polling."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"fae56084-637e-4540-8ba0-836a1dbc81c3\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:12:37.879737\",\n    \"job_updated_at\": \"2026-11-12T16:12:37.879747\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Smallest useful request: one inline validator, results by polling."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"fae56084-637e-4540-8ba0-836a1dbc81c3\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"230230e1-c2b6-489c-88cd-7d7e55dc486d\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"Hi, I'm Ravi. Mail me at <EMAIL_ADDRESS> or call <PHONE_NUMBER>. My PAN is <IN_PAN>.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get result",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/{{job_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "{{job_id}}"
+              ]
+            },
+            "description": "Poll until `data.status` is `SUCCESS` or `FAILED`. Cleaned text: `data.guardrails_response.response.output.content.value`. `job_id` is set by the last submit request."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ok', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List available validator types",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Catalogue of validator types with every tuning parameter and its default."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2. Validators (inline)",
+      "item": [
+        {
+          "name": "pii_remover: default entities",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Masks emails, phones, PAN, Aadhaar and more."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Masks emails, phones, PAN, Aadhaar and more."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"fae56084-637e-4540-8ba0-836a1dbc81c3\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:12:37.879737\",\n    \"job_updated_at\": \"2026-11-12T16:12:37.879747\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Masks emails, phones, PAN, Aadhaar and more."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"fae56084-637e-4540-8ba0-836a1dbc81c3\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"230230e1-c2b6-489c-88cd-7d7e55dc486d\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"Hi, I'm Ravi. Mail me at <EMAIL_ADDRESS> or call <PHONE_NUMBER>. My PAN is <IN_PAN>.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "pii_remover: email only",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\",\n      \"entity_types\": [\n        \"EMAIL_ADDRESS\"\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Restrict which entity types are masked."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\",\n      \"entity_types\": [\n        \"EMAIL_ADDRESS\"\n      ]\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Restrict which entity types are masked."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"80c821eb-3a9e-4c32-a154-6d78f0c98229\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:12:42.036253\",\n    \"job_updated_at\": \"2026-11-12T16:12:42.036259\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\",\n      \"entity_types\": [\n        \"EMAIL_ADDRESS\"\n      ]\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Restrict which entity types are masked."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"80c821eb-3a9e-4c32-a154-6d78f0c98229\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"875b3a14-59b1-4477-9f73-5594fd6848df\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"Hi, I'm Ravi. Mail me at <EMAIL_ADDRESS> or call 9876543210. My PAN is ABCDE1234F.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "pii_remover: block instead of mask",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\",\n      \"on_fail\": \"exception\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "`on_fail: exception` makes the job FAILED when PII is found."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\",\n      \"on_fail\": \"exception\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "`on_fail: exception` makes the job FAILED when PII is found."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"375e90fa-dac3-4305-9b91-4fecf2d79694\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:12:42.438399\",\n    \"job_updated_at\": \"2026-11-12T16:12:42.438403\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (FAILED) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\",\n      \"on_fail\": \"exception\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "`on_fail: exception` makes the job FAILED when PII is found."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"375e90fa-dac3-4305-9b91-4fecf2d79694\",\n    \"status\": \"FAILED\",\n    \"guardrails_response\": null,\n    \"error_message\": \"PII detected in the text.\",\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "uli_slur_match: redact slurs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Tu ek dum chutiya hai, bakwaas mat kar.\",\n  \"config\": [\n    {\n      \"type\": \"uli_slur_match\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "English and Hindi/Hinglish slur list. Defaults: languages [en, hi], severity all."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Tu ek dum chutiya hai, bakwaas mat kar.\",\n  \"config\": [\n    {\n      \"type\": \"uli_slur_match\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "English and Hindi/Hinglish slur list. Defaults: languages [en, hi], severity all."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"1155abb7-c8a6-47cd-b196-d82b95eaf0d9\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:12:48.916713\",\n    \"job_updated_at\": \"2026-11-12T16:12:48.916718\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Tu ek dum chutiya hai, bakwaas mat kar.\",\n  \"config\": [\n    {\n      \"type\": \"uli_slur_match\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "English and Hindi/Hinglish slur list. Defaults: languages [en, hi], severity all."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"1155abb7-c8a6-47cd-b196-d82b95eaf0d9\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"36b3e4be-791d-4165-b2f1-176f7f9b46c0\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"tu ek dum [REDACTED_SLUR] hai, bakwaas mat kar.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "uli_slur_match: block",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Tu ek dum chutiya hai, bakwaas mat kar.\",\n  \"config\": [\n    {\n      \"type\": \"uli_slur_match\",\n      \"on_fail\": \"exception\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Job FAILED with the matched words in error_message."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Tu ek dum chutiya hai, bakwaas mat kar.\",\n  \"config\": [\n    {\n      \"type\": \"uli_slur_match\",\n      \"on_fail\": \"exception\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Job FAILED with the matched words in error_message."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"4554eacf-b66f-42c5-963b-c7bbcf98d7a8\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:12:49.303687\",\n    \"job_updated_at\": \"2026-11-12T16:12:49.303692\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (FAILED) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Tu ek dum chutiya hai, bakwaas mat kar.\",\n  \"config\": [\n    {\n      \"type\": \"uli_slur_match\",\n      \"on_fail\": \"exception\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Job FAILED with the matched words in error_message."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"4554eacf-b66f-42c5-963b-c7bbcf98d7a8\",\n    \"status\": \"FAILED\",\n    \"guardrails_response\": null,\n    \"error_message\": \"Mentioned toxic words: chutiya\",\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "content_safety: toxic text",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"You are a worthless idiot and I will make you regret this.\",\n  \"config\": [\n    {\n      \"type\": \"content_safety\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Multilingual toxicity classifier; flagged text is replaced with the fallback message."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"You are a worthless idiot and I will make you regret this.\",\n  \"config\": [\n    {\n      \"type\": \"content_safety\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Multilingual toxicity classifier; flagged text is replaced with the fallback message."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"eba7b5cb-7588-4428-ad91-3b4f54fae44f\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:12:54.510555\",\n    \"job_updated_at\": \"2026-11-12T16:12:54.510559\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"You are a worthless idiot and I will make you regret this.\",\n  \"config\": [\n    {\n      \"type\": \"content_safety\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Multilingual toxicity classifier; flagged text is replaced with the fallback message."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"eba7b5cb-7588-4428-ad91-3b4f54fae44f\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"d8b3a0b8-5182-46bf-a497-e847a78d0bbf\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"Please rephrase the query without unsafe content.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "content_safety: custom fallback",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"You are a worthless idiot and I will make you regret this.\",\n  \"config\": [\n    {\n      \"type\": \"content_safety\",\n      \"on_fail\": \"rephrase\",\n      \"fallback_message\": \"Please keep it respectful.\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Set your own fallback message."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"You are a worthless idiot and I will make you regret this.\",\n  \"config\": [\n    {\n      \"type\": \"content_safety\",\n      \"on_fail\": \"rephrase\",\n      \"fallback_message\": \"Please keep it respectful.\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Set your own fallback message."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"2c70d9c9-3d80-44d4-ae90-0d9629bb3056\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:13:08.223412\",\n    \"job_updated_at\": \"2026-11-12T16:13:08.223416\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"You are a worthless idiot and I will make you regret this.\",\n  \"config\": [\n    {\n      \"type\": \"content_safety\",\n      \"on_fail\": \"rephrase\",\n      \"fallback_message\": \"Please keep it respectful.\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Set your own fallback message."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"2c70d9c9-3d80-44d4-ae90-0d9629bb3056\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"78c14077-f3c6-43c3-a220-56fbe8f0b9a6\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"Please keep it respectful.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "content_safety: clean text passes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"What are the opening hours of the health centre?\",\n  \"config\": [\n    {\n      \"type\": \"content_safety\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Safe text is returned unchanged."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"What are the opening hours of the health centre?\",\n  \"config\": [\n    {\n      \"type\": \"content_safety\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Safe text is returned unchanged."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"d9d98f57-2c3b-4b78-8d75-0bc877fab39c\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:13:09.841332\",\n    \"job_updated_at\": \"2026-11-12T16:13:09.841337\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"What are the opening hours of the health centre?\",\n  \"config\": [\n    {\n      \"type\": \"content_safety\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Safe text is returned unchanged."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"d9d98f57-2c3b-4b78-8d75-0bc877fab39c\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"2ba3ac8a-6591-43ac-908a-bdff54583345\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"What are the opening hours of the health centre?\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "gender_assumption_bias",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Every nurse should remember that she must be gentle, and every surgeon knows he must stay calm.\",\n  \"config\": [\n    {\n      \"type\": \"gender_assumption_bias\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Rewrites gendered assumptions to neutral wording. categories: generic, healthcare, education, all."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Every nurse should remember that she must be gentle, and every surgeon knows he must stay calm.\",\n  \"config\": [\n    {\n      \"type\": \"gender_assumption_bias\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Rewrites gendered assumptions to neutral wording. categories: generic, healthcare, education, all."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"6443327c-2ce0-4eb9-a5a6-29a93497db2c\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:13:10.229047\",\n    \"job_updated_at\": \"2026-11-12T16:13:10.229052\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Every nurse should remember that she must be gentle, and every surgeon knows he must stay calm.\",\n  \"config\": [\n    {\n      \"type\": \"gender_assumption_bias\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Rewrites gendered assumptions to neutral wording. categories: generic, healthcare, education, all."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"6443327c-2ce0-4eb9-a5a6-29a93497db2c\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"d730baa1-c214-4e11-8518-8453a964b884\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"Every nurse should remember that they must be gentle, and every surgeon knows they must stay calm.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "topic_relevance_llm: off-topic",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Which IPL team will win the cup this year?\",\n  \"config\": [\n    {\n      \"type\": \"topic_relevance_llm\",\n      \"configuration\": \"Questions about maternal health, pregnancy, nutrition during pregnancy and newborn care.\",\n      \"fallback_message\": \"I can only help with maternal and newborn health questions.\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "LLM judges relevance to `configuration`. Needs a working OpenAI key on the guardrails service."
+          },
+          "response": []
+        },
+        {
+          "name": "topic_relevance_llm: on-topic",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"What should a pregnant woman eat in the third trimester?\",\n  \"config\": [\n    {\n      \"type\": \"topic_relevance_llm\",\n      \"configuration\": \"Questions about maternal health, pregnancy, nutrition during pregnancy and newborn care.\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "On-topic text passes unchanged."
+          },
+          "response": []
+        },
+        {
+          "name": "Get result",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/{{job_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "{{job_id}}"
+              ]
+            },
+            "description": "Poll until `data.status` is `SUCCESS` or `FAILED`. Cleaned text: `data.guardrails_response.response.output.content.value`. `job_id` is set by the last submit request."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ok', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Stored validator configs",
+      "item": [
+        {
+          "name": "Create stored config (PII)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.id) {",
+                  "    pm.collectionVariables.set('validator_config_id', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              },
+              "raw": "{\n  \"name\": \"Support PII masking\",\n  \"type\": \"pii_remover\",\n  \"stage\": \"input\",\n  \"on_fail_action\": \"fix\",\n  \"entity_types\": [\n    \"EMAIL_ADDRESS\",\n    \"PHONE_NUMBER\",\n    \"IN_PAN\"\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/validators/configs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "validators",
+                "configs"
+              ]
+            },
+            "description": "Saves a tuned validator. Stores its id in `validator_config_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "List stored configs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/validators/configs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "validators",
+                "configs"
+              ]
+            },
+            "description": "All stored validator configs for your project."
+          },
+          "response": []
+        },
+        {
+          "name": "Use stored config by id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Reference a stored config instead of describing it inline."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Reference a stored config instead of describing it inline."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"782b1157-1690-49d0-bf12-1ff20ee5a106\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:13:26.411468\",\n    \"job_updated_at\": \"2026-11-12T16:13:26.411473\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Reference a stored config instead of describing it inline."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"782b1157-1690-49d0-bf12-1ff20ee5a106\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"30b2e556-5724-4056-a62e-05f4b4681a9f\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"Hi, I'm Ravi. Mail me at <EMAIL_ADDRESS> or call <PHONE_NUMBER>. My PAN is <IN_PAN>.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get result",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/{{job_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "{{job_id}}"
+              ]
+            },
+            "description": "Poll until `data.status` is `SUCCESS` or `FAILED`. Cleaned text: `data.guardrails_response.response.output.content.value`. `job_id` is set by the last submit request."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ok', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete stored config",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/validators/configs/{{validator_config_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "validators",
+                "configs",
+                "{{validator_config_id}}"
+              ]
+            },
+            "description": "Clean up the config created above."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4. Combining & request options",
+      "item": [
+        {
+          "name": "Chain: stored + inline validators",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F. Tu ek dum chutiya hai, bakwaas mat kar.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    },\n    {\n      \"type\": \"uli_slur_match\"\n    },\n    {\n      \"type\": \"content_safety\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Validators run as a chain. Stored configs run first, then inline specs. Run 'Create stored config' first."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F. Tu ek dum chutiya hai, bakwaas mat kar.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    },\n    {\n      \"type\": \"uli_slur_match\"\n    },\n    {\n      \"type\": \"content_safety\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Validators run as a chain. Stored configs run first, then inline specs. Run 'Create stored config' first."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"920faab4-d83b-4af8-a7df-44af5319480e\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:13:29.648190\",\n    \"job_updated_at\": \"2026-11-12T16:13:29.648195\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F. Tu ek dum chutiya hai, bakwaas mat kar.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    },\n    {\n      \"type\": \"uli_slur_match\"\n    },\n    {\n      \"type\": \"content_safety\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Validators run as a chain. Stored configs run first, then inline specs. Run 'Create stored config' first."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"920faab4-d83b-4af8-a7df-44af5319480e\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"90cc71fc-6ba3-4ae1-91f6-8b3b20c6ad97\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"hi, i'm ravi. mail me at <email_address> or call <phone_number>. my pan is <in_pan>. tu ek dum [REDACTED_SLUR] hai, bakwaas mat kar.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Duplicate entries (warning)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    },\n    {\n      \"type\": \"pii_remover\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Duplicates run once and add a warning."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    },\n    {\n      \"type\": \"pii_remover\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Duplicates run once and add a warning."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"46d6ff4d-0b21-420a-ba8e-960d88882009\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:13:31.256660\",\n    \"job_updated_at\": \"2026-11-12T16:13:31.256664\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    },\n    {\n      \"type\": \"pii_remover\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Duplicates run once and add a warning."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"46d6ff4d-0b21-420a-ba8e-960d88882009\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"a71d38af-de18-4e7b-b30a-387926910584\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"Hi, I'm Ravi. Mail me at <EMAIL_ADDRESS> or call <PHONE_NUMBER>. My PAN is <IN_PAN>.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": [\n      \"Request contained 1 duplicate validator entries; duplicates were ignored before calling the guardrails service.\"\n    ]\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Disabled entry (warning)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\",\n      \"is_enabled\": false\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "`is_enabled: false` skips the entry; with nothing left, the original text is returned with a warning."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\",\n      \"is_enabled\": false\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "`is_enabled: false` skips the entry; with nothing left, the original text is returned with a warning."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"950e8ed1-8ece-475a-92c6-defe7855bb3f\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:13:31.647525\",\n    \"job_updated_at\": \"2026-11-12T16:13:31.647530\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\",\n      \"is_enabled\": false\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "`is_enabled: false` skips the entry; with nothing left, the original text is returned with a warning."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"950e8ed1-8ece-475a-92c6-defe7855bb3f\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"c224b8c6-88a6-4673-a9fd-e08a985f19fe\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": [\n      \"Request contained no usable validators after deduplication; original text was returned unchanged.\"\n    ]\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Unknown stored id (warning)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"00000000-0000-0000-0000-000000000000\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "IDs that don't resolve: original text returned with a warning."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"00000000-0000-0000-0000-000000000000\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "IDs that don't resolve: original text returned with a warning."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"34c0b6d9-04b8-47ff-8090-9ac4c255fd28\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:13:34.482558\",\n    \"job_updated_at\": \"2026-11-12T16:13:34.482563\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"00000000-0000-0000-0000-000000000000\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "IDs that don't resolve: original text returned with a warning."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"34c0b6d9-04b8-47ff-8090-9ac4c255fd28\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"cca85f16-4720-4062-b9c4-cf7486ce92bf\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": [\n      \"Validators were submitted but none resolved against the guardrails service; original text was returned unchanged.\"\n    ]\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "With callback_url and request_metadata",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    }\n  ],\n  \"callback_url\": \"https://your-app.example.com/guardrails/webhook\",\n  \"request_metadata\": {\n    \"conversation_id\": \"conv-42\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Result is POSTed to callback_url (public https only). request_metadata comes back under the callback's `metadata`."
+          },
+          "response": []
+        },
+        {
+          "name": "Get result",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/{{job_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "{{job_id}}"
+              ]
+            },
+            "description": "Poll until `data.status` is `SUCCESS` or `FAILED`. Cleaned text: `data.guardrails_response.response.output.content.value`. `job_id` is set by the last submit request."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ok', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Other validator types (stored config only)",
+      "description": "Seven types the guardrails service supports but Kaapi doesn't offer inline. Each pair is: create a stored config, then run it. Run each pair in order: the create request overwrites `validator_config_id`. `topic_relevance`, `llm_critic` and `answer_relevance_custom_llm` need a working OpenAI key on the guardrails service; `llamaguard_7b` needs the Guardrails Hub validator installed.",
+      "item": [
+        {
+          "name": "Create ban_list config",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.id) {",
+                  "    pm.collectionVariables.set('validator_config_id', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"ban_list {{$timestamp}}\",\n  \"type\": \"ban_list\",\n  \"stage\": \"input\",\n  \"on_fail_action\": \"fix\",\n  \"banned_words\": [\n    \"scam\",\n    \"fraud\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/validators/configs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "validators",
+                "configs"
+              ]
+            },
+            "description": "Words listed inline. Stores the id in `validator_config_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "Run ban_list",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"This offer is a scam and pure fraud, avoid it.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Each banned word is cut to its first letter."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"This offer is a scam and pure fraud, avoid it.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Each banned word is cut to its first letter."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"9b9e717a-0758-435b-afc3-6bca3f7ebc90\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:25:23.417477\",\n    \"job_updated_at\": \"2026-11-12T16:25:23.417483\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"This offer is a scam and pure fraud, avoid it.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Each banned word is cut to its first letter."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"9b9e717a-0758-435b-afc3-6bca3f7ebc90\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"63789cf8-015d-4dec-97b3-9f1cc1ff7873\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"This offer is a s and pure f, avoid it.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create ban list",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.id) {",
+                  "    pm.collectionVariables.set('ban_list_id', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Scam terms {{$timestamp}}\",\n  \"description\": \"Words to redact\",\n  \"banned_words\": [\n    \"scam\",\n    \"fraud\"\n  ],\n  \"domain\": \"abuse\",\n  \"is_public\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/ban_lists",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "ban_lists"
+              ]
+            },
+            "description": "A reusable word list. Stores its id in `ban_list_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "Create ban_list config",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.id) {",
+                  "    pm.collectionVariables.set('validator_config_id', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"ban_list {{$timestamp}}\",\n  \"type\": \"ban_list\",\n  \"stage\": \"input\",\n  \"on_fail_action\": \"fix\",\n  \"ban_list_id\": \"{{ban_list_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/validators/configs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "validators",
+                "configs"
+              ]
+            },
+            "description": "Points at the stored ban list. Stores the id in `validator_config_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "Run ban_list (stored list)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"This offer is a scam and pure fraud, avoid it.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Same result, but the words are maintained in one place."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"This offer is a scam and pure fraud, avoid it.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Same result, but the words are maintained in one place."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"d4f7b987-aaba-4669-a8e2-917116b96dbf\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:26:25.622504\",\n    \"job_updated_at\": \"2026-11-12T16:26:25.622514\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"This offer is a scam and pure fraud, avoid it.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Same result, but the words are maintained in one place."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"d4f7b987-aaba-4669-a8e2-917116b96dbf\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"d05a108f-e149-4978-a88e-d034f4526b7c\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"This offer is a s and pure f, avoid it.\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create nsfw_text config",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.id) {",
+                  "    pm.collectionVariables.set('validator_config_id', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"nsfw_text {{$timestamp}}\",\n  \"type\": \"nsfw_text\",\n  \"stage\": \"input\",\n  \"on_fail_action\": \"fix\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/validators/configs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "validators",
+                "configs"
+              ]
+            },
+            "description": "Local English NSFW classifier. Stores the id in `validator_config_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "Run nsfw_text",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Send me nude pictures, I want to have sex with you tonight.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "A hit returns an empty string under on_fail_action=fix."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Send me nude pictures, I want to have sex with you tonight.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "A hit returns an empty string under on_fail_action=fix."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"4ade9b8b-033b-4955-a4ea-e72dd9a94364\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:25:27.306111\",\n    \"job_updated_at\": \"2026-11-12T16:25:27.306116\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Send me nude pictures, I want to have sex with you tonight.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "A hit returns an empty string under on_fail_action=fix."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"4ade9b8b-033b-4955-a4ea-e72dd9a94364\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"a2d86b86-1b7c-4a7c-aa04-e3e8b03f3cce\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create profanity_free config",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.id) {",
+                  "    pm.collectionVariables.set('validator_config_id', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"profanity_free {{$timestamp}}\",\n  \"type\": \"profanity_free\",\n  \"stage\": \"input\",\n  \"on_fail_action\": \"fix\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/validators/configs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "validators",
+                "configs"
+              ]
+            },
+            "description": "English profanity classifier. Stores the id in `validator_config_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "Run profanity_free",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"This is fucking ridiculous, what the shit.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Warning: in the local test this flagged clean text too."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"This is fucking ridiculous, what the shit.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Warning: in the local test this flagged clean text too."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"34ce13b7-0928-4749-a7f4-9fdefaeba43b\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:25:24.511578\",\n    \"job_updated_at\": \"2026-11-12T16:25:24.511583\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (SUCCESS) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"This is fucking ridiculous, what the shit.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Warning: in the local test this flagged clean text too."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"34ce13b7-0928-4749-a7f4-9fdefaeba43b\",\n    \"status\": \"SUCCESS\",\n    \"guardrails_response\": {\n      \"response\": {\n        \"response_id\": \"3338da8b-8502-4cad-ad3f-ae4d69d12e55\",\n        \"output\": {\n          \"type\": \"text\",\n          \"content\": {\n            \"format\": \"text\",\n            \"value\": \"\"\n          }\n        }\n      },\n      \"usage\": {\n        \"input_tokens\": 0,\n        \"output_tokens\": 0,\n        \"total_tokens\": 0,\n        \"reasoning_tokens\": 0\n      },\n      \"provider_raw_response\": null\n    },\n    \"error_message\": null,\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create llamaguard_7b config",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.id) {",
+                  "    pm.collectionVariables.set('validator_config_id', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"llamaguard_7b {{$timestamp}}\",\n  \"type\": \"llamaguard_7b\",\n  \"stage\": \"input\",\n  \"on_fail_action\": \"fix\",\n  \"policies\": [\n    \"no_violence_hate\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/validators/configs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "validators",
+                "configs"
+              ]
+            },
+            "description": "LlamaGuard policy classifier (remote). Stores the id in `validator_config_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "Run llamaguard_7b",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"How do I make a pipe bomb at home to hurt people?\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Needs the Guardrails Hub llamaguard validator installed."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"How do I make a pipe bomb at home to hurt people?\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Needs the Guardrails Hub llamaguard validator installed."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"154c661b-fde1-4091-bcd9-e56969fd69ed\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:25:34.425965\",\n    \"job_updated_at\": \"2026-11-12T16:25:34.425969\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (FAILED) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"How do I make a pipe bomb at home to hurt people?\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Needs the Guardrails Hub llamaguard validator installed."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"154c661b-fde1-4091-bcd9-e56969fd69ed\",\n    \"status\": \"FAILED\",\n    \"guardrails_response\": null,\n    \"error_message\": \"An unexpected error occurred.\",\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Create topic prompt",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.id) {",
+                  "    pm.collectionVariables.set('llm_prompt_config_id', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"validator_name\": \"topic_relevance\",\n  \"name\": \"Maternal scope {{$timestamp}}\",\n  \"description\": \"Allowed topics\",\n  \"prompt_schema_version\": 1,\n  \"llm_prompt\": \"Pregnancy care: prenatal care, nutrition, danger signs. Newborn care: feeding, vaccination.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/llm_prompt_configs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "llm_prompt_configs"
+              ]
+            },
+            "description": "Stored prompt for topic_relevance. Stores its id in `llm_prompt_config_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "Create topic_relevance config",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.id) {",
+                  "    pm.collectionVariables.set('validator_config_id', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"topic_relevance {{$timestamp}}\",\n  \"type\": \"topic_relevance\",\n  \"stage\": \"input\",\n  \"on_fail_action\": \"fix\",\n  \"topic_relevance_config_id\": \"{{llm_prompt_config_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/validators/configs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "validators",
+                "configs"
+              ]
+            },
+            "description": "Older LLM topic check. Stores the id in `validator_config_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "Run topic_relevance",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Which IPL team will win the cup this year?\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Needs OpenAI."
+          },
+          "response": []
+        },
+        {
+          "name": "Create llm_critic config",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.id) {",
+                  "    pm.collectionVariables.set('validator_config_id', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"llm_critic {{$timestamp}}\",\n  \"type\": \"llm_critic\",\n  \"stage\": \"input\",\n  \"on_fail_action\": \"fix\",\n  \"metrics\": {\n    \"helpfulness\": {\n      \"description\": \"Does the text give a useful, specific answer?\",\n      \"threshold\": 3\n    }\n  },\n  \"max_score\": 5,\n  \"llm_callable\": \"gpt-4o-mini\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/validators/configs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "validators",
+                "configs"
+              ]
+            },
+            "description": "LLM judge; all three settings are required. Each metric needs a threshold. Stores the id in `validator_config_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "Run llm_critic",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Drink water.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Needs OpenAI."
+          },
+          "response": []
+        },
+        {
+          "name": "Create answer_relevance_custom_llm config",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.id) {",
+                  "    pm.collectionVariables.set('validator_config_id', body.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"answer_relevance_custom_llm {{$timestamp}}\",\n  \"type\": \"answer_relevance_custom_llm\",\n  \"stage\": \"input\",\n  \"on_fail_action\": \"fix\",\n  \"prompt_template\": \"Does the answer address the question? Question: {query} Answer: {answer}. Reply with a score 1-5.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/validators/configs",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "validators",
+                "configs"
+              ]
+            },
+            "description": "Judges whether an answer addresses the question. Stores the id in `validator_config_id`."
+          },
+          "response": []
+        },
+        {
+          "name": "Run answer_relevance_custom_llm",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"{\\\"query\\\": \\\"What should I eat when pregnant?\\\", \\\"answer\\\": \\\"The IPL final is on Sunday.\\\"}\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"{{validator_config_id}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "`text` must be a JSON string with `query` and `answer`. Needs OpenAI."
+          },
+          "response": []
+        },
+        {
+          "name": "Get result",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails/{{job_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails",
+                "{{job_id}}"
+              ]
+            },
+            "description": "Poll until `data.status` is `SUCCESS` or `FAILED`. Cleaned text: `data.guardrails_response.response.output.content.value`. `job_id` is set by the last submit request."
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ok', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "6. Error cases",
+      "item": [
+        {
+          "name": "422: unknown validator type",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": []
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"not_a_validator\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Inline `type` must be one of the five exposed types."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"not_a_validator\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Inline `type` must be one of the five exposed types."
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"error\": \"Validation failed\",\n  \"errors\": [\n    {\n      \"field\": \"config.0.inline.type\",\n      \"message\": \"Input should be 'content_safety', 'gender_assumption_bias', 'pii_remover', 'topic_relevance_llm' or 'uli_slur_match'\"\n    }\n  ],\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "422: empty config",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": []
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "At least one validator is required."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": []\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "At least one validator is required."
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"error\": \"Validation failed\",\n  \"errors\": [\n    {\n      \"field\": \"config\",\n      \"message\": \"List should have at least 1 item after validation, not 0\"\n    }\n  ],\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "422: empty text",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": []
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Text must not be empty."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Text must not be empty."
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"error\": \"Validation failed\",\n  \"errors\": [\n    {\n      \"field\": \"text\",\n      \"message\": \"String should have at least 1 character\"\n    }\n  ],\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "422: malformed validator_config_id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": []
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"not-a-uuid\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Stored IDs must be UUIDs."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"validator_config_id\": \"not-a-uuid\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Stored IDs must be UUIDs."
+              },
+              "status": "Unprocessable Entity",
+              "code": 422,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"error\": \"Validation failed\",\n  \"errors\": [\n    {\n      \"field\": \"config.0.ref.validator_config_id\",\n      \"message\": \"Input should be a valid UUID, invalid character: expected an optional prefix of `urn:uuid:` followed by [0-9a-fA-F-], found `n` at 1\"\n    }\n  ],\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Job FAILED: invalid inline setting",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.response.json();",
+                  "if (body.success && body.data && body.data.job_id) {",
+                  "    pm.collectionVariables.set('job_id', body.data.job_id);",
+                  "}",
+                  "pm.test('accepted', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\",\n      \"on_fail\": \"explode\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "Inline settings are checked when the job runs: submit returns 200, the job ends FAILED."
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\",\n      \"on_fail\": \"explode\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Inline settings are checked when the job runs: submit returns 200, the job ends FAILED."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"e4112784-47cc-4515-864c-274e48f31ed2\",\n    \"status\": \"PENDING\",\n    \"message\": \"Guardrails are being applied; poll GET /guardrails/{job_id} for the result.\",\n    \"job_inserted_at\": \"2026-11-12T16:13:46.187346\",\n    \"job_updated_at\": \"2026-11-12T16:13:46.187350\"\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            },
+            {
+              "name": "Result (FAILED) via GET /guardrails/{job_id}",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\",\n      \"on_fail\": \"explode\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "Inline settings are checked when the job runs: submit returns 200, the job ends FAILED."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"job_id\": \"e4112784-47cc-4515-864c-274e48f31ed2\",\n    \"status\": \"FAILED\",\n    \"guardrails_response\": null,\n    \"error_message\": \"Guardrails service rejected the request (HTTP 422)\",\n    \"warnings\": []\n  },\n  \"error\": null,\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "401: missing API key",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": []
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/guardrails",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "guardrails"
+              ]
+            },
+            "description": "No X-API-KEY header.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [
+            {
+              "name": "Submit response",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"text\": \"Hi, I'm Ravi. Mail me at ravi.k@example.com or call 9876543210. My PAN is ABCDE1234F.\",\n  \"config\": [\n    {\n      \"type\": \"pii_remover\"\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{base_url}}/api/v1/guardrails",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "guardrails"
+                  ]
+                },
+                "description": "No X-API-KEY header.",
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "401",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"data\": null,\n  \"error\": \"Invalid Authorization format\",\n  \"errors\": null,\n  \"metadata\": null\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
