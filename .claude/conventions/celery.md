@@ -2,10 +2,13 @@
 
 Authoritative conventions for Celery tasks in kaapi-backend. Tasks live in `app/celery/tasks/`.
 Celery uses RabbitMQ as broker. There are **two queues**, each declared with `x-max-priority=10`:
-`default` (everything except fast-eval burst tasks) and `evaluations` (only
-`run_evaluation_fast_chunk` / `run_evaluation_fast_aggregate` — physically isolated on their own
-worker pool so a fast-eval burst can't occupy `default`'s worker slots and delay higher-priority
-LLM jobs; priority only reorders queued-not-yet-claimed messages, it can't preempt a task a
+`default` (everything else) and `evaluations` (`run_evaluation_fast_chunk` /
+`run_evaluation_fast_aggregate`, the STT evaluation tasks (`run_stt_batch_submission`,
+`run_stt_metric_computation`) the STT evaluation tasks (`run_stt_batch_submission`,
+`run_stt_metric_computation`) and the TTS evaluation tasks (`run_tts_batch_submission`,
+`run_tts_sync_generation`, `run_tts_result_processing`) — physically isolated on their own
+worker pool so a fast-eval burst or long-running STT/TTS work can't occupy `default`'s worker
+slots and delay higher-priority LLM jobs; priority only reorders queued-not-yet-claimed messages, it can't preempt a task a
 worker already started). Within each queue, tasks are ordered by a per-task `priority` (higher
 drains first, FIFO within a band). Read `app/celery/tasks/job_execution.py` before writing — it
 shows the full pattern (decorator + timeout + delegation to a service).
@@ -34,9 +37,12 @@ plain `task.apply_async(kwargs={...})`.
 
 ## Queue and priority choice — be explicit
 
-Only `run_evaluation_fast_chunk` and `run_evaluation_fast_aggregate` use `queue="evaluations"`
-(fast-eval burst fan-out — many chunk tasks fired at once). Everything else uses
-`queue="default"`. Don't move other eval-adjacent tasks (e.g. `run_evaluation_batch_submission`,
+Only `run_evaluation_fast_chunk` and `run_evaluation_fast_aggregate` (fast-eval burst fan-out —
+many chunk tasks fired at once) and the TTS evaluation tasks (`run_tts_batch_submission`,
+`run_tts_sync_generation` — one long-running task per Sarvam/ElevenLabs model — and
+`run_tts_result_processing`, which downloads, converts and uploads a whole Gemini batch) use
+`queue="evaluations"`.
+Everything else uses `queue="default"`. Don't move other eval-adjacent tasks (e.g. `run_evaluation_batch_submission`,
 `send_eval_completion_notification`) onto `evaluations` — they're one-shot/fire-and-forget, no
 burstiness to isolate.
 
@@ -47,7 +53,8 @@ the bands already in use (see the `job_execution.py` module docstring):
 |---|---|---|
 | `9` | `default` | User-blocking, interactive — LLM call / chain / response jobs |
 | `9` | `evaluations` | Fast evaluation chunk/aggregate (top band of this queue; new eval tasks pick a lower band) |
-| `2` | `default` | Default — doctransform, collections, STT/TTS evaluation, assessment |
+| `2` | `default` | Default — doctransform, collections, assessment |
+| `2` | `evaluations` | STT evaluation (batch submission, metric computation) and TTS evaluation (batch submission, sync generation, result processing) — below fast eval |
 | `1` | `default` | Notifications and other fire-and-forget background work |
 
 Pick the band that matches the task's user-facing urgency; document the choice in a comment if it's
@@ -57,7 +64,7 @@ inherits its priority unless you override it.
 ## Hard rules
 
 - **`bind=True`** so you have `self` (the task instance) for retries, IDs, etc.
-- **Always pass an explicit `queue` (`"default"` or `"evaluations"`) and `priority`.** Only fast-eval chunk/aggregate tasks use `"evaluations"`; everything else uses `"default"`.
+- **Always pass an explicit `queue` (`"default"` or `"evaluations"`) and `priority`.** Only fast-eval chunk/aggregate and STT/TTS evaluation tasks use `"evaluations"`; everything else uses `"default"`.
 - **Pass `trace_id` explicitly** as a parameter and call `_set_trace(trace_id)` first thing. This wires `asgi_correlation_id` so logs from inside the task match the originating request.
 - **Don't propagate trace context by hand.** OTel's `CeleryInstrumentor` already parents the worker's `run/...` span to the enqueue span. Injecting headers on enqueue or attaching an extracted context in the task reparents the task's spans to the API request, and Sentry splits them into separate transactions.
 - **Delegate to a service.** The task body should be a thin shim over `app/services/<domain>/`. No DB queries, no external HTTP, no business logic inside the task itself.

@@ -12,8 +12,13 @@ from app.crud.tts_evaluations import create_tts_run
 from app.models import EvaluationDataset
 from app.models.job import JobStatus
 from app.models.stt_evaluation import EvaluationType
-from app.models.tts_evaluation import TTSResult
+from app.models.tts_evaluation import TTSEvaluationRunCreate, TTSResult
+from app.services.tts_evaluations.constants import DEPRECATED_GEMINI_TTS_MODELS
 from app.tests.utils.auth import TestAuthContext
+from app.tests.utils.tts_evaluation import (
+    create_test_tts_result_row,
+    create_test_tts_run_with_dataset,
+)
 
 
 def create_test_tts_dataset(
@@ -51,7 +56,7 @@ def create_test_tts_result(
     organization_id: int,
     project_id: int,
     sample_text: str = "Hello world",
-    provider: str = "gemini-2.5-pro-preview-tts",
+    provider: str = "gemini-3.8-flash-tts",
     status: str = JobStatus.PENDING.value,
     object_store_url: str | None = None,
     metadata_: dict | None = None,
@@ -542,7 +547,7 @@ class TestTTSEvaluationRun:
             json={
                 "run_name": "success_test_run",
                 "dataset_id": dataset.id,
-                "models": ["gemini-2.5-pro-preview-tts"],
+                "models": ["gemini-3.8-flash-tts"],
             },
             headers=user_api_key_header,
         )
@@ -556,7 +561,7 @@ class TestTTSEvaluationRun:
         assert data["dataset_id"] == dataset.id
         assert data["dataset_name"] == dataset.name
         assert data["type"] == "tts"
-        assert data["models"] == ["gemini-2.5-pro-preview-tts"]
+        assert data["models"] == ["gemini-3.8-flash-tts"]
         assert data["total_items"] == 3  # 3 samples × 1 model
         assert data["status"] == "pending"
         assert data["organization_id"] == user_api_key.organization_id
@@ -567,7 +572,7 @@ class TestTTSEvaluationRun:
         call_kwargs = mock_start_job.call_args
         assert call_kwargs.kwargs["organization_id"] == user_api_key.organization_id
         assert call_kwargs.kwargs["dataset_id"] == dataset.id
-        assert call_kwargs.kwargs["models"] == ["gemini-2.5-pro-preview-tts"]
+        assert call_kwargs.kwargs["models"] == ["gemini-3.8-flash-tts"]
 
     @patch("app.api.routes.tts_evaluations.evaluation.start_tts_batch_submission")
     def test_start_evaluation_multiple_models_total_items(
@@ -593,7 +598,7 @@ class TestTTSEvaluationRun:
             json={
                 "run_name": "multi_model_run",
                 "dataset_id": dataset.id,
-                "models": ["gemini-2.5-pro-preview-tts"],
+                "models": ["gemini-3.8-flash-tts"],
             },
             headers=user_api_key_header,
         )
@@ -602,6 +607,158 @@ class TestTTSEvaluationRun:
         data = response.json()["data"]
         # 5 samples × 1 model
         assert data["total_items"] == 5
+
+    @patch("app.api.routes.tts_evaluations.evaluation.start_tts_batch_submission")
+    def test_start_evaluation_mixed_models_reports_voice_per_model(
+        self,
+        mock_start_job: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        test_dataset_with_samples: EvaluationDataset,
+    ) -> None:
+        mock_start_job.return_value = "mock-celery-task-id"
+        models = ["gemini-3.8-flash-tts", "bulbul:v3", "eleven_v3"]
+
+        response = client.post(
+            "/api/v1/evaluations/tts/runs",
+            json={
+                "run_name": "mixed_models_run",
+                "dataset_id": test_dataset_with_samples.id,
+                "models": models,
+            },
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["models"] == models
+        assert data["total_items"] == 9
+        assert data["run_metadata"]["voices"] == {
+            "gemini-3.8-flash-tts": "Kore",
+            "bulbul:v3": "shubh",
+            "eleven_v3": "Rahul",
+        }
+        # legacy single-voice key kept for existing clients
+        assert data["run_metadata"]["voice_name"] == "Kore"
+        assert mock_start_job.call_args.kwargs["models"] == models
+
+    @patch("app.api.routes.tts_evaluations.evaluation.start_tts_batch_submission")
+    def test_start_evaluation_accepts_mixed_model_and_voice_items(
+        self,
+        mock_start_job: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        test_dataset_with_samples: EvaluationDataset,
+    ) -> None:
+        mock_start_job.return_value = "mock-celery-task-id"
+        expected_voices = {
+            "gemini-3.8-flash-tts": "Puck",
+            "gemini-3.8-flash-lite-tts": "Kore",
+            "bulbul:v3": "priya",
+            "eleven_v3": "Sarah",
+            "eleven_v4": "Rahul",
+        }
+
+        response = client.post(
+            "/api/v1/evaluations/tts/runs",
+            json={
+                "run_name": "voices_run",
+                "dataset_id": test_dataset_with_samples.id,
+                "models": [
+                    {"model": "gemini-3.8-flash-tts", "voice": "Puck"},
+                    {"model": "gemini-3.8-flash-lite-tts"},
+                    {"model": "bulbul:v3", "voice": "PRIYA"},
+                    {"model": "eleven_v3", "voice": "Sarah"},
+                    "eleven_v4",
+                ],
+            },
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["models"] == list(expected_voices)
+        assert data["total_items"] == 15
+        assert data["run_metadata"]["voices"] == expected_voices
+        assert data["run_metadata"]["voice_name"] == "Kore"
+        queued = mock_start_job.call_args.kwargs
+        assert (queued["models"], queued["voices"]) == (
+            list(expected_voices),
+            expected_voices,
+        )
+
+    @pytest.mark.parametrize(
+        ("models", "expected_fragments"),
+        [
+            (
+                [{"model": "gemini-3.8-flash-tts", "voice": "kore"}],
+                [
+                    "Unsupported voice 'kore' for model 'gemini-3.8-flash-tts'",
+                    "Zephyr, Puck, Charon, Kore",
+                ],
+            ),
+            (
+                [{"model": "bulbul:v3", "voice": "Kore"}],
+                ["Unsupported voice 'Kore' for model 'bulbul:v3'", "shubh, aditya"],
+            ),
+            (
+                [{"model": "eleven_v3", "voice": "sarah"}],
+                [
+                    "Unsupported voice 'sarah' for model 'eleven_v3'",
+                    "Allowed voices are: Sarah, George, Callum, Liam, Rahul",
+                ],
+            ),
+            (
+                [
+                    "bulbul:v3",
+                    {"model": "gemini-3.8-flash-tts"},
+                    {"model": "bulbul:v3", "voice": "priya"},
+                ],
+                ["Duplicate model(s): bulbul:v3"],
+            ),
+            (
+                [{"model": "gemini-3.1-flash-tts-preview", "voice": "Kore"}],
+                ["Unsupported model: gemini-3.1-flash-tts-preview"],
+            ),
+            (
+                [{"model": "gemini-3.8-flash-tts", "speaker": "Puck"}],
+                ["Extra inputs are not permitted"],
+            ),
+        ],
+        ids=[
+            "gemini_voice_case_sensitive",
+            "voice_of_other_provider",
+            "elevenlabs_voice_case_sensitive",
+            "duplicate_model",
+            "deprecated_model_object",
+            "extra_key",
+        ],
+    )
+    @patch("app.api.routes.tts_evaluations.evaluation.start_tts_batch_submission")
+    def test_start_evaluation_rejects_invalid_model_items(
+        self,
+        mock_start_job: MagicMock,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        test_dataset_with_samples: EvaluationDataset,
+        models: list[object],
+        expected_fragments: list[str],
+    ) -> None:
+        response = client.post(
+            "/api/v1/evaluations/tts/runs",
+            json={
+                "run_name": "invalid_voice_run",
+                "dataset_id": test_dataset_with_samples.id,
+                "models": models,
+            },
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 422, response.text
+        messages = " | ".join(e["message"] for e in response.json()["errors"])
+        for fragment in expected_fragments:
+            assert fragment in messages
+        mock_start_job.assert_not_called()
 
     @patch("app.api.routes.tts_evaluations.evaluation.start_tts_batch_submission")
     def test_start_evaluation_celery_failure(
@@ -621,7 +778,7 @@ class TestTTSEvaluationRun:
             json={
                 "run_name": "celery_fail_run",
                 "dataset_id": test_dataset_with_samples.id,
-                "models": ["gemini-2.5-pro-preview-tts"],
+                "models": ["gemini-3.8-flash-tts"],
             },
             headers=user_api_key_header,
         )
@@ -640,7 +797,7 @@ class TestTTSEvaluationRun:
             json={
                 "run_name": "invalid_dataset_run",
                 "dataset_id": 99999,
-                "models": ["gemini-2.5-pro-preview-tts"],
+                "models": ["gemini-3.8-flash-tts"],
             },
             headers=user_api_key_header,
         )
@@ -669,7 +826,7 @@ class TestTTSEvaluationRun:
             json={
                 "run_name": "empty_dataset_run",
                 "dataset_id": dataset.id,
-                "models": ["gemini-2.5-pro-preview-tts"],
+                "models": ["gemini-3.8-flash-tts"],
             },
             headers=user_api_key_header,
         )
@@ -677,18 +834,23 @@ class TestTTSEvaluationRun:
         assert response.status_code == 400
         assert "no samples" in response.json()["error"].lower()
 
+    @pytest.mark.parametrize(
+        "model",
+        ["unsupported-model-xyz", *DEPRECATED_GEMINI_TTS_MODELS],
+    )
     def test_start_evaluation_unsupported_model(
         self,
         client: TestClient,
         user_api_key_header: dict[str, str],
+        model: str,
     ) -> None:
-        """Test starting a TTS evaluation with an unsupported model."""
+        """Test starting a TTS evaluation with an unsupported or deprecated model."""
         response = client.post(
             "/api/v1/evaluations/tts/runs",
             json={
                 "run_name": "unsupported_model_run",
                 "dataset_id": 1,
-                "models": ["unsupported-model-xyz"],
+                "models": [model],
             },
             headers=user_api_key_header,
         )
@@ -725,7 +887,7 @@ class TestTTSEvaluationRun:
             json={
                 "run_name": "cross_org_run",
                 "dataset_id": test_dataset_with_samples.id,
-                "models": ["gemini-2.5-pro-preview-tts"],
+                "models": ["gemini-3.8-flash-tts"],
             },
             headers=superuser_api_key_header,
         )
@@ -743,7 +905,7 @@ class TestTTSEvaluationRun:
             json={
                 "run_name": "test_run",
                 "dataset_id": 1,
-                "models": ["gemini-2.5-pro-preview-tts"],
+                "models": ["gemini-3.8-flash-tts"],
             },
         )
 
@@ -783,7 +945,7 @@ class TestTTSEvaluationRun:
             dataset_name=dataset.name,
             org_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
-            models=["gemini-2.5-pro-preview-tts"],
+            models=["gemini-3.8-flash-tts"],
             total_items=3,
         )
         create_tts_run(
@@ -793,7 +955,7 @@ class TestTTSEvaluationRun:
             dataset_name=dataset.name,
             org_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
-            models=["gemini-2.5-pro-preview-tts"],
+            models=["gemini-3.8-flash-tts"],
             total_items=3,
         )
 
@@ -827,7 +989,7 @@ class TestTTSEvaluationRun:
             dataset_name=dataset.name,
             org_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
-            models=["gemini-2.5-pro-preview-tts"],
+            models=["gemini-3.8-flash-tts"],
             total_items=3,
         )
 
@@ -859,7 +1021,7 @@ class TestTTSEvaluationRun:
             dataset_name=dataset.name,
             org_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
-            models=["gemini-2.5-pro-preview-tts"],
+            models=["gemini-3.8-flash-tts"],
             total_items=3,
         )
 
@@ -891,7 +1053,7 @@ class TestTTSEvaluationRun:
                 dataset_name=dataset.name,
                 org_id=user_api_key.organization_id,
                 project_id=user_api_key.project_id,
-                models=["gemini-2.5-pro-preview-tts"],
+                models=["gemini-3.8-flash-tts"],
                 total_items=3,
             )
 
@@ -933,7 +1095,7 @@ class TestTTSEvaluationRun:
             dataset_name=dataset.name,
             org_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
-            models=["gemini-2.5-pro-preview-tts"],
+            models=["gemini-3.8-flash-tts"],
             total_items=3,
         )
 
@@ -971,7 +1133,7 @@ class TestTTSEvaluationRun:
             dataset_name=dataset.name,
             org_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
-            models=["gemini-2.5-pro-preview-tts"],
+            models=["gemini-3.8-flash-tts"],
             total_items=2,
         )
 
@@ -1029,7 +1191,7 @@ class TestTTSEvaluationRun:
             dataset_name=dataset.name,
             org_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
-            models=["gemini-2.5-pro-preview-tts"],
+            models=["gemini-3.8-flash-tts"],
             total_items=2,
         )
 
@@ -1086,7 +1248,7 @@ class TestTTSEvaluationRun:
             dataset_name=dataset.name,
             org_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
-            models=["gemini-2.5-pro-preview-tts"],
+            models=["gemini-3.8-flash-tts"],
             total_items=1,
         )
 
@@ -1139,7 +1301,7 @@ class TestTTSEvaluationRun:
             dataset_name=dataset.name,
             org_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
-            models=["gemini-2.5-pro-preview-tts"],
+            models=["gemini-3.8-flash-tts"],
             total_items=3,
         )
 
@@ -1185,7 +1347,7 @@ class TestTTSResultGet:
             dataset_name=dataset.name,
             org_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
-            models=["gemini-2.5-pro-preview-tts"],
+            models=["gemini-3.8-flash-tts"],
             total_items=1,
         )
 
@@ -1212,7 +1374,7 @@ class TestTTSResultGet:
 
         assert data["id"] == result.id
         assert data["sample_text"] == "Test speech text"
-        assert data["provider"] == "gemini-2.5-pro-preview-tts"
+        assert data["provider"] == "gemini-3.8-flash-tts"
         assert data["status"] == JobStatus.SUCCESS.value
         assert data["object_store_url"] == "s3://bucket/audio/test.wav"
         assert data["duration_seconds"] == 2.5
@@ -1239,6 +1401,40 @@ class TestTTSResultGet:
         response = client.get("/api/v1/evaluations/tts/results/1")
         assert response.status_code == 401
 
+    def test_run_and_result_endpoints_expose_voice(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+    ) -> None:
+        run = create_test_tts_run_with_dataset(
+            db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            models=["bulbul:v3"],
+        )
+        voiced = create_test_tts_result_row(
+            db, run=run, provider="bulbul:v3", voice="priya"
+        )
+        # NULL: row created before per-model voices existed.
+        legacy = create_test_tts_result_row(db, run=run, provider="bulbul:v3")
+
+        run_response = client.get(
+            f"/api/v1/evaluations/tts/runs/{run.id}", headers=user_api_key_header
+        )
+        result_response = client.get(
+            f"/api/v1/evaluations/tts/results/{voiced.id}",
+            headers=user_api_key_header,
+        )
+
+        assert run_response.status_code == 200, run_response.text
+        assert {
+            r["id"]: r["voice"] for r in run_response.json()["data"]["results"]
+        } == {voiced.id: "priya", legacy.id: None}
+        assert result_response.status_code == 200, result_response.text
+        assert result_response.json()["data"]["voice"] == "priya"
+
 
 class TestTTSResultFeedback:
     """Test PATCH /evaluations/tts/results/{result_id} endpoint."""
@@ -1261,7 +1457,7 @@ class TestTTSResultFeedback:
             dataset_name=dataset.name,
             org_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
-            models=["gemini-2.5-pro-preview-tts"],
+            models=["gemini-3.8-flash-tts"],
             total_items=1,
         )
 
@@ -1387,7 +1583,7 @@ class TestTTSResultFeedback:
             dataset_name=dataset.name,
             org_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
-            models=["gemini-2.5-pro-preview-tts"],
+            models=["gemini-3.8-flash-tts"],
             total_items=1,
         )
         result = create_test_tts_result(
@@ -1429,7 +1625,7 @@ class TestTTSResultFeedback:
             dataset_name=dataset.name,
             org_id=user_api_key.organization_id,
             project_id=user_api_key.project_id,
-            models=["gemini-2.5-pro-preview-tts"],
+            models=["gemini-3.8-flash-tts"],
             total_items=1,
         )
         result = create_test_tts_result(
@@ -1516,3 +1712,13 @@ class TestTTSResultFeedback:
         )
 
         assert response.status_code == 401
+
+
+def test_run_create_schema_accepts_model_name_or_object() -> None:
+    # Plain names stay valid in OpenAPI so the API-diff gate sees no breaking change.
+    items = TTSEvaluationRunCreate.model_json_schema()["properties"]["models"]["items"]
+
+    assert items["anyOf"] == [
+        {"type": "string"},
+        {"$ref": "#/$defs/TTSModelVoice"},
+    ]

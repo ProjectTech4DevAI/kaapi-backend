@@ -240,11 +240,14 @@ BCP47_TO_ELEVENLABS_LANG: dict[str, str] = {
     "sd-IN": "sd",
 }
 
+# Sarah/George/Callum/Liam are ElevenLabs default (premade) voices, which ElevenLabs
+# retires on 2026-12-31. Rahul is "Rahul S - Hindi Conversational" from the voice library.
 ELEVENLABS_VOICE_TO_ID: dict[str, str] = {
     "Sarah": "EXAVITQu4vr4xnSDxMaL",
     "George": "JBFqnCBsd6RMkjVDRZzb",
     "Callum": "N2lVS1w4EtoT3dr4eOWO",
     "Liam": "TX3LPaxmHKxFdv7VOQHJ",
+    "Rahul": "2cdvnKJ5TZi631y5PN1s",
 }
 
 
