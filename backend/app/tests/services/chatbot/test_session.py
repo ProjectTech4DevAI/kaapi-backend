@@ -1627,7 +1627,7 @@ class TestCoordinatorRagRoute:
             COORDINATOR_NODE_ID,
         ]
 
-    def test_rag_detours_keep_registration_active_until_optional_fields_are_asked(
+    def test_rag_detours_keep_registration_active_until_complete(
         self,
         db: Session,
         callbacks: CallbackRecorder,
@@ -1698,7 +1698,7 @@ class TestCoordinatorRagRoute:
 
         _turn(
             "Asha, 98765",
-            replies=["Thanks Asha! Would you like to add an email?"],
+            replies=["Thanks Asha, you're all set!"],
             extractions=[
                 RouteDecision(intent="Apply"),
                 FieldExtraction(
@@ -1706,61 +1706,38 @@ class TestCoordinatorRagRoute:
                         {"name": "Asha", "phone": "98765"}
                     ),
                     missing_fields=[],
-                    missing_optional_fields=["email"],
                     is_complete=True,
                 ),
             ],
         )
+        all_fields = {"name": "Asha", "phone": "98765"}
         assert callbacks.payloads[-1] == _success_webhook(
             chatbot_session,
             chatbot,
-            reply="Thanks Asha! Would you like to add an email?",
+            reply="Thanks Asha, you're all set!",
             node_id=APPLY_NODE_ID,
             completion_status="complete",
-            collected_fields={"name": "Asha", "phone": "98765"},
+            collected_fields=all_fields,
         )
-        assert _reload(db, chatbot_session).active_node_id == APPLY_NODE_ID
+        assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
 
         routing_prompt = _turn(
             "When is the exam?",
             replies=[tool_call_reply("exam date"), "The exam is in May."],
             extractions=[RouteDecision(intent="Questions")],
         )
-        assert in_progress_note in routing_prompt
+        assert in_progress_note not in routing_prompt
         assert callbacks.payloads[-1] == _success_webhook(
             chatbot_session,
             chatbot,
             reply="The exam is in May.",
             node_id=FAQ_NODE_ID,
             completion_status="complete",
-            collected_fields={"name": "Asha", "phone": "98765"},
-            sources=fees_source,
-        )
-        assert _reload(db, chatbot_session).active_node_id == APPLY_NODE_ID
-
-        _turn(
-            "asha@example.com",
-            replies=["All set, Asha!"],
-            extractions=[
-                RouteDecision(intent="Apply"),
-                FieldExtraction(
-                    collected_fields=extracted_fields({"email": "asha@example.com"}),
-                    missing_fields=[],
-                    is_complete=True,
-                ),
-            ],
-        )
-        all_fields = {"name": "Asha", "phone": "98765", "email": "asha@example.com"}
-        assert callbacks.payloads[-1] == _success_webhook(
-            chatbot_session,
-            chatbot,
-            reply="All set, Asha!",
-            node_id=APPLY_NODE_ID,
-            completion_status="complete",
             collected_fields=all_fields,
+            sources=fees_source,
         )
         stored = _reload(db, chatbot_session)
         assert stored.active_node_id == COORDINATOR_NODE_ID
         assert stored.completion_status == ChatbotCompletionStatusEnum.COMPLETE
         assert stored.collected_fields == all_fields
-        assert len(callbacks.payloads) == 6
+        assert len(callbacks.payloads) == 5

@@ -25,8 +25,6 @@ class ChatbotTurnResult:
     collected_fields: dict[str, Any]
     is_complete: bool
     sources: list[ChatbotSource] = field(default_factory=list)
-    # Complete and no optional field left to ask; only this hands a sub-flow back to its coordinator.
-    is_done: bool = False
 
     @property
     def completion_status(self) -> ChatbotCompletionStatusEnum:

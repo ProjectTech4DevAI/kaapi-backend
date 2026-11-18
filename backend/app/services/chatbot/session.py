@@ -457,8 +457,7 @@ def _run_coordinator_turn_and_handoff(
     if target_node.node_type == ChatbotFlowNodeTypeEnum.RAG:
         turn_result = replace(turn_result, is_complete=context.is_complete)
         next_active_node_id = None
-    # Not on is_complete: a complete agent may still be asking its optional fields.
-    elif turn_result.is_done:
+    elif turn_result.is_complete:
         next_active_node_id = coordinator_node.node_id
     else:
         next_active_node_id = target_node.node_id
