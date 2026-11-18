@@ -244,6 +244,11 @@ class Settings(BaseSettings):
     # Threads are network-bound (idle-waiting on OpenAI), so a high count is cheap.
     EVAL_JUDGE_CONCURRENCY: int = 50
 
+    # Duplicate detection: bounds on its provider calls; timeouts are in seconds.
+    DEDUP_MODEL_TIMEOUT: int = 60
+    DEDUP_MODEL_ATTEMPTS: int = 3
+    DEDUP_SEARCH_TIMEOUT: int = 5
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def COMPUTED_CELERY_WORKER_CONCURRENCY(self) -> int:
