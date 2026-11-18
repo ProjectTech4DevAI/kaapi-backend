@@ -3,14 +3,13 @@
 import json
 from typing import Any
 
-from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_core.runnables import Runnable
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from app.services.chatbot.agents.onboarding.prompts import (
     EXTRACTION_FLOW_PROMPT_TEMPLATE,
@@ -26,7 +25,6 @@ from app.services.chatbot.agents.onboarding.types import (
     FieldExtraction,
     OnboardingState,
 )
-from app.services.chatbot.exceptions import ChatbotProviderError
 from app.services.chatbot.history import (
     extract_final_reply,
     has_user_turn,
@@ -35,7 +33,11 @@ from app.services.chatbot.history import (
     to_langchain_messages,
     validate_turn_input,
 )
-from app.services.chatbot.provider_errors import CHAT_MODEL_ERRORS, to_provider_error
+from app.services.chatbot.provider_errors import (
+    CHAT_MODEL_ERRORS,
+    invoke_structured,
+    to_provider_error,
+)
 from app.services.chatbot.types import ChatbotMessageDict, ChatbotTurnResult
 from app.services.chatbot.utils import ChatbotModelSettings, get_chat_model
 
@@ -84,28 +86,6 @@ def _build_progress_note(state: OnboardingState) -> SystemMessage | None:
     return SystemMessage(content=f"{PROGRESS_NOTE_PREFIX}{note.strip()}")
 
 
-def _invoke_extraction(
-    extraction_model: ExtractionModel,
-    messages: list[BaseMessage],
-) -> FieldExtraction:
-    try:
-        extraction = extraction_model.invoke(messages)
-    except (OutputParserException, ValidationError) as e:
-        error_message = (
-            "[ANTHROPIC] Field extraction returned malformed structured output — "
-            f"retry the turn. If persistent, contact Kaapi. (code: {type(e).__name__})"
-        )
-        raise ChatbotProviderError(error_message) from e
-
-    if not isinstance(extraction, FieldExtraction):
-        error_message = (
-            "[ANTHROPIC] Field extraction returned an unexpected output shape — retry "
-            "the turn. If persistent, contact Kaapi. (code: UnexpectedOutputType)"
-        )
-        raise ChatbotProviderError(error_message)
-    return extraction
-
-
 def build_onboarding_graph(
     chat_model: BaseChatModel,
     extraction_model: ExtractionModel,
@@ -123,13 +103,15 @@ def build_onboarding_graph(
             chat_model, state["messages"], history_token_limit=history_token_limit
         )
         prior_fields = state["collected_fields"]
-        extraction = _invoke_extraction(
+        extraction = invoke_structured(
             extraction_model,
             _build_extraction_messages(
                 flow_prompt=flow_prompt,
                 prior_fields=prior_fields,
                 conversation_view=conversation_view,
             ),
+            FieldExtraction,
+            call_name="Field extraction",
         )
         extracted = {field.name: field.value for field in extraction.collected_fields}
         merged_fields = {**prior_fields, **extracted}

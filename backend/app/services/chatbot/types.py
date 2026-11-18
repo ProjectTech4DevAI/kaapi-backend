@@ -43,13 +43,26 @@ class TurnNode(NamedTuple):
     config_version: int | None
 
 
+# Lives here, not in the coordinator graph, so TurnContext can reference it without an import cycle.
+class CoordinatorRoute(NamedTuple):
+    intent: str
+    description: str | None
+    target_node_id: str
+
+
 class TurnContext(NamedTuple):
-    """Everything a turn needs, loaded in one DB session before the LLM call."""
+    """Everything a turn needs, loaded in one DB session before the first LLM call."""
 
     chatbot_id: UUID
     session_status: str
     collected_fields: dict[str, Any]
+    is_complete: bool
     stored_messages: list[ChatbotSessionMessage]
     turn_node: TurnNode
     model_settings: ChatbotModelSettings
     openai_client: OpenAI | None
+    # Coordinator only: its routes and each target's node; the chosen target's settings load after routing.
+    routes: list[CoordinatorRoute]
+    route_target_nodes: dict[str, TurnNode]
+    # Set when the active node is an agent behind the coordinator: the sub-flow the coordinator defaults to.
+    in_progress_node_id: str | None
