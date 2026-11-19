@@ -1,9 +1,7 @@
-"""seed current-generation OpenAI/Anthropic model_config rows; deactivate deprecated openai models
+"""seed current-generation OpenAI/Anthropic model_config rows
 
 Seeds text rows for gpt-6-luna, gpt-6.1-sol, gpt-5.6-luna, claude-sonnet-5-5,
 claude-opus-5-5, claude-sonnet-4-6 and claude-opus-4-8.
-
-Deactivates o3-mini, o4-mini, gpt-4.1-nano and gpt-5.3-chat-latest.
 
 Rows are upserted, so an existing row is repaired rather than skipped.
 
@@ -28,8 +26,6 @@ SEEDED_ANTHROPIC = (
     "claude-sonnet-4-6",
     "claude-opus-4-8",
 )
-DEACTIVATE_MODELS = ("o3-mini", "o4-mini", "gpt-4.1-nano", "gpt-5.3-chat-latest")
-
 _UPSERT = """
     ON CONFLICT (provider, model_name) DO UPDATE SET
         completion_type   = EXCLUDED.completion_type,
@@ -118,15 +114,6 @@ def upgrade():
         + _UPSERT
     )
 
-    # Deactivated, not deleted: historical llm_call rows still resolve pricing.
-    op.execute(
-        f"""
-        UPDATE global.model_config
-        SET is_active = false, updated_at = NOW()
-        WHERE provider = 'openai' AND model_name IN ({_sql_list(DEACTIVATE_MODELS)})
-        """
-    )
-
 
 def downgrade():
     op.execute(
@@ -134,13 +121,5 @@ def downgrade():
         DELETE FROM global.model_config
         WHERE (provider = 'openai' AND model_name IN ({_sql_list(SEEDED_OPENAI)}))
            OR (provider = 'anthropic' AND model_name IN ({_sql_list(SEEDED_ANTHROPIC)}))
-        """
-    )
-
-    op.execute(
-        f"""
-        UPDATE global.model_config
-        SET is_active = true, updated_at = NOW()
-        WHERE provider = 'openai' AND model_name IN ({_sql_list(DEACTIVATE_MODELS)})
         """
     )

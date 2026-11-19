@@ -54,8 +54,7 @@ entry; nothing else needs to know.
 `GET /models/providers` lists only providers that have an active row, so a
 provider with no rows is invisible to the config UI.
 
-090 upserts its rows. Rows for models a provider has shut down are kept but set
-`is_active=false`, so historical `llm_call` records still resolve pricing.
+090 upserts its rows, so an existing row is repaired rather than skipped.
 
 A `config.effort` key marks a reasoning model (`is_reasoning_model`): the OpenAI
 mapper routes `effort` into `reasoning`, and config-version updates strip
