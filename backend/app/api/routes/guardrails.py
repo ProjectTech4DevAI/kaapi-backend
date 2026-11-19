@@ -6,6 +6,12 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Respon
 from fastapi.responses import JSONResponse
 from opentelemetry import trace
 
+from app.core.telemetry.constants import (
+    CALLBACK_ENABLED,
+    JOB_ID,
+    TENANT_ORG_ID,
+    TENANT_PROJECT_ID,
+)
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.docs.guardrails_schemas import (
     BAN_LIST_CREATE_EXAMPLE,
@@ -116,16 +122,14 @@ def apply_guardrails_endpoint(
         system="guardrails",
         lifecycle="api.guardrails.apply",
         project_id=project_id,
-        organization_id=organization_id,
+        org_id=organization_id,
         callback_enabled=request.callback_url is not None,
     ):
         span = trace.get_current_span()
         if span.is_recording():
-            span.set_attribute("kaapi.project_id", project_id)
-            span.set_attribute("kaapi.organization_id", organization_id)
-            span.set_attribute(
-                "guardrails.callback_enabled", request.callback_url is not None
-            )
+            span.set_attribute(TENANT_PROJECT_ID, str(project_id))
+            span.set_attribute(TENANT_ORG_ID, str(organization_id))
+            span.set_attribute(CALLBACK_ENABLED, request.callback_url is not None)
 
         if request.callback_url:
             validate_callback_url(str(request.callback_url))
@@ -138,7 +142,7 @@ def apply_guardrails_endpoint(
         )
 
         if span.is_recording():
-            span.set_attribute("guardrails.job_id", str(job.id))
+            span.set_attribute(JOB_ID, str(job.id))
 
         message = (
             "Guardrails are being applied; the sanitised text will be delivered via callback."
@@ -597,7 +601,7 @@ def get_guardrails_job_status(
         lifecycle="api.guardrails.status",
         job_id=str(job_id),
         project_id=project_id,
-        organization_id=_current_user.organization_.id,
+        org_id=_current_user.organization_.id,
     ):
         job = JobCrud(session=session).get(job_id=job_id, project_id=project_id)
         if not job or job.job_type != JobType.LLM_GUARDRAILS:

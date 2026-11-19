@@ -37,6 +37,7 @@ def _initialize_worker_observability() -> None:
         from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
         from app.core.telemetry import init_sentry
+        from app.core.telemetry.constants import TENANT_ORG_ID, TENANT_PROJECT_ID
 
         init_sentry(
             integrations=[
@@ -55,8 +56,8 @@ def _initialize_worker_observability() -> None:
             sentry_sdk.set_tag("celery.task_name", task.name)
             task_kwargs = kwargs or {}
             for tag, key in (
-                ("tenant.project_id", "project_id"),
-                ("tenant.org_id", "organization_id"),
+                (TENANT_PROJECT_ID, "project_id"),
+                (TENANT_ORG_ID, "organization_id"),
             ):
                 if task_kwargs.get(key) is not None:
                     sentry_sdk.set_tag(tag, str(task_kwargs[key]))

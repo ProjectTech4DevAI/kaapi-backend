@@ -1,10 +1,16 @@
 import pytest
 from uuid import uuid4
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from sqlmodel import Session
 from fastapi.testclient import TestClient
 
+from app.core.telemetry.constants import (
+    CALLBACK_ENABLED,
+    JOB_ID,
+    TENANT_ORG_ID,
+    TENANT_PROJECT_ID,
+)
 from app.crud import JobCrud
 from app.models import Job, JobStatus, JobUpdate
 from app.models.llm.response import LLMCallResponse
@@ -428,3 +434,40 @@ def test_get_llm_call_audio_uri_presigned_failure_returns_empty_value(
     audio = body["data"]["llm_response"]["response"]["output"]["content"]
     assert audio["format"] == "url"
     assert audio["value"] == ""
+
+
+def test_llm_call_sets_tenant_and_job_span_attributes(
+    client: TestClient,
+    user_api_key_header: dict[str, str],
+    user_api_key: TestAuthContext,
+) -> None:
+    span = MagicMock()
+    span.is_recording.return_value = True
+    payload = LLMCallRequest(
+        query=QueryParams(input="hi"),
+        config=LLMCallConfig(
+            blob=ConfigBlob(
+                completion=NativeCompletionConfig(
+                    provider="openai-native", type="text", params={"model": "gpt-4"}
+                )
+            )
+        ),
+        callback_url="https://example.com/callback",
+    )
+
+    with (
+        patch("app.services.llm.jobs.start_llm_job", return_value="task-id"),
+        patch("app.api.routes.llm.trace.get_current_span", return_value=span),
+    ):
+        response = client.post(
+            "api/v1/llm/call",
+            json=payload.model_dump(mode="json"),
+            headers=user_api_key_header,
+        )
+
+    assert response.status_code == 200
+    job_id = response.json()["data"]["job_id"]
+    span.set_attribute.assert_any_call(TENANT_PROJECT_ID, str(user_api_key.project_id))
+    span.set_attribute.assert_any_call(TENANT_ORG_ID, str(user_api_key.organization_id))
+    span.set_attribute.assert_any_call(CALLBACK_ENABLED, True)
+    span.set_attribute.assert_any_call(JOB_ID, job_id)

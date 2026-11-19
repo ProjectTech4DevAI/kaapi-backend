@@ -9,15 +9,18 @@ from enum import StrEnum
 import sentry_sdk
 from opentelemetry import trace
 
+from app.core.telemetry.constants import (
+    LOG_LOCATION_FIELD,
+    LOG_MODULE_FIELD,
+    TENANT_ORG_ID,
+    TENANT_PROJECT_ID,
+)
+
 logger = logging.getLogger(__name__)
 
 _log_context_var: ContextVar[dict[str, str] | None] = ContextVar(
     "kaapi_log_context", default=None
 )
-
-# Sentry skips "_"-prefixed record attributes, so only LOG_MODULE_FIELD reaches Sentry Logs.
-LOG_MODULE_FIELD = "log_module"
-LOG_LOCATION_FIELD = "_log_location"
 
 
 class LogModuleEnum(StrEnum):
@@ -122,9 +125,9 @@ def set_request_log_context(
     try:
         if sentry_sdk.get_client().is_active():
             if org_id is not None:
-                sentry_sdk.set_tag("tenant.org_id", str(org_id))
+                sentry_sdk.set_tag(TENANT_ORG_ID, str(org_id))
             if project_id is not None:
-                sentry_sdk.set_tag("tenant.project_id", str(project_id))
+                sentry_sdk.set_tag(TENANT_PROJECT_ID, str(project_id))
     except Exception:
         logger.debug("[set_request_log_context] Failed to tag Sentry scope")
 

@@ -10,6 +10,11 @@ from celery.exceptions import (
 from opentelemetry import trace
 from asgi_correlation_id import correlation_id
 
+from app.core.telemetry.constants import (
+    JOB_ID,
+    TENANT_ORG_ID,
+    TENANT_PROJECT_ID,
+)
 from app.core.cloud import get_cloud_storage
 from app.core.db import engine
 from app.core.telemetry import log_context
@@ -195,14 +200,14 @@ def execute_setup_job(
         tag="collection",
         lifecycle="collection.create.execute_setup_job",
         action="create",
-        collection_job_id=job_id,
+        job_id=job_id,
         task_id=task_id,
         project_id=project_id,
-        organization_id=organization_id,
+        org_id=organization_id,
     ), tracer.start_as_current_span("collections.create.execute_setup_job") as span:
-        span.set_attribute("collection.job_id", str(job_id))
-        span.set_attribute("kaapi.project_id", project_id)
-        span.set_attribute("kaapi.organization_id", organization_id)
+        span.set_attribute(JOB_ID, str(job_id))
+        span.set_attribute(TENANT_PROJECT_ID, str(project_id))
+        span.set_attribute(TENANT_ORG_ID, str(organization_id))
 
         try:
             creation_request = CreationRequest.model_validate(request)
@@ -354,14 +359,14 @@ def execute_batch_job(
         tag="collection",
         lifecycle="collection.create.execute_batch_job",
         action="create",
-        collection_job_id=job_id,
+        job_id=job_id,
         task_id=task_id,
         project_id=project_id,
-        organization_id=organization_id,
+        org_id=organization_id,
     ), tracer.start_as_current_span("collections.create.execute_batch_job") as span:
-        span.set_attribute("collection.job_id", str(job_id))
-        span.set_attribute("kaapi.project_id", project_id)
-        span.set_attribute("kaapi.organization_id", organization_id)
+        span.set_attribute(JOB_ID, str(job_id))
+        span.set_attribute(TENANT_PROJECT_ID, str(project_id))
+        span.set_attribute(TENANT_ORG_ID, str(organization_id))
 
         try:
             batch_start_time = time.time()

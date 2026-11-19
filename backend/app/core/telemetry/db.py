@@ -11,13 +11,18 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.engine.interfaces import DBAPIConnection, DBAPICursor, ExecutionContext
 from sqlalchemy.pool import ConnectionPoolEntry, Pool, PoolProxiedConnection, QueuePool
 
+from app.core.telemetry.constants import (
+    DB_ERROR_NAME,
+    DB_OPERATION,
+    DB_ROWS_AFFECTED,
+    DB_SQLSTATE,
+    DB_SYSTEM,
+)
 from app.core.telemetry.metrics import emit_sentry_metric
 
 logger = logging.getLogger(__name__)
 
 DB_SLOW_QUERY_MS: int = 500
-
-DB_ROWS_ATTRIBUTE: str = "db.rows_affected"
 
 _INSTRUMENTED_ATTR = "_kaapi_db_telemetry_instrumented"
 _STARTED_AT_ATTR = "_kaapi_db_started_at"
@@ -54,9 +59,9 @@ def record_db_query_failed(
 
     attrs: dict[str, str | int | float] = {}
     if operation:
-        attrs["db.operation"] = operation
+        attrs[DB_OPERATION] = operation
     if sqlstate:
-        attrs["db.sqlstate"] = sqlstate
+        attrs[DB_SQLSTATE] = sqlstate
 
     emit_sentry_metric("count", "db.query.failed", 1, attributes=attrs)
 
@@ -66,7 +71,7 @@ def record_db_slow_query(operation: str | None = None) -> None:
 
     attrs: dict[str, str | int | float] = {}
     if operation:
-        attrs["db.operation"] = operation
+        attrs[DB_OPERATION] = operation
 
     emit_sentry_metric("count", "db.query.slow", 1, attributes=attrs)
 
@@ -96,13 +101,13 @@ def _tag_db_error(sqlstate: str | None) -> None:
     try:
         span = trace.get_current_span()
         if span.is_recording():
-            span.set_attribute("db.sqlstate", sqlstate)
+            span.set_attribute(DB_SQLSTATE, sqlstate)
         if sentry_sdk.get_client().is_active():
-            sentry_sdk.set_tag("db.system", "postgresql")
-            sentry_sdk.set_tag("db.sqlstate", sqlstate)
+            sentry_sdk.set_tag(DB_SYSTEM, "postgresql")
+            sentry_sdk.set_tag(DB_SQLSTATE, sqlstate)
             name = NOTABLE_SQLSTATES.get(sqlstate)
             if name:
-                sentry_sdk.set_tag("db.error.name", name)
+                sentry_sdk.set_tag(DB_ERROR_NAME, name)
     except Exception:
         logger.debug("[_tag_db_error] Failed to tag DB error | sqlstate: %s", sqlstate)
 
@@ -202,7 +207,7 @@ def instrument_db_engine(engine: Engine) -> None:
         if span is None or rowcount is None or rowcount < 0:
             return
         if span.is_recording():
-            span.set_attribute(DB_ROWS_ATTRIBUTE, int(rowcount))
+            span.set_attribute(DB_ROWS_AFFECTED, int(rowcount))
 
     @event.listens_for(engine, "handle_error")
     def _handle_error(exception_context: ExceptionContext) -> None:
