@@ -7,7 +7,10 @@ Covers real-world scenarios, edge cases, and provider-specific requirements.
 
 from sqlmodel import Session
 
-from app.models.llm.constants import DEFAULT_ELEVENLABS_TTS_MODEL
+from app.models.llm.constants import (
+    DEFAULT_ELEVENLABS_TTS_MODEL,
+    DEFAULT_TEXT_MODELS,
+)
 from app.models.llm.request import (
     NativeCompletionConfig,
     STTLLMParams,
@@ -1011,7 +1014,7 @@ class TestMapKaapiToAnthropicParams:
         default when caller omits it."""
         result, warnings = map_kaapi_to_anthropic_params({})
 
-        assert result == {"model": "claude-sonnet-4-6"}
+        assert result == {"model": DEFAULT_TEXT_MODELS["anthropic"]}
         assert warnings == []
 
     def test_max_output_tokens_renamed_to_max_tokens(self):
