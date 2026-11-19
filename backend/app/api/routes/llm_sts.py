@@ -82,7 +82,6 @@ def _merge_rag(
 ) -> TextLLMParams:
     base = TextLLMParams(
         model=DEFAULT_RAG_MODEL,
-        effort=DEFAULT_RAG_EFFORT,
         instructions=DEFAULT_RAG_INSTRUCTIONS,
     )
     merged = (
@@ -90,6 +89,13 @@ def _merge_rag(
         if user is None
         else base.model_copy(update=user.model_dump(exclude_unset=True))
     )
+    # Only the default model is known to accept "none", and an explicit knob must win.
+    if (
+        merged.model == DEFAULT_RAG_MODEL
+        and merged.effort is None
+        and merged.reasoning is None
+    ):
+        merged = merged.model_copy(update={"effort": DEFAULT_RAG_EFFORT})
     return merged.model_copy(update={"knowledge_base_ids": knowledge_base_ids})
 
 

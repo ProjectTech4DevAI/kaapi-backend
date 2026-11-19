@@ -172,7 +172,8 @@ def map_kaapi_to_openai_params(
     openai_params: dict[str, Any] = {}
     warnings = []
 
-    model = params.get("model")
+    # Resolved before the capability check: an omitted model still runs on the default.
+    model = params.get("model") or DEFAULT_TEXT_MODELS["openai"]
     reasoning = params.get("reasoning")
     effort = params.get("effort")
     summary = params.get("summary")
@@ -183,7 +184,7 @@ def map_kaapi_to_openai_params(
     max_num_results = params.get("max_num_results")
     output_schema = params.get("output_schema")
 
-    support_reasoning = bool(model) and is_reasoning_model(
+    support_reasoning = is_reasoning_model(
         session=session, provider="openai", model_name=model
     )
 
@@ -225,7 +226,7 @@ def map_kaapi_to_openai_params(
         if top_p is not None:
             openai_params["top_p"] = top_p
 
-    openai_params["model"] = model or DEFAULT_TEXT_MODELS["openai"]
+    openai_params["model"] = model
 
     if instructions:
         openai_params["instructions"] = instructions
