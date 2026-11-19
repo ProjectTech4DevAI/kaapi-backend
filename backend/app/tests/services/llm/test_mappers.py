@@ -7,7 +7,10 @@ Covers real-world scenarios, edge cases, and provider-specific requirements.
 
 from sqlmodel import Session
 
-from app.models.llm.constants import DEFAULT_ELEVENLABS_TTS_MODEL
+from app.models.llm.constants import (
+    DEFAULT_ELEVENLABS_TTS_MODEL,
+    DEFAULT_TEXT_MODELS,
+)
 from app.models.llm.request import (
     NativeCompletionConfig,
     STTLLMParams,
@@ -33,6 +36,18 @@ import pytest
 
 class TestMapKaapiToOpenAIParams:
     """Test cases for map_kaapi_to_openai_params function."""
+
+    def test_omitted_model_maps_against_the_resolved_default(self, db: Session):
+        """An omitted model still runs on the default, so reasoning support must be
+        decided from the resolved default rather than from a bare None."""
+        result, warnings = map_kaapi_to_openai_params(
+            session=db, kaapi_params={"effort": "high", "temperature": 0.7}
+        )
+
+        assert result["model"] == DEFAULT_TEXT_MODELS["openai"]
+        assert result["reasoning"] == {"effort": "high"}
+        assert "temperature" not in result
+        assert any("temperature" in warning for warning in warnings)
 
     def test_basic_model_mapping(self, db: Session):
         """Test basic model parameter mapping."""
@@ -1011,7 +1026,7 @@ class TestMapKaapiToAnthropicParams:
         default when caller omits it."""
         result, warnings = map_kaapi_to_anthropic_params({})
 
-        assert result == {"model": "claude-sonnet-4-6"}
+        assert result == {"model": DEFAULT_TEXT_MODELS["anthropic"]}
         assert warnings == []
 
     def test_max_output_tokens_renamed_to_max_tokens(self):

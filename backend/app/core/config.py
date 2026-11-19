@@ -205,7 +205,7 @@ class Settings(BaseSettings):
     LLM_CALL_RETENTION_HOURS: int = Field(default=168, ge=1)
 
     ANTHROPIC_API_KEY: str = ""
-    PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"
+    PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-5-5"
 
     # Fast evaluation (run_mode="fast") configuration.
     # See "Fast Evaluation SRD.md" for the full design rationale.
@@ -236,7 +236,7 @@ class Settings(BaseSettings):
     # One of: none | minimal | low | medium | high | xhigh.
     EVAL_JUDGE_REASONING_EFFORT: str = "medium"
 
-    EVAL_SUMMARY_MODEL: str = "claude-sonnet-4-6"
+    EVAL_SUMMARY_MODEL: str = "claude-sonnet-5-5"
 
     # Judge runs alone in the single aggregate task (no response calls competing),
     # so it uses a larger pool than the response stage to finish the max dataset
