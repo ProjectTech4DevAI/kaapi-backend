@@ -39,7 +39,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["LLM"])
 
 
-DEFAULT_RAG_TEMPERATURE = 0.1
+# Replaces temperature: the mapper suppresses sampling on a reasoning model.
+DEFAULT_RAG_EFFORT: Literal["none"] = "none"
 DEFAULT_TTS_FORMAT = "ogg"  # mappers translate to opus (WhatsApp compatible)
 
 BlockType = Literal["stt", "text", "tts"]
@@ -81,7 +82,7 @@ def _merge_rag(
 ) -> TextLLMParams:
     base = TextLLMParams(
         model=DEFAULT_RAG_MODEL,
-        temperature=DEFAULT_RAG_TEMPERATURE,
+        effort=DEFAULT_RAG_EFFORT,
         instructions=DEFAULT_RAG_INSTRUCTIONS,
     )
     merged = (
