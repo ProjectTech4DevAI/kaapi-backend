@@ -65,14 +65,7 @@ def _schema_example(schema: Any, components: dict[str, Any]) -> Any:
 
 
 def hoist_request_examples(openapi_schema: dict[str, Any]) -> dict[str, Any]:
-    """Copy each JSON request body's model-level example onto the body itself.
-
-    Pydantic puts `json_schema_extra` examples on the component schema. Swagger
-    reads them there, but other OpenAPI consumers (notably the Postman
-    converter) only reliably read `requestBody.content.<media>.example`, so
-    without this their requests fall back to `<string>` placeholders.
-    An example already set on the body (e.g. via `doc()`) is left untouched.
-    """
+    """Copy each JSON request body's model-level example onto the body itself."""
     components = openapi_schema.get("components", {}).get("schemas", {})
     for path_item in openapi_schema.get("paths", {}).values():
         for operation in path_item.values():
