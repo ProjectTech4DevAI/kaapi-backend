@@ -42,43 +42,35 @@ def inject_component_schemas(openapi_schema: dict[str, Any]) -> dict[str, Any]:
     return openapi_schema
 
 
-def _schema_example(schema: Any, components: dict[str, Any]) -> Any:
-    """The first example declared on a (possibly `$ref`'d or optional) schema."""
-    for _ in range(10):  # bounded: a self-referencing $ref must not loop forever
-        if not isinstance(schema, dict):
-            return None
-        if "$ref" in schema:
-            schema = components.get(schema["$ref"].rsplit("/", 1)[-1])
-            continue
-        # An optional body (`Model | None`) renders as anyOf[Model, null].
-        branches = [b for b in schema.get("anyOf", []) if b.get("type") != "null"]
-        if len(branches) == 1 and not schema.get("examples"):
-            schema = branches[0]
-            continue
-        break
-    if not isinstance(schema, dict):
-        return None
-    examples = schema.get("examples")
-    if isinstance(examples, list) and examples:
-        return examples[0]
-    return schema.get("example")
+Examples = dict[str, tuple[str, Any]]
+"""Named request examples: `{name: (summary, body)}`.
+
+Each module keeps its constants in `app/api/docs/<module>/examples.py`.
+"""
 
 
-def hoist_request_examples(openapi_schema: dict[str, Any]) -> dict[str, Any]:
-    """Copy each JSON request body's model-level example onto the body itself."""
-    components = openapi_schema.get("components", {}).get("schemas", {})
-    for path_item in openapi_schema.get("paths", {}).values():
-        for operation in path_item.values():
-            if not isinstance(operation, dict):
-                continue
-            content = operation.get("requestBody", {}).get("content", {})
-            body = content.get(JSON_MEDIA_TYPE)
-            if not body or "example" in body or "examples" in body:
-                continue
-            example = _schema_example(body.get("schema"), components)
-            if example is not None:
-                body["example"] = example
-    return openapi_schema
+def _named_examples(examples: Examples) -> dict[str, dict[str, Any]]:
+    return {
+        name: {"summary": summary, "value": body}
+        for name, (summary, body) in examples.items()
+    }
+
+
+def request_examples(examples: Examples) -> dict[str, Any]:
+    """`openapi_extra` that documents a route's JSON body examples.
+
+    `@router.post("/x", openapi_extra=request_examples(X_EXAMPLES))`
+
+    FastAPI deep-merges `openapi_extra` into the generated operation, so the
+    body's schema (Pydantic model, dict, list, optional body) and `required`
+    flag are kept; only the examples are added. Swagger shows them as a
+    dropdown and the Postman converter uses the first one as the request body.
+    """
+    return {
+        "requestBody": {
+            "content": {JSON_MEDIA_TYPE: {"examples": _named_examples(examples)}}
+        }
+    }
 
 
 def ref(name: str) -> dict[str, str]:
@@ -112,7 +104,7 @@ def doc(
     *,
     request_schema: dict[str, Any] | None = None,
     request: Any = None,
-    request_examples: dict[str, tuple[str, Any]] | None = None,
+    request_examples: Examples | None = None,
     required: bool = True,
     responses: dict[int, ResponseDoc] | None = None,
 ) -> dict[str, Any]:
@@ -135,10 +127,7 @@ def doc(
             "schema": request_schema or infer_schema(inferred_from)
         }
         if request_examples:
-            content["examples"] = {
-                name: {"summary": summary, "value": body}
-                for name, (summary, body) in request_examples.items()
-            }
+            content["examples"] = _named_examples(request_examples)
         elif request is not None:
             content["example"] = request
         kwargs["openapi_extra"] = {

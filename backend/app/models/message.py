@@ -15,5 +15,3 @@ class DeleteRequest(SQLModel):
             "the record inactive."
         ),
     )
-
-    model_config = {"json_schema_extra": {"examples": [{"hard_delete": False}]}}

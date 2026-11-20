@@ -105,21 +105,6 @@ class ConfigVersionUpdate(SQLModel):
     and cannot be changed,
     """
 
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "config_blob": {
-                        "completion": {
-                            "params": {"model": "gpt-4o", "temperature": 0.5}
-                        }
-                    },
-                    "commit_message": "Switch to gpt-4o with higher temperature",
-                }
-            ]
-        }
-    }
-
     config_blob: dict[str, Any] = Field(
         description="Partial config blob. Only include fields you want to update. "
         "Provider and type are inherited from existing config and cannot be changed.",

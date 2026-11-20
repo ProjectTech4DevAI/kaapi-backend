@@ -7,6 +7,12 @@ from app.api.deps import (
     AuthContextDep,
     SessionDep,
 )
+from app.api.docs.users.examples import (
+    USER_PASSWORD_UPDATE_EXAMPLES,
+    USER_SIGNUP_EXAMPLES,
+    USER_UPDATE_ME_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.core.config import settings
 from app.core.feature_flags import resolve_all_flags
@@ -74,7 +80,11 @@ def create_user_endpoint(*, session: SessionDep, user_in: UserCreate) -> User:
     return user
 
 
-@router.patch("/me", response_model=UserPublic)
+@router.patch(
+    "/me",
+    response_model=UserPublic,
+    openapi_extra=request_examples(USER_UPDATE_ME_EXAMPLES),
+)
 def update_user_me(
     *, session: SessionDep, user_in: UserUpdateMe, current_user_dep: AuthContextDep
 ) -> User:
@@ -97,7 +107,11 @@ def update_user_me(
     return current_user
 
 
-@router.patch("/me/password", response_model=Message)
+@router.patch(
+    "/me/password",
+    response_model=Message,
+    openapi_extra=request_examples(USER_PASSWORD_UPDATE_EXAMPLES),
+)
 def update_password_me(
     *, session: SessionDep, body: UpdatePassword, current_user_dep: AuthContextDep
 ) -> Message:
@@ -159,6 +173,7 @@ def delete_user_me(session: SessionDep, current_user_dep: AuthContextDep) -> Mes
     "/signup",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=UserPublic,
+    openapi_extra=request_examples(USER_SIGNUP_EXAMPLES),
 )
 def register_user(session: SessionDep, user_in: UserRegister) -> User:
     """

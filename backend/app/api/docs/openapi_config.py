@@ -7,7 +7,6 @@ for organizing and enhancing the API documentation.
 
 from app.api.docs.guardrails_schemas import GUARDRAILS_COMPONENT_SCHEMAS
 from app.api.openapi_docs import (
-    hoist_request_examples,
     inject_component_schemas,
     register_component_schemas,
 )
@@ -155,4 +154,4 @@ def customize_openapi_schema(openapi_schema: dict) -> dict:
                 if any(tag in deprecated_tags for tag in operation_tags):
                     operation["x-badges"] = [{"name": "Deprecated", "color": "orange"}]
 
-    return hoist_request_examples(openapi_schema)
+    return openapi_schema

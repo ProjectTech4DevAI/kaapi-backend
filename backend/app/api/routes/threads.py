@@ -2,12 +2,18 @@ import re
 import openai
 import requests
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from openai import OpenAI
-from pydantic import BaseModel, ConfigDict, Field
-from typing import Annotated, Optional
+from pydantic import BaseModel, Field
+from typing import Optional
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.threads.examples import (
+    THREAD_CREATE_EXAMPLES,
+    THREAD_START_EXAMPLES,
+    THREAD_SYNC_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.core import logging
 from app.models import OpenAIThreadCreate
@@ -21,44 +27,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Threads"])
 
 
-THREADS_ASYNC_EXAMPLES = {
-    "new_thread": {
-        "summary": "Ask a question on a new thread",
-        "value": {
-            "question": "What documents do I need to apply for the scholarship?",
-            "assistant_id": "asst_abc123def456",
-            "callback_url": "https://example.com/webhooks/threads",
-            "remove_citation": True,
-        },
-    }
-}
-
-THREADS_SYNC_EXAMPLES = {
-    "continue_thread": {
-        "summary": "Ask a follow-up question on an existing thread and wait for the answer",
-        "value": {
-            "question": "What documents do I need to apply for the scholarship?",
-            "assistant_id": "asst_abc123def456",
-            "thread_id": "thread_abc123def456",
-            "remove_citation": True,
-        },
-    }
-}
-
-
 class StartThreadRequest(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={
-            "examples": [
-                {
-                    "question": "What documents do I need to apply for the scholarship?",
-                    "assistant_id": "asst_abc123def456",
-                    "remove_citation": True,
-                }
-            ]
-        }
-    )
-
     question: str = Field(..., description="The user's input question.")
     assistant_id: str = Field(..., description="The ID of the assistant to be used.")
     remove_citation: bool = Field(
@@ -326,9 +295,10 @@ def poll_run_and_prepare_response(request: dict, client: OpenAI, db: SessionDep)
 @router.post(
     "/threads",
     dependencies=[Depends(require_permission(Permission.REQUIRE_ORGANIZATION))],
+    openapi_extra=request_examples(THREAD_CREATE_EXAMPLES),
 )
 async def threads(
-    request: Annotated[dict, Body(openapi_examples=THREADS_ASYNC_EXAMPLES)],
+    request: dict,
     background_tasks: BackgroundTasks,
     session: SessionDep,
     _current_user: AuthContextDep,
@@ -399,9 +369,10 @@ async def threads(
 @router.post(
     "/threads/sync",
     dependencies=[Depends(require_permission(Permission.REQUIRE_ORGANIZATION))],
+    openapi_extra=request_examples(THREAD_SYNC_EXAMPLES),
 )
 async def threads_sync(
-    request: Annotated[dict, Body(openapi_examples=THREADS_SYNC_EXAMPLES)],
+    request: dict,
     session: SessionDep,
     _current_user: AuthContextDep,
 ):
@@ -462,6 +433,7 @@ async def threads_sync(
 @router.post(
     "/threads/start",
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(THREAD_START_EXAMPLES),
 )
 async def start_thread(
     request: StartThreadRequest,

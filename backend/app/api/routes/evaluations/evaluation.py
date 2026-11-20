@@ -14,6 +14,11 @@ from fastapi import (
 )
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.evaluation.examples import (
+    EVALUATION_CREATE_EXAMPLES,
+    EVALUATION_IMPROVE_PROMPT_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.core.rate_monitor import monitor_rate
 from app.crud.evaluations import list_evaluation_runs as list_evaluation_runs_crud
@@ -44,22 +49,8 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation"])
 @router.post(
     "",
     description=load_description("evaluation/create_evaluation.md"),
+    openapi_extra=request_examples(EVALUATION_CREATE_EXAMPLES),
     response_model=APIResponse[EvaluationRunPublic],
-    openapi_extra={
-        "requestBody": {
-            "content": {
-                "application/json": {
-                    "example": {
-                        "dataset_id": 42,
-                        "experiment_name": "faq-bot-gpt-4o-baseline",
-                        "config_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-                        "config_version": 1,
-                        "run_mode": "fast",
-                    }
-                }
-            }
-        }
-    },
     dependencies=[
         Depends(require_permission(Permission.REQUIRE_PROJECT)),
         Depends(monitor_rate("evaluations")),
@@ -226,6 +217,7 @@ def get_evaluation_run_status(
 @router.post(
     "/{evaluation_id}/improve-prompt",
     description=load_description("evaluation/improve_prompt.md"),
+    openapi_extra=request_examples(EVALUATION_IMPROVE_PROMPT_EXAMPLES),
     response_model=APIResponse[LLMJobImmediatePublic],
     status_code=202,
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],

@@ -7,18 +7,8 @@ class ResponsesAPIRequest(SQLModel):
     callback_url: str | None = None
     response_id: str | None = None
 
-    model_config = {
-        "extra": "allow",
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "assistant_id": "asst_abc123def456",
-                    "question": "What documents do I need to apply for the scholarship?",
-                    "callback_url": "https://example.com/webhooks/responses",
-                }
-            ]
-        },
-    }
+    class Config:
+        extra = "allow"
 
 
 class ResponsesSyncAPIRequest(SQLModel):
@@ -30,21 +20,8 @@ class ResponsesSyncAPIRequest(SQLModel):
     response_id: str | None = None
     question: str
 
-    model_config = {
-        "extra": "allow",
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "model": "gpt-4o-mini",
-                    "instructions": "Answer using only the provided documents.",
-                    "vector_store_ids": ["vs_abc123def456"],
-                    "max_num_results": 20,
-                    "temperature": 0.1,
-                    "question": "What documents do I need to apply for the scholarship?",
-                }
-            ]
-        },
-    }
+    class Config:
+        extra = "allow"
 
 
 class ResponseJobStatus(SQLModel):

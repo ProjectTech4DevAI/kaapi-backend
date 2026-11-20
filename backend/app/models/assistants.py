@@ -111,21 +111,6 @@ class Assistant(AssistantBase, table=True):
 
 
 class AssistantCreate(SQLModel):
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "name": "Helpline Assistant",
-                    "instructions": "You are a helpful assistant. Answer questions using the program FAQ documents.",
-                    "model": "gpt-4o-mini",
-                    "vector_store_ids": ["vs_abc123def456"],
-                    "temperature": 0.1,
-                    "max_num_results": 20,
-                }
-            ]
-        }
-    }
-
     name: str = Field(description="Name of the assistant", min_length=3, max_length=50)
     instructions: str = Field(
         description="Instructions for the assistant", min_length=10
@@ -158,18 +143,6 @@ class AssistantCreate(SQLModel):
 
 
 class AssistantUpdate(SQLModel):
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "instructions": "You are a helpful assistant. Answer in the user's language using the FAQ documents.",
-                    "vector_store_ids_add": ["vs_xyz789ghi012"],
-                    "temperature": 0.2,
-                }
-            ]
-        }
-    }
-
     name: str | None = Field(
         default=None, description="Name of the assistant", min_length=3, max_length=50
     )

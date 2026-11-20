@@ -5,6 +5,12 @@ import logging
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import SessionDep
+from app.api.docs.features.examples import (
+    FEATURE_FLAG_CREATE_EXAMPLES,
+    FEATURE_FLAG_DELETE_EXAMPLES,
+    FEATURE_FLAG_UPDATE_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.core.feature_flags import FeatureFlag
 from app.crud.feature_flag import (
@@ -32,6 +38,7 @@ router = APIRouter(tags=["Features"])
     description=load_description("features/create_flag.md"),
     response_model=APIResponse[FeatureFlagPublic],
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+    openapi_extra=request_examples(FEATURE_FLAG_CREATE_EXAMPLES),
 )
 def create_feature_flag_route(
     session: SessionDep,
@@ -85,6 +92,7 @@ def get_feature_flags(
     description=load_description("features/update_flag.md"),
     response_model=APIResponse[FeatureFlagPublic],
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+    openapi_extra=request_examples(FEATURE_FLAG_UPDATE_EXAMPLES),
 )
 def patch_feature_flag(
     session: SessionDep,
@@ -112,6 +120,7 @@ def patch_feature_flag(
     description=load_description("features/delete_flag.md"),
     response_model=APIResponse[dict[str, bool]],
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+    openapi_extra=request_examples(FEATURE_FLAG_DELETE_EXAMPLES),
 )
 def remove_feature_flag(
     session: SessionDep,

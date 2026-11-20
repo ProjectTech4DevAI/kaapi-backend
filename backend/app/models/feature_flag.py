@@ -69,30 +69,14 @@ class FeatureFlagCreate(SQLModel):
     project_id: int
     enabled: bool
 
-    model_config = {
-        "json_schema_extra": {
-            "examples": [{"key": "ASSESSMENT", "project_id": 1, "enabled": True}]
-        }
-    }
-
 
 class FeatureFlagUpdate(FeatureFlagCreate):
     """Same fields as FeatureFlagCreate; distinct name for OpenAPI schema."""
-
-    model_config = {
-        "json_schema_extra": {
-            "examples": [{"key": "ASSESSMENT", "project_id": 1, "enabled": False}]
-        }
-    }
 
 
 class FeatureFlagDelete(SQLModel):
     key: FeatureFlagKeyEnum
     project_id: int
-
-    model_config = {
-        "json_schema_extra": {"examples": [{"key": "ASSESSMENT", "project_id": 1}]}
-    }
 
 
 class FeatureFlagPublic(FeatureFlagBase):

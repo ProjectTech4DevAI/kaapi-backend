@@ -30,16 +30,6 @@ class InviteTokenPayload(SQLModel):
 class GoogleAuthRequest(SQLModel):
     token: str
 
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "token": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImV4YW1wbGUiLCJ0eXAiOiJKV1QifQ.your-google-id-token.signature"
-                }
-            ]
-        }
-    }
-
 
 class GoogleAuthResponse(SQLModel):
     access_token: str
@@ -53,15 +43,9 @@ class GoogleAuthResponse(SQLModel):
 class SelectProjectRequest(SQLModel):
     project_id: int
 
-    model_config = {"json_schema_extra": {"examples": [{"project_id": 1}]}}
-
 
 class MagicLinkRequest(SQLModel):
     email: str
-
-    model_config = {
-        "json_schema_extra": {"examples": [{"email": "jane.doe@example.com"}]}
-    }
 
 
 class AuthContext(SQLModel):

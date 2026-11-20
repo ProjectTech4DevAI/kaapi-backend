@@ -118,10 +118,6 @@ class DocumentUploadResponse(DocumentPublic):
 
 
 class DocumentUploadRequest(SQLModel):
-    model_config = {
-        "json_schema_extra": {"examples": [{"filename": "program-faq.pdf"}]}
-    }
-
     filename: str = Field(
         min_length=1,
         max_length=255,

@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import StrEnum
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, JsonValue
+from pydantic import BaseModel, Field, HttpUrl, JsonValue
 
 from app.models.assessment.assessment import AssessmentConfigRef, AssessmentStatus
 
@@ -82,29 +82,6 @@ class DuplicateDetectionConfig(BaseModel):
 
 class DuplicateDetectionCreate(BaseModel):
     """Request to check one submission against the strict and lenient corpora."""
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "examples": [
-                {
-                    "query": "A mobile app that sends SMS reminders to pregnant women "
-                    "for antenatal check-ups in rural districts.",
-                    "config": {
-                        "strict": {
-                            "id": "5d1c7a2e-8b3f-4e6a-9c1d-2f4b6a8e0c13",
-                            "version": 1,
-                        },
-                        "lenient": {
-                            "id": "9a7e3b51-2c4d-4f8e-b6a0-7d5c1e9f3b24",
-                            "version": 1,
-                        },
-                    },
-                    "callback_url": "https://example.com/webhooks/duplicates",
-                    "request_metadata": {"submission_id": "sub-20261120-0042"},
-                }
-            ]
-        }
-    )
 
     query: str = Field(min_length=1, description="Submission text to check")
     config: DuplicateDetectionConfig

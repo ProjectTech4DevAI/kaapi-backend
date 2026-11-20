@@ -614,12 +614,6 @@ class EvaluationDatasetPublic(SQLModel):
 class ImprovePromptRequest(SQLModel):
     """Body for POST /evaluations/{id}/improve-prompt."""
 
-    model_config = {
-        "json_schema_extra": {
-            "examples": [{"callback_url": "https://example.com/webhooks/kaapi"}]
-        }
-    }
-
     callback_url: HttpUrl = Field(
         description="HTTPS webhook that receives the result once the job finishes."
     )

@@ -135,16 +135,10 @@ class ChatbotBase(SQLModel):
 
 
 class ChatbotCreate(ChatbotBase):
-    model_config = {
-        "json_schema_extra": {"examples": [{"name": "Beneficiary Onboarding Bot"}]}
-    }
+    pass
 
 
 class ChatbotUpdate(SQLModel):
-    model_config = {
-        "json_schema_extra": {"examples": [{"name": "Beneficiary Onboarding Bot v2"}]}
-    }
-
     name: str | None = Field(
         default=None, min_length=1, max_length=CHATBOT_NAME_MAX_LENGTH
     )
@@ -275,52 +269,6 @@ class ChatbotFlowVersion(SQLModel, table=True):
 
 
 class ChatbotFlowUpdate(SQLModel):
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "nodes": [
-                        {
-                            "id": "input-1",
-                            "type": "input",
-                            "position": {"x": 0, "y": 100},
-                            "data": {"label": "User message"},
-                        },
-                        {
-                            "id": "onboarding-1",
-                            "type": "onboarding",
-                            "position": {"x": 250, "y": 100},
-                            "data": {
-                                "label": "Beneficiary Info Extractor",
-                                "config_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-                                "config_version": 1,
-                                "prompt": "Collect the user's name and city.",
-                            },
-                        },
-                        {
-                            "id": "output-1",
-                            "type": "output",
-                            "position": {"x": 500, "y": 100},
-                            "data": {"label": "Bot reply"},
-                        },
-                    ],
-                    "edges": [
-                        {
-                            "id": "e-input-onboarding",
-                            "source": "input-1",
-                            "target": "onboarding-1",
-                        },
-                        {
-                            "id": "e-onboarding-output",
-                            "source": "onboarding-1",
-                            "target": "output-1",
-                        },
-                    ],
-                }
-            ]
-        }
-    }
-
     nodes: list[ChatbotFlowNode] = Field(
         description="React Flow nodes; only their shape is checked on save."
     )
@@ -473,10 +421,6 @@ class ChatbotSessionMessage(SQLModel, table=True):
 
 
 class CreateChatbotSessionRequest(SQLModel):
-    model_config = {
-        "json_schema_extra": {"examples": [{"contact_ref": "919876543210"}]}
-    }
-
     contact_ref: str = Field(
         min_length=1,
         max_length=CONTACT_REF_MAX_LENGTH,
@@ -507,17 +451,6 @@ class ChatbotSessionSummary(SQLModel):
 
 
 class SendChatbotSessionMessageRequest(SQLModel):
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "message": "Hi, my name is Priya and I live in Pune.",
-                    "webhook_url": "https://example.com/webhooks/chatbot-reply",
-                }
-            ]
-        }
-    }
-
     message: str | None = Field(
         default=None,
         min_length=1,

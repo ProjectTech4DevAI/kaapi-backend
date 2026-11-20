@@ -14,22 +14,6 @@ class GuardrailsRequest(SQLModel):
     The sanitised text is delivered via the configured ``callback_url``.
     """
 
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "text": "Hi, I am Priya, my phone number is 98765 43210. Is fever normal after vaccination?",
-                    "config": [
-                        {"type": "pii_remover", "on_fail": "fix"},
-                        {"validator_config_id": "8c1d2e3f-4a5b-4c6d-9e7f-0a1b2c3d4e5f"},
-                    ],
-                    "callback_url": "https://example.com/webhooks/guardrails",
-                    "request_metadata": {"message_id": "msg-1042"},
-                }
-            ]
-        }
-    }
-
     text: str = Field(
         ...,
         min_length=1,

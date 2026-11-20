@@ -65,21 +65,6 @@ class OnboardingRequest(SQLModel):
         ),
     )
 
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "organization_name": "Acme Health Foundation",
-                    "project_name": "WhatsApp Helpline Bot",
-                    "email": "jane.doe@example.com",
-                    "password": "ChangeMe123!",
-                    "user_name": "Jane Doe",
-                    "credentials": [{"openai": {"api_key": "sk-proj-xxxxxxxx"}}],
-                }
-            ]
-        }
-    }
-
     @staticmethod
     def _clean_username(raw: str, max_len: int = 200) -> str:
         """

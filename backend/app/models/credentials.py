@@ -53,24 +53,6 @@ class CredsCreate(SQLModel):
         description="Credential payload per provider, keyed by provider name",
     )
 
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "is_active": True,
-                    "credential": {
-                        "openai": {"api_key": "sk-proj-xxxxxxxx"},
-                        "langfuse": {
-                            "public_key": "pk-lf-xxxxxxxx",
-                            "secret_key": "sk-lf-xxxxxxxx",
-                            "host": "https://cloud.langfuse.com",
-                        },
-                    },
-                }
-            ]
-        }
-    }
-
     @field_validator("credential", mode="before")
     @classmethod
     def _parse_credential(cls, value: object) -> object:
@@ -110,18 +92,6 @@ class CredsUpdate(SQLModel):
     is_active: bool | None = Field(
         default=None, description="Whether the credentials are active"
     )
-
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "provider": "openai",
-                    "credential": {"api_key": "sk-proj-xxxxxxxx"},
-                    "is_active": True,
-                }
-            ]
-        }
-    }
 
     @model_validator(mode="before")
     @classmethod
