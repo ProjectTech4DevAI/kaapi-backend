@@ -29,7 +29,7 @@ from app.models import (
     DocTransformationJobPublic,
 )
 from app.core.cloud import get_cloud_storage
-from app.services.collections.helpers import MAX_DOC_SIZE_MB
+from app.services.documents.constants import MAX_DOC_SIZE_MB
 from app.services.documents.helpers import (
     calculate_file_size,
     schedule_transformation,

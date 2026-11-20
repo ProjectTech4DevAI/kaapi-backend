@@ -64,7 +64,9 @@ class TestDocumentRouteInfoSignedUrl:
     ) -> tuple[Document, list[str | None]]:
         store = DocumentStore(db=db, project_id=crawler.user_api_key.project_id)
         document = store.put()
-        with patch("app.api.routes.documents.get_cloud_storage") as mock_storage:
+        with patch(
+            "app.api.routes.documents.document.get_cloud_storage"
+        ) as mock_storage:
             mock_storage.return_value.get_signed_url.return_value = "https://signed"
             response = crawler.get(route.append(document))
             assert response.is_success

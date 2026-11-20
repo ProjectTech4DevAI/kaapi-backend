@@ -36,7 +36,7 @@ _LOGGER_MODULES: dict[str, LogModuleEnum] = {
     "app.api.routes.collection_job": LogModuleEnum.KNOWLEDGEBASE,
     "app.api.routes.collections": LogModuleEnum.KNOWLEDGEBASE,
     "app.api.routes.doc_transformation_job": LogModuleEnum.KNOWLEDGEBASE,
-    "app.api.routes.documents": LogModuleEnum.KNOWLEDGEBASE,
+    "app.api.routes.documents.document": LogModuleEnum.KNOWLEDGEBASE,
     "app.crud.collection.collection": LogModuleEnum.KNOWLEDGEBASE,
     "app.crud.collection.collection_job": LogModuleEnum.KNOWLEDGEBASE,
     "app.crud.document.doc_transformation_job": LogModuleEnum.KNOWLEDGEBASE,

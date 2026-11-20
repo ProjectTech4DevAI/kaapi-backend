@@ -38,6 +38,7 @@ class AssessmentMethod(StrEnum):
     RESPONSE = "RESPONSE"
     BATCH = "BATCH"
     RUN = "RUN"
+    DUPLICATE_DETECTION = "DUPLICATE_DETECTION"
 
 
 class AssessmentStatus(StrEnum):
