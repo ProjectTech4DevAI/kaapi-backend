@@ -90,4 +90,4 @@ jobs:
             -H "Content-Type: application/json" \
             --data @payload.json -o /dev/null
 
-          echo "Postman collection updated ✅" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "Postman collection updated" | tee -a "$GITHUB_STEP_SUMMARY"
