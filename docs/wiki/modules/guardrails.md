@@ -74,9 +74,10 @@ Endpoint-specific behaviour, none of which exists on the `/llm/call` path:
 - **Validator shape.** `GuardrailsRequest.config` is `list[GuardrailEntry]`, the same ref-or-inline union as `/llm/call` blobs. Refs run before inline specs (`apply_guardrails` concatenates `fetched + inline_specs`).
 - **Dedupe.** `_dedupe_validators` drops repeated entries (order-preserving) so callers are not double-billed upstream — refs keyed by `validator_config_id`, inline specs by canonical JSON.
 - **Warnings channel.** Bypass, dedupe, and "no validators resolved" become human-readable strings. Delivered as `metadata.warnings` in the callback and `warnings[]` on the poll response. A caller-supplied `warnings` key in `request_metadata` is overwritten (documented in the model docstring).
+- **`include_guardrail_metadata`** (default `False`, same `outcome.applied` gate as §7). Builds `{input_from_user, output_to_user, validators}` in `execute_job`, delivered as `metadata.guardrail` on the success **and** hard-block failure callbacks, persisted at `job.meta["callback"]["guardrail"]`, and returned by the poll route as `GuardrailsJobPublic.guardrail_metadata`.
 - **`job.meta`** holds `{request, response, callback}`. Raw unsafe text is persisted on purpose — this endpoint exists to inspect unsafe content.
 - **`response_id` is server-minted** (`uuid4`), so callers always have a stable correlation handle even when upstream returns none.
-- `rephrase_needed` is ignored here. Per-validator results are not exposed here.
+- `rephrase_needed` is ignored here. Per-validator results are exposed only via `include_guardrail_metadata`.
 
 `GET /guardrails/{job_id}` **rebuilds** the payload from `job.meta` rather than replaying the stored callback body — the two representations can drift if only one is changed.
 
@@ -101,13 +102,14 @@ Opt-in flag on `LLMCallRequest`, default `False`. Gated on `outcome.applied`, so
 - Input side produces `{"input_guardrail": {input_from_user, input_to_llm, validators}}`, merged into `request_metadata`, which is then stored on the new `llm_call.metadata` column (model field `metadata_`, renamed to dodge SQLAlchemy's reserved `metadata`; migration 083).
 - Output side produces `{"output_guardrail": {output_from_llm, output_to_user, validators}}` on `result.metadata`, persisted through `update_llm_call_response` (merge, not replace).
 - `GET /llm/call/{job_id}` returns `llm_call.metadata_` as the response envelope's `metadata`.
-- **`/llm/call` only.** `LLMChainRequest` has no such field and `ChainBlock.execute` does not forward the flag, so chains never emit guardrail metadata.
+- Standalone `POST /guardrails` has its own flag with the same name, but the shape differs: a single `metadata.guardrail` block (see §5).
+- **`/llm/call` and `/guardrails` only.** `LLMChainRequest` has no such field and `ChainBlock.execute` does not forward the flag, so chains never emit guardrail metadata.
 
 ## 8. Management proxy routes (PR #1135)
 
 Thin pass-throughs over the upstream management API, all under `require_permission(Permission.REQUIRE_PROJECT)`:
 
-- `GET /guardrails` — validator catalogue, filtered to `EXPOSED_VALIDATOR_TYPES` (`services/llm/guardrails.py`; v1.0: `topic_relevance_llm`, `uli_slur_match`, `gender_assumption_bias`, `pii_remover`). Only the list hides types — validator-config writes still forward any type upstream accepts.
+- `GET /guardrails` — validator catalogue, filtered to `EXPOSED_VALIDATOR_TYPES` (`services/llm/guardrails.py`; derived from `InlineValidatorTypeEnum`: `content_safety`, `gender_assumption_bias`, `pii_remover`, `topic_relevance_llm`, `uli_slur_match`). Only the list hides types — validator-config writes still forward any type upstream accepts.
 - `/guardrails/ban_lists` — POST, GET (`domain`, `offset`, `limit`); `/{id}` GET/PATCH/DELETE
 - `/guardrails/llm_prompt_configs` — POST, GET (`validator_name`, `offset`, `limit`); `/{id}` GET/PATCH/DELETE
 - `/guardrails/validators/configs` — POST, GET (`ids`, `stage`, `type`); `/{id}` GET/PATCH/DELETE

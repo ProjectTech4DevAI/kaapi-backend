@@ -613,6 +613,10 @@ def get_guardrails_job_status(
             if isinstance(raw_warnings, list):
                 warnings = [w for w in raw_warnings if isinstance(w, str)]
 
+        guardrail_metadata = (
+            callback_blob.get("guardrail") if isinstance(callback_blob, dict) else None
+        )
+
         guardrails_response: GuardrailsCallbackData | None = None
         if job.status == JobStatus.SUCCESS:
             response_blob = meta.get("response") or {}
@@ -659,6 +663,7 @@ def get_guardrails_job_status(
                 status=job.status.value,
                 guardrails_response=guardrails_response,
                 error_message=job.error_message,
+                guardrail_metadata=guardrail_metadata,
                 warnings=warnings,
             )
         )
