@@ -290,3 +290,27 @@ class TestRequestExamplesMatchTheirModels:
                         )
 
         assert not failures, "\n".join(failures)
+
+    def test_every_json_request_body_has_an_example(self) -> None:
+        """Without one, the synced Postman request is `<string>` placeholders.
+
+        Add `json_schema_extra={"examples": [...]}` to the request model, or
+        `Body(openapi_examples=...)` / `doc(...)` on the route.
+        """
+        from app.main import app
+
+        missing = [
+            f"{method.upper()} {path}"
+            for path, path_item in app.openapi()["paths"].items()
+            for method, operation in path_item.items()
+            if isinstance(operation, dict)
+            and (
+                media := operation.get("requestBody", {})
+                .get("content", {})
+                .get(JSON_MEDIA_TYPE)
+            )
+            and "example" not in media
+            and "examples" not in media
+        ]
+
+        assert not missing, "Request bodies without an example:\n" + "\n".join(missing)
