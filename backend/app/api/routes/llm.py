@@ -8,6 +8,8 @@ from pydantic import TypeAdapter
 from sqlmodel import Session
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.llm.examples import LLM_CALL_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.core.cloud.storage import get_cloud_storage
 from app.core.telemetry import log_context
@@ -97,6 +99,7 @@ def llm_callback_notification(body: APIResponse[LLMCallResponse]):
         Depends(require_permission(Permission.REQUIRE_PROJECT)),
         Depends(monitor_rate("llm_call")),
     ],
+    openapi_extra=request_examples(LLM_CALL_EXAMPLES),
 )
 def llm_call(
     _current_user: AuthContextDep, session: SessionDep, request: LLMCallRequest

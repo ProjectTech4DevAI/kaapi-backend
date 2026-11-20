@@ -6,7 +6,10 @@ for organizing and enhancing the API documentation.
 """
 
 from app.api.docs.guardrails_schemas import GUARDRAILS_COMPONENT_SCHEMAS
-from app.api.openapi_docs import inject_component_schemas, register_component_schemas
+from app.api.openapi_docs import (
+    inject_component_schemas,
+    register_component_schemas,
+)
 
 register_component_schemas(GUARDRAILS_COMPONENT_SCHEMAS)
 

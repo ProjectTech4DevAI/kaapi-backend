@@ -3,6 +3,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.config.examples import (
+    CONFIG_CREATE_EXAMPLES,
+    CONFIG_UPDATE_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.crud.config import ConfigCrud
 from app.models import (
@@ -24,6 +29,7 @@ router = APIRouter()
     response_model=APIResponse[ConfigWithVersion],
     status_code=201,
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(CONFIG_CREATE_EXAMPLES),
 )
 def create_config(
     config_create: ConfigCreate,
@@ -107,6 +113,7 @@ def get_config(
     response_model=APIResponse[ConfigPublic],
     status_code=200,
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(CONFIG_UPDATE_EXAMPLES),
 )
 def update_config(
     config_id: UUID,

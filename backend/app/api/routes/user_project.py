@@ -4,6 +4,10 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.user_project.examples import (
+    USER_PROJECT_ADD_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.core.config import settings
 from app.crud import get_user_by_email
@@ -62,6 +66,7 @@ def list_project_users(
     description=load_description("user_project/add.md"),
     response_model=APIResponse[list[UserProjectPublic]],
     status_code=status.HTTP_201_CREATED,
+    openapi_extra=request_examples(USER_PROJECT_ADD_EXAMPLES),
 )
 def add_project_users(
     session: SessionDep,

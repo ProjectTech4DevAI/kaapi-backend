@@ -7,6 +7,12 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.auth.examples import (
+    AUTH_GOOGLE_EXAMPLES,
+    AUTH_MAGIC_LINK_EXAMPLES,
+    AUTH_SELECT_PROJECT_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.core.config import settings
 from app.crud import get_user_by_email
 from app.crud.auth import get_user_accessible_projects
@@ -55,6 +61,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
     "/google",
     description=load_description("auth/google.md"),
     response_model=APIResponse[GoogleAuthResponse],
+    openapi_extra=request_examples(AUTH_GOOGLE_EXAMPLES),
 )
 def google_auth(session: SessionDep, body: GoogleAuthRequest) -> JSONResponse:
     """Authenticate a user via Google OAuth ID token."""
@@ -159,6 +166,7 @@ def google_auth(session: SessionDep, body: GoogleAuthRequest) -> JSONResponse:
 @router.post(
     "/select-project",
     response_model=APIResponse[Token],
+    openapi_extra=request_examples(AUTH_SELECT_PROJECT_EXAMPLES),
 )
 def select_project(
     session: SessionDep,
@@ -284,6 +292,7 @@ def verify_invitation(session: SessionDep, token: str) -> JSONResponse:
     "/magic-link",
     description=load_description("auth/magic_link.md"),
     response_model=APIResponse[Message],
+    openapi_extra=request_examples(AUTH_MAGIC_LINK_EXAMPLES),
 )
 def request_magic_link(session: SessionDep, body: MagicLinkRequest) -> Any:
     """Send a magic link login email to the user."""
