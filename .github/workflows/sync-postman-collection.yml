@@ -63,14 +63,17 @@ jobs:
         env:
           POSTMAN_API_KEY: ${{ secrets.POSTMAN_API_KEY }}
           POSTMAN_COLLECTION_UID: ${{ secrets.POSTMAN_COLLECTION_UID }}
+          POSTMAN_BASE_URL: ${{ secrets.POSTMAN_BASE_URL }}
         run: |
           set -euo pipefail
           api="https://api.getpostman.com/collections/${POSTMAN_COLLECTION_UID}"
 
           curl -sS --fail-with-body "$api" -H "X-Api-Key: ${POSTMAN_API_KEY}" -o current.json
 
-          jq -n --slurpfile cur current.json --slurpfile gen collection.json '
+          jq -n --slurpfile cur current.json --slurpfile gen collection.json \
+            --arg baseUrl "${POSTMAN_BASE_URL:-}" '
             ($cur[0].collection) as $c | $gen[0] as $g |
+            ($c.variable // $g.variable // []) as $vars |
             {collection: ({
               info: {
                 _postman_id: $c.info._postman_id,
@@ -78,9 +81,25 @@ jobs:
                 description: ($c.info.description // $g.info.description),
                 schema: $c.info.schema
               },
-              item: $g.item,
-              variable: ($c.variable // $g.variable),
-              auth: ($c.auth // $g.auth),
+              item: ($g.item | walk(
+                if type == "object" and (.request | type) == "object"
+                then .request |= del(.auth) else . end
+              )),
+              variable: (
+                if $baseUrl == "" then $vars
+                elif any($vars[]; .key == "baseUrl")
+                then $vars | map(if .key == "baseUrl" then .value = $baseUrl else . end)
+                else $vars + [{key: "baseUrl", value: $baseUrl, type: "string"}]
+                end
+              ),
+              auth: {
+                type: "apikey",
+                apikey: [
+                  {key: "key", value: "X-API-KEY", type: "string"},
+                  {key: "value", value: "{{apiKey}}", type: "string"},
+                  {key: "in", value: "header", type: "string"}
+                ]
+              },
               event: ($c.event // $g.event)
             } | with_entries(select(.value != null)))}
           ' > payload.json
