@@ -1,8 +1,14 @@
 from unittest.mock import MagicMock
 
+import httpx2
 import pytest
+from anthropic import APIConnectionError, APIStatusError
 
-from app.core.batch.anthropic import STRUCTURED_OUTPUTS_BETA, AnthropicBatchProvider
+from app.core.batch.anthropic import (
+    SCHEMA_PREFLIGHT_MAX_TOKENS,
+    STRUCTURED_OUTPUTS_BETA,
+    AnthropicBatchProvider,
+)
 from app.models.llm.constants import (
     DEFAULT_ANTHROPIC_MAX_TOKENS,
     DEFAULT_TEXT_MODELS,
@@ -45,6 +51,23 @@ def create_mock_result(
     if error_dump is not None:
         mock_result.result.error.model_dump.return_value = error_dump
     return mock_result
+
+
+def create_api_status_error(
+    status_code: int,
+    provider_message: str = "schema is too complex to compile",
+    request_id: str = "req_preflight_1",
+) -> APIStatusError:
+    """Build the SDK error shape a rejected Messages API call raises."""
+    request = httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+    response = httpx2.Response(
+        status_code, request=request, headers={"request-id": request_id}
+    )
+    return APIStatusError(
+        f"Error code: {status_code}",
+        response=response,
+        body={"error": {"type": "invalid_request_error", "message": provider_message}},
+    )
 
 
 class TestAnthropicBatchProvider:
@@ -205,6 +228,145 @@ class TestAnthropicBatchProvider:
             "betas"
         ]
         assert betas == [STRUCTURED_OUTPUTS_BETA]
+
+    def test_create_batch_preflights_the_output_config_before_submitting(
+        self, provider, mock_anthropic_client
+    ):
+        output_config = {
+            "format": {
+                "type": "json_schema",
+                "schema": {"type": "object", "properties": {}},
+            }
+        }
+        jsonl_data = [
+            {
+                "custom_id": "req-1",
+                "params": {"messages": [{"role": "user", "content": "Hello"}]},
+            },
+            {
+                "custom_id": "req-2",
+                "params": {
+                    "model": "claude-haiku-4-5",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                    "output_config": output_config,
+                },
+            },
+        ]
+
+        mock_anthropic_client.beta.messages.batches.create.return_value = (
+            create_mock_batch()
+        )
+
+        provider.create_batch(jsonl_data, {})
+
+        mock_anthropic_client.beta.messages.create.assert_called_once()
+        preflight = mock_anthropic_client.beta.messages.create.call_args.kwargs
+        assert preflight["model"] == "claude-haiku-4-5"
+        assert preflight["output_config"] == output_config
+        assert preflight["max_tokens"] == SCHEMA_PREFLIGHT_MAX_TOKENS
+        assert preflight["betas"] == [STRUCTURED_OUTPUTS_BETA]
+        mock_anthropic_client.beta.messages.batches.create.assert_called_once()
+
+    def test_create_batch_without_output_config_skips_preflight(
+        self, provider, mock_anthropic_client
+    ):
+        jsonl_data = [
+            {
+                "custom_id": "req-1",
+                "params": {"messages": [{"role": "user", "content": "Hello"}]},
+            }
+        ]
+
+        mock_anthropic_client.beta.messages.batches.create.return_value = (
+            create_mock_batch()
+        )
+
+        provider.create_batch(jsonl_data, {})
+
+        mock_anthropic_client.beta.messages.create.assert_not_called()
+        assert (
+            mock_anthropic_client.beta.messages.batches.create.call_args.kwargs["betas"]
+            == []
+        )
+
+    def test_rejected_schema_fails_submission_with_the_provider_reason(
+        self, provider, mock_anthropic_client
+    ):
+        jsonl_data = [
+            {
+                "custom_id": "req-1",
+                "params": {
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "output_config": {"format": {"type": "json_schema", "schema": {}}},
+                },
+            }
+        ]
+        mock_anthropic_client.beta.messages.create.side_effect = (
+            create_api_status_error(
+                400,
+                provider_message="output schema has too many optional fields",
+                request_id="req_rejected_9",
+            )
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            provider.create_batch(jsonl_data, {})
+
+        message = str(exc_info.value)
+        assert "output schema has too many optional fields" in message
+        assert "400" in message
+        assert "req_rejected_9" in message
+        mock_anthropic_client.beta.messages.batches.create.assert_not_called()
+
+    @pytest.mark.parametrize("status_code", [429, 500, 529])
+    def test_inconclusive_preflight_still_submits_the_batch(
+        self, provider, mock_anthropic_client, status_code: int
+    ):
+        jsonl_data = [
+            {
+                "custom_id": "req-1",
+                "params": {
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "output_config": {"format": {"type": "json_schema", "schema": {}}},
+                },
+            }
+        ]
+        mock_anthropic_client.beta.messages.create.side_effect = (
+            create_api_status_error(status_code)
+        )
+        mock_anthropic_client.beta.messages.batches.create.return_value = (
+            create_mock_batch(batch_id="msgbatch_survived")
+        )
+
+        result = provider.create_batch(jsonl_data, {})
+
+        assert result["provider_batch_id"] == "msgbatch_survived"
+        assert mock_anthropic_client.beta.messages.batches.create.call_args.kwargs[
+            "betas"
+        ] == [STRUCTURED_OUTPUTS_BETA]
+
+    def test_unreachable_preflight_still_submits_the_batch(
+        self, provider, mock_anthropic_client
+    ):
+        jsonl_data = [
+            {
+                "custom_id": "req-1",
+                "params": {
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "output_config": {"format": {"type": "json_schema", "schema": {}}},
+                },
+            }
+        ]
+        mock_anthropic_client.beta.messages.create.side_effect = APIConnectionError(
+            request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+        )
+        mock_anthropic_client.beta.messages.batches.create.return_value = (
+            create_mock_batch(batch_id="msgbatch_survived")
+        )
+
+        result = provider.create_batch(jsonl_data, {})
+
+        assert result["provider_batch_id"] == "msgbatch_survived"
 
     def test_create_batch_error(self, provider, mock_anthropic_client):
         """Test handling of batch creation error."""

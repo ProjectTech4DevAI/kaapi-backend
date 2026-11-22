@@ -5,6 +5,7 @@ Tests the transformation of Kaapi-abstracted parameters to provider-native forma
 Covers real-world scenarios, edge cases, and provider-specific requirements.
 """
 
+import pytest
 from sqlmodel import Session
 
 from app.models.llm.constants import DEFAULT_ELEVENLABS_TTS_MODEL
@@ -17,6 +18,7 @@ from app.models.llm.request import (
 )
 from app.services.llm.mappers import (
     _convert_json_schema_to_google,
+    _ensure_anthropic_strict_schema,
     _ensure_openai_strict_schema,
     _strip_additional_properties,
     bcp47_to_elevenlabs_lang,
@@ -28,7 +30,6 @@ from app.services.llm.mappers import (
     transform_kaapi_config_to_native,
     voice_to_id,
 )
-import pytest
 
 
 class TestMapKaapiToOpenAIParams:
@@ -1128,6 +1129,41 @@ class TestMapKaapiToAnthropicParams:
         )
         assert len(warnings) == 1
 
+    def test_output_schema_is_reduced_to_the_anthropic_subset(self):
+        result, warnings = map_kaapi_to_anthropic_params(
+            {
+                "model": "claude-sonnet-4-6",
+                "output_schema": {
+                    "type": "object",
+                    "properties": {
+                        "score": {"type": "integer", "minimum": 0, "maximum": 10},
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 3,
+                        },
+                    },
+                },
+            }
+        )
+
+        schema = result["output_config"]["format"]["schema"]
+        assert result["output_config"]["format"]["type"] == "json_schema"
+        assert schema == {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["score", "tags"],
+            "properties": {
+                "score": {"type": "integer"},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                },
+            },
+        }
+        assert warnings == []
+
 
 class TestSchemaHelpers:
     """Schema shaping shared by the OpenAI, Anthropic and Gemini mappers."""
@@ -1204,6 +1240,208 @@ class TestSchemaHelpers:
         )
 
         assert result["propertyOrdering"] == ["a", "b"]
+
+
+class TestEnsureAnthropicStrictSchema:
+    """Reduction of a stored OpenAI-strict schema to Anthropic's supported keyword subset."""
+
+    def test_unsupported_numeric_and_string_constraints_are_stripped(self):
+        result = _ensure_anthropic_strict_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "minLength": 2, "maxLength": 40},
+                    "score": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 10,
+                        "exclusiveMinimum": 0,
+                        "exclusiveMaximum": 11,
+                        "multipleOf": 2,
+                    },
+                },
+            }
+        )
+
+        assert result["properties"]["name"] == {"type": "string"}
+        assert result["properties"]["score"] == {"type": "integer"}
+
+    def test_unsupported_array_and_object_cardinality_keywords_are_stripped(self):
+        result = _ensure_anthropic_strict_schema(
+            {
+                "type": "object",
+                "minProperties": 1,
+                "maxProperties": 3,
+                "properties": {
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": 5,
+                        "uniqueItems": True,
+                        "minContains": 1,
+                        "maxContains": 2,
+                    }
+                },
+            }
+        )
+
+        assert result["properties"]["tags"] == {
+            "type": "array",
+            "items": {"type": "string"},
+        }
+        assert "minProperties" not in result
+        assert "maxProperties" not in result
+
+    def test_not_keyword_is_stripped(self):
+        result = _ensure_anthropic_strict_schema(
+            {"type": "string", "not": {"const": "forbidden"}}
+        )
+
+        assert result == {"type": "string"}
+
+    def test_one_of_becomes_any_of(self):
+        result = _ensure_anthropic_strict_schema(
+            {"oneOf": [{"type": "string"}, {"type": "integer"}]}
+        )
+
+        assert result == {"anyOf": [{"type": "string"}, {"type": "integer"}]}
+
+    def test_one_of_is_dropped_when_any_of_already_present(self):
+        result = _ensure_anthropic_strict_schema(
+            {
+                "anyOf": [{"type": "string"}],
+                "oneOf": [{"type": "integer"}],
+            }
+        )
+
+        assert result == {"anyOf": [{"type": "string"}]}
+
+    def test_supported_string_format_survives_unsupported_one_dropped(self):
+        result = _ensure_anthropic_strict_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "when": {"type": "string", "format": "date-time"},
+                    "who": {"type": "string", "format": "email"},
+                    "colour": {"type": "string", "format": "hex-colour"},
+                },
+            }
+        )
+
+        assert result["properties"]["when"]["format"] == "date-time"
+        assert result["properties"]["who"]["format"] == "email"
+        assert "format" not in result["properties"]["colour"]
+
+    def test_min_items_above_one_is_clamped(self):
+        result = _ensure_anthropic_strict_schema(
+            {"type": "array", "items": {"type": "string"}, "minItems": 4}
+        )
+
+        assert result["minItems"] == 1
+
+    @pytest.mark.parametrize("min_items", [0, 1])
+    def test_min_items_within_range_is_untouched(self, min_items: int):
+        result = _ensure_anthropic_strict_schema(
+            {"type": "array", "items": {"type": "string"}, "minItems": min_items}
+        )
+
+        assert result["minItems"] == min_items
+
+    def test_objects_forbid_extras_and_require_every_property(self):
+        result = _ensure_anthropic_strict_schema(
+            {
+                "type": "object",
+                "required": ["score"],
+                "properties": {"score": {"type": "integer"}, "reason": {}},
+            }
+        )
+
+        assert result["additionalProperties"] is False
+        assert result["required"] == ["score", "reason"]
+
+    def test_non_object_schema_gains_no_additional_properties(self):
+        assert "additionalProperties" not in _ensure_anthropic_strict_schema(
+            {"type": "string"}
+        )
+
+    def test_rules_apply_inside_nested_objects_and_array_items(self):
+        result = _ensure_anthropic_strict_schema(
+            {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "object",
+                        "properties": {"city": {"type": "string", "minLength": 1}},
+                    },
+                    "rows": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {"n": {"type": "integer", "maximum": 9}},
+                        },
+                    },
+                },
+            }
+        )
+
+        address = result["properties"]["address"]
+        assert address["additionalProperties"] is False
+        assert address["properties"]["city"] == {"type": "string"}
+
+        items = result["properties"]["rows"]["items"]
+        assert items["additionalProperties"] is False
+        assert items["required"] == ["n"]
+        assert items["properties"]["n"] == {"type": "integer"}
+
+    def test_rules_apply_inside_any_of_and_all_of_branches(self):
+        result = _ensure_anthropic_strict_schema(
+            {
+                "anyOf": [
+                    {"type": "object", "properties": {"a": {"type": "string"}}},
+                ],
+                "allOf": [
+                    {"type": "object", "properties": {"b": {"type": "string"}}},
+                ],
+            }
+        )
+
+        assert result["anyOf"][0]["additionalProperties"] is False
+        assert result["anyOf"][0]["required"] == ["a"]
+        assert result["allOf"][0]["additionalProperties"] is False
+        assert result["allOf"][0]["required"] == ["b"]
+
+    @pytest.mark.parametrize("keyword", ["$defs", "definitions"])
+    def test_rules_apply_inside_definitions(self, keyword: str):
+        result = _ensure_anthropic_strict_schema(
+            {
+                keyword: {
+                    "Item": {
+                        "type": "object",
+                        "properties": {"label": {"type": "string", "maxLength": 3}},
+                    }
+                },
+                "type": "object",
+                "properties": {"item": {"$ref": f"#/{keyword}/Item"}},
+            }
+        )
+
+        item = result[keyword]["Item"]
+        assert item["additionalProperties"] is False
+        assert item["required"] == ["label"]
+        assert item["properties"]["label"] == {"type": "string"}
+
+    def test_input_schema_is_not_mutated(self):
+        schema = {
+            "type": "object",
+            "properties": {"name": {"type": "string", "minLength": 2}},
+        }
+
+        _ensure_anthropic_strict_schema(schema)
+
+        assert schema == {
+            "type": "object",
+            "properties": {"name": {"type": "string", "minLength": 2}},
+        }
 
 
 class TestTransformGoogleVertexRouting:
