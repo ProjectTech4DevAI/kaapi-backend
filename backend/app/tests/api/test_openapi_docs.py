@@ -236,6 +236,55 @@ class TestRequestExamples:
         assert "basic" in body["content"][JSON_MEDIA_TYPE]["examples"]
 
 
+class TestTagMetadata:
+    """Every route tag is a Swagger section and a synced Postman folder."""
+
+    @staticmethod
+    def _used_tags() -> set[str]:
+        from app.main import app
+
+        return {
+            tag
+            for path_item in app.openapi()["paths"].values()
+            for operation in path_item.values()
+            if isinstance(operation, dict)
+            for tag in operation.get("tags", [])
+        }
+
+    def test_every_route_tag_has_a_description(self) -> None:
+        """Add the tag to `TAG_DESCRIPTIONS` in `app/api/docs/openapi_config.py`."""
+        from app.api.docs.openapi_config import TAG_DESCRIPTIONS
+
+        missing = sorted(self._used_tags() - TAG_DESCRIPTIONS.keys())
+
+        assert not missing, f"Route tags without a description: {missing}"
+
+    def test_every_described_tag_is_used(self) -> None:
+        """A renamed tag would otherwise leave a stale, empty section behind."""
+        from app.api.docs.openapi_config import TAG_DESCRIPTIONS
+
+        unused = sorted(TAG_DESCRIPTIONS.keys() - self._used_tags())
+
+        assert not unused, f"Described tags no route uses: {unused}"
+
+    def test_every_route_tag_is_in_a_redoc_group(self) -> None:
+        """ReDoc hides tags missing from `x-tagGroups`."""
+        from app.api.docs.openapi_config import tag_groups
+
+        grouped = {tag for group in tag_groups for tag in group["tags"]}
+        missing = sorted(self._used_tags() - grouped)
+
+        assert not missing, f"Route tags missing from tag_groups: {missing}"
+
+    def test_descriptions_reach_the_spec(self) -> None:
+        from app.main import app
+
+        tags = {tag["name"]: tag.get("description") for tag in app.openapi()["tags"]}
+
+        assert all(tags.values())
+        assert self._used_tags() <= tags.keys()
+
+
 class TestRequestExamplesMatchTheirModels:
     """Every documented request example must pass the route's own validation.
 
