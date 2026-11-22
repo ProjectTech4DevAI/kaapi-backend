@@ -12,7 +12,7 @@ from app.models.llm.constants import (
     DEFAULT_TEXT_MODELS,
 )
 
-from .base import BATCH_KEY, BatchProvider
+from .base import BATCH_KEY, BatchProvider, BatchSubmissionRejectedError
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +170,7 @@ class AnthropicBatchProvider(BatchProvider):
             logger.warning(
                 f"[_preflight_output_config] {message} | model={model}", exc_info=True
             )
-            raise ValueError(message) from e
+            raise BatchSubmissionRejectedError(message) from e
 
     def get_batch_status(self, batch_id: str) -> dict[str, Any]:
         """
