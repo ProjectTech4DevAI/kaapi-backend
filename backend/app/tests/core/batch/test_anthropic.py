@@ -4,6 +4,7 @@ import httpx2
 import pytest
 from anthropic import APIConnectionError, APIStatusError
 
+from app.core.batch.base import BatchSubmissionRejectedError
 from app.core.batch.anthropic import (
     SCHEMA_PREFLIGHT_MAX_TOKENS,
     STRUCTURED_OUTPUTS_BETA,
@@ -309,7 +310,7 @@ class TestAnthropicBatchProvider:
             )
         )
 
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(BatchSubmissionRejectedError) as exc_info:
             provider.create_batch(jsonl_data, {})
 
         message = str(exc_info.value)
