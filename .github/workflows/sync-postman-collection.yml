@@ -16,10 +16,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  OPENAPI_TO_POSTMAN_VERSION: "4"
+  OPENAPI_TO_POSTMAN_VERSION: "6.4.2"
 
 jobs:
-  sync:
+  convert:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -49,15 +49,38 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Convert to Postman collection
+        env:
+          npm_config_ignore_scripts: "true"
         run: |
           set -euo pipefail
           npx --yes "openapi-to-postmanv2@${OPENAPI_TO_POSTMAN_VERSION}" \
             -s openapi.yaml -o collection.json -p \
-            -O folderStrategy=Tags,requestParametersResolution=Example
+            -O folderStrategy=Tags,parametersResolution=Example
+          if ! jq -e '.item | length > 0' collection.json > /dev/null 2>&1; then
+            echo "::error::Postman conversion produced no collection"
+            exit 1
+          fi
           echo "Generated $(jq '[.. | objects | select(has("request"))] | length' collection.json) requests"
+
+      - name: Upload collection
+        uses: actions/upload-artifact@v7
+        with:
+          name: postman-collection
+          path: collection.json
+          retention-days: 1
+
+  update:
+    needs: convert
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download collection
+        uses: actions/download-artifact@v8
+        with:
+          name: postman-collection
 
       - name: Update Postman collection
         env:
@@ -82,6 +105,8 @@ jobs:
                 schema: $c.info.schema
               },
               item: ($g.item | walk(
+                if type == "object" then del(.event) else . end
+              ) | walk(
                 if type == "object" and (.request | type) == "object"
                 then .request |= (
                   del(.auth)
