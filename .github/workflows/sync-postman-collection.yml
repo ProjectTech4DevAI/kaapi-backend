@@ -70,8 +70,18 @@ jobs:
 
           curl -sS --fail-with-body "$api" -H "X-Api-Key: ${POSTMAN_API_KEY}" -o current.json
 
+          cat > kaapi-auth.js <<'JS'
+          const apiKey = pm.variables.get("KAAPI_API_KEY");
+          const token = pm.variables.get("KAAPI_AUTH_TOKEN");
+          if (apiKey) {
+            pm.request.headers.upsert({ key: "X-API-KEY", value: apiKey });
+          } else if (token) {
+            pm.request.headers.upsert({ key: "Authorization", value: `Bearer ${token}` });
+          }
+          JS
+
           jq -n --slurpfile cur current.json --slurpfile gen collection.json \
-            --arg baseUrl "${POSTMAN_BASE_URL:-}" '
+            --arg baseUrl "${POSTMAN_BASE_URL:-}" --rawfile authjs kaapi-auth.js '
             ($cur[0].collection) as $c | $gen[0] as $g |
             ($c.variable // $g.variable // []) as $vars |
             {collection: ({
@@ -91,16 +101,24 @@ jobs:
                 then $vars | map(if .key == "baseUrl" then .value = $baseUrl else . end)
                 else $vars + [{key: "baseUrl", value: $baseUrl, type: "string"}]
                 end
+                | map(
+                    if (.key | test("key|token|secret|password|auth"; "i"))
+                    then .value = "" else . end
+                  )
               ),
-              auth: {
-                type: "apikey",
-                apikey: [
-                  {key: "key", value: "X-API-KEY", type: "string"},
-                  {key: "value", value: "{{apiKey}}", type: "string"},
-                  {key: "in", value: "header", type: "string"}
-                ]
-              },
-              event: ($c.event // $g.event)
+              auth: {type: "noauth"},
+              # Keep the team scripts, replace only our own auth script.
+              event: (
+                [($c.event // [])[] | select(.script.id != "kaapi-auth")]
+                + [{
+                    listen: "prerequest",
+                    script: {
+                      id: "kaapi-auth",
+                      type: "text/javascript",
+                      exec: ($authjs | rtrimstr("\n") | split("\n"))
+                    }
+                  }]
+              )
             } | with_entries(select(.value != null)))}
           ' > payload.json
 
