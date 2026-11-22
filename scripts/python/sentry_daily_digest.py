@@ -30,7 +30,10 @@ logger = logging.getLogger(__name__)
 SENTRY_BASE_URL = os.environ.get("SENTRY_BASE_URL", "https://sentry.io")
 SENTRY_ORG = os.environ.get("SENTRY_ORG", "project-tech4dev")
 HTTP_TIMEOUT_SECONDS = 30
-ISSUE_FETCH_LIMIT = 100
+ISSUE_FETCH_LIMIT = 100  # Sentry's max page size
+MAX_ISSUE_PAGES = 10  # bounds runtime if a crash loop floods the project
+# Sentry always returns a "next" link, even on the last page; results="true" says it has data.
+NEXT_PAGE_LINK = re.compile(r'<([^>]+)>;\s*rel="next";\s*results="true"')
 
 # Priority: Sentry's own value wins; the fallback only applies when Sentry has none.
 PRIORITY_LABEL = {"high": "High", "medium": "Medium", "low": "Low"}
@@ -45,9 +48,12 @@ COLOR_YELLOW = 0xF1C40F
 COLOR_GREEN = 0x2ECC71
 PRIORITY_COLOR = {"high": COLOR_RED, "medium": COLOR_ORANGE, "low": COLOR_YELLOW}
 MAX_ISSUE_CARDS = 9  # Discord allows 10 embeds per message; one is the summary.
+# Discord rejects the whole message when the text of all embeds together exceeds this.
+EMBED_TOTAL_MAX_CHARS = 6000
 TITLE_MAX_CHARS = 80
 DETAIL_MAX_CHARS = 200
 SOURCE_MAX_CHARS = 60
+RELEASE_MAX_CHARS = 60
 
 # SDK exceptions (openai, anthropic) stringify the API response into the message.
 API_ERROR_CODE = re.compile(r"Error code: (\d{3})")
@@ -56,28 +62,52 @@ CONNECTION_POOL = re.compile(r"HTTPS?ConnectionPool\(host='([^']+)'[^)]*\)")
 TIMEOUT_SUFFIX = re.compile(r"\s*\((?:read|connect) timeout=[^)]*\)")
 
 
-def sentry_get(path: str, params: dict | None = None) -> dict | list:
+def sentry_request(
+    path: str, params: dict | None = None
+) -> tuple[dict | list, str | None]:
+    """Return the decoded body and the cursor of the next page, if it has results."""
     query = urllib.parse.urlencode(params or {}, doseq=True)
     request = urllib.request.Request(f"{SENTRY_BASE_URL}/api/0/{path}?{query}")
     request.add_header("Authorization", f"Bearer {os.environ['SENTRY_AUTH_TOKEN']}")
     with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
-        return json.load(response)
+        body = json.load(response)
+        link = response.headers.get("Link", "")
+    next_page = NEXT_PAGE_LINK.search(link)
+    if not next_page:
+        return body, None
+    cursor = urllib.parse.parse_qs(urllib.parse.urlsplit(next_page.group(1)).query)
+    return body, cursor.get("cursor", [None])[0]
+
+
+def sentry_get(path: str, params: dict | None = None) -> dict | list:
+    body, _ = sentry_request(path, params)
+    return body
 
 
 def list_issues(project_slug: str, hours: int) -> tuple[str, list[dict]]:
-    """Return the project id and its unresolved issues seen in the window."""
+    """Return the project id and all its unresolved issues seen in the window."""
     project = sentry_get(f"projects/{SENTRY_ORG}/{project_slug}/")
-    issues = sentry_get(
-        f"organizations/{SENTRY_ORG}/issues/",
-        {
-            "project": project["id"],
-            "statsPeriod": f"{hours}h",
-            "query": "is:unresolved",
-            "sort": "freq",
-            "limit": ISSUE_FETCH_LIMIT,
-        },
-    )
-    return project["id"], issues
+    params = {
+        "project": project["id"],
+        "statsPeriod": f"{hours}h",
+        "query": "is:unresolved",
+        "sort": "freq",
+        "limit": ISSUE_FETCH_LIMIT,
+    }
+    # Keyed by id: counts change while paging, so an issue can shift onto the next page too.
+    issues: dict[str, dict] = {}
+    for _ in range(MAX_ISSUE_PAGES):
+        page, cursor = sentry_request(f"organizations/{SENTRY_ORG}/issues/", params)
+        issues.update((issue["id"], issue) for issue in page)
+        if not cursor:
+            break
+        params["cursor"] = cursor
+    else:
+        logger.warning(
+            f"[list_issues] Page limit reached, totals are partial | "
+            f"project: {project_slug} | issues: {len(issues)}"
+        )
+    return project["id"], list(issues.values())
 
 
 def get_top_tags(issue_id: str, hours: int) -> dict[str, str]:
@@ -87,8 +117,9 @@ def get_top_tags(issue_id: str, hours: int) -> dict[str, str]:
             f"organizations/{SENTRY_ORG}/issues/{issue_id}/tags/",
             {"statsPeriod": f"{hours}h"},
         )
-    except urllib.error.URLError as error:
+    except (OSError, ValueError) as error:
         # Tags only add Source/Release; one failed lookup should not drop the digest.
+        # OSError covers URLError/HTTPError and read timeouts; ValueError covers bad JSON.
         logger.warning(f"[get_top_tags] Skipped | issue: {issue_id} | error: {error}")
         return {}
     return {
@@ -110,6 +141,21 @@ def priority_of(issue: dict) -> str:
 def truncate(text: str, limit: int) -> str:
     text = " ".join(text.split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def code_safe(text: str) -> str:
+    # A backtick inside error text would close the surrounding code span or block early.
+    return text.replace("`", "'")
+
+
+def embed_text_length(embed: dict) -> int:
+    # Discord counts UTF-16 code units; len() would undercount emoji and similar characters.
+    text = (
+        embed.get("title", "")
+        + embed.get("description", "")
+        + embed.get("footer", {}).get("text", "")
+    )
+    return len(text.encode("utf-16-le")) // 2
 
 
 def describe(issue: dict) -> tuple[str, str]:
@@ -160,7 +206,7 @@ def build_issue_card(issue: dict, is_new: bool, hours: int) -> dict:
     # one per row, while plain lines read the same on phone and desktop.
     lines = [" ".join(f"`{label}`" for label in labels), ""]
     if detail:
-        lines.append(f"```\n{detail}\n```")
+        lines.append(f"```\n{code_safe(detail)}\n```")
     lines += [
         "",
         f"- **Last {hours}h:** {count} {'time' if count == 1 else 'times'}",
@@ -169,9 +215,13 @@ def build_issue_card(issue: dict, is_new: bool, hours: int) -> dict:
     ]
     context = []
     if source:
-        context.append(f"- **Source:** `{truncate(source, SOURCE_MAX_CHARS)}`")
+        context.append(
+            f"- **Source:** `{code_safe(truncate(source, SOURCE_MAX_CHARS))}`"
+        )
     if release:
-        context.append(f"- **Release:** `{release}`")
+        context.append(
+            f"- **Release:** `{code_safe(truncate(release, RELEASE_MAX_CHARS))}`"
+        )
     if context:
         lines += [""] + context
 
@@ -208,33 +258,41 @@ def build_payload(project_id: str, issues: list[dict], hours: int) -> dict:
         f"?project={project_id}&statsPeriod={hours}h&sort=freq"
     )
 
-    summary_lines = [
-        f"- **Events:** {events}",
-        f"- **Issues:** {len(issues)}",
-        f"- **First seen today:** {len(new_ids)}",
-    ]
-    hidden = len(issues) - MAX_ISSUE_CARDS
-    if hidden > 0:
-        summary_lines += [
-            "",
-            f"Showing top {MAX_ISSUE_CARDS}. [{hidden} more in Sentry]({sentry_url})",
-        ]
     if not issues:
         summary_color = COLOR_GREEN
     else:
         summary_color = COLOR_RED if high else COLOR_ORANGE
 
-    cards = [
-        {
+    def summary_card(shown: int) -> dict:
+        lines = [
+            f"- **Events:** {events}",
+            f"- **Issues:** {len(issues)}",
+            f"- **New in last {hours}h:** {len(new_ids)}",
+        ]
+        hidden = len(issues) - shown
+        if hidden > 0:
+            lines += [
+                "",
+                f"Showing top {shown}. [{hidden} more in Sentry]({sentry_url})",
+            ]
+        return {
             "title": f"Summary · last {hours}h",
             "url": sentry_url,
             "color": summary_color,
-            "description": "\n".join(summary_lines),
+            "description": "\n".join(lines),
         }
-    ]
-    cards += [
+
+    issue_cards = [
         build_issue_card(i, i["id"] in new_ids, hours) for i in issues[:MAX_ISSUE_CARDS]
     ]
+    # Drop the lowest-ranked cards until the message fits; the summary links to the rest.
+    while True:
+        cards = [summary_card(len(issue_cards))] + issue_cards
+        if not issue_cards or (
+            sum(embed_text_length(card) for card in cards) <= EMBED_TOTAL_MAX_CHARS
+        ):
+            break
+        issue_cards.pop()
     cards[-1]["timestamp"] = datetime.now(timezone.utc).isoformat()
 
     # The message text is the only part shown in push notifications.
@@ -242,7 +300,7 @@ def build_payload(project_id: str, issues: list[dict], hours: int) -> dict:
         headline = (
             f"**{events} errors** from {len(issues)} "
             f"{'issue' if len(issues) == 1 else 'issues'} in the last {hours}h"
-            f" · {high} high priority · {len(new_ids)} first seen today"
+            f" · {high} high priority · {len(new_ids)} new"
         )
     else:
         headline = f"No errors in the last {hours}h"
@@ -282,6 +340,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.hours < 1:
+        sys.exit("--hours must be at least 1")
     if not os.environ.get("SENTRY_AUTH_TOKEN"):
         sys.exit("SENTRY_AUTH_TOKEN is not set")
     webhook_url = os.environ.get("DISCORD_WEBHOOK_URL")
