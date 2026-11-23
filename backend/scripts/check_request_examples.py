@@ -42,8 +42,6 @@ def resolve(node: Any, components: dict[str, Any], seen: tuple[str, ...] = ()) -
         for key, value in node.items()
         if key not in IGNORED_KEYS and key != "properties"
     }
-    # Keys under `properties` are field names, not schema keywords: a field
-    # called `description` or `title` must still be compared.
     if isinstance(node.get("properties"), dict):
         resolved["properties"] = {
             name: resolve(sub, components, seen)
