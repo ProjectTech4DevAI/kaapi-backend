@@ -1,37 +1,39 @@
-"""Speech-to-Speech (STS) API endpoint with RAG."""
+"""Speech-to-Speech (STS) API endpoint: STT -> LLM -> TTS chain."""
 
 import logging
-from typing import Any, Literal
-from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from sqlmodel import Session
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.models import Message
+from app.crud.config import ConfigVersionCrud
+from app.crud.jobs import JobCrud
+from app.models import LLMJobImmediatePublic
 from app.models.llm.constants import (
     DEFAULT_RAG_MODEL,
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
+    CompletionType,
+    Provider,
 )
 from app.models.llm.request import (
     ChainBlock,
     ConfigBlob,
     LLMCallConfig,
     LLMChainRequest,
-    QueryParams,
-    RAGBlockSpec,
+    LLMStepConfig,
     SpeechToSpeechRequest,
-    STTBlockSpec,
     STTLLMParams,
+    STTStepConfig,
     TextLLMParams,
-    TTSBlockSpec,
     TTSLLMParams,
+    TTSStepConfig,
     build_kaapi_completion_config,
 )
-from app.services.llm.chain.utils import DEFAULT_RAG_INSTRUCTIONS
-from app.services.llm.jobs import start_chain_job
+from app.services.llm.chain.utils import DEFAULT_LLM_INSTRUCTIONS
+from app.services.llm.jobs import resolve_config_blob, start_chain_job
 from app.utils import APIResponse, load_description, validate_callback_url
 
 logger = logging.getLogger(__name__)
@@ -39,221 +41,188 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["LLM"])
 
 
-DEFAULT_RAG_TEMPERATURE = 0.1
+DEFAULT_LLM_TEMPERATURE = 0.1
+DEFAULT_LLM_PROVIDER = Provider.OPENAI
 DEFAULT_TTS_FORMAT = "ogg"  # mappers translate to opus (WhatsApp compatible)
 
-BlockType = Literal["stt", "text", "tts"]
-
-
+# Substituted in jobs.py with the language STT detected (en-IN if none).
 DETECTED_LANGUAGE_MARKER = "{{detected}}"
+UNRESOLVED_LANGUAGES = ("auto", "unknown")
 
 
-def _resolve_languages(request: SpeechToSpeechRequest) -> tuple[str, str]:
-    """Pick effective input/output language codes.
-
-    When the caller pins `output_language`, that wins.
-    When `input_language` is a concrete BCP-47 code and output is omitted, the
-    output mirrors the input.
-    When the caller wants STT-driven detection (input is "auto" or "unknown")
-    and hasn't pinned the output, we set the output to `{{detected}}` so
-    `_substitute_detected_language_marker` (jobs.py) swaps in the language STT
-    actually detected — or falls back to en-IN if STT couldn't detect one.
-    """
-    input_lang = request.input_language or "auto"
-    if request.output_language:
-        return input_lang, request.output_language
-    if input_lang in ("auto", "unknown"):
-        return input_lang, DETECTED_LANGUAGE_MARKER
-    return input_lang, input_lang
-
-
-def _merge_stt(user: STTLLMParams | None, input_lang: str) -> STTLLMParams:
-    base = STTLLMParams(model=DEFAULT_STT_MODEL, input_language=input_lang)
-    if user is None:
-        return base
-    overrides = user.model_dump(exclude_unset=True)
-    overrides["input_language"] = input_lang  # route owns this
-    return base.model_copy(update=overrides)
-
-
-def _merge_rag(
-    user: TextLLMParams | None, knowledge_base_ids: list[str]
-) -> TextLLMParams:
-    base = TextLLMParams(
-        model=DEFAULT_RAG_MODEL,
-        temperature=DEFAULT_RAG_TEMPERATURE,
-        instructions=DEFAULT_RAG_INSTRUCTIONS,
-    )
-    merged = (
-        base
-        if user is None
-        else base.model_copy(update=user.model_dump(exclude_unset=True))
-    )
-    return merged.model_copy(update={"knowledge_base_ids": knowledge_base_ids})
-
-
-def _merge_tts(user: TTSLLMParams | None, output_lang: str) -> TTSLLMParams:
-    base = TTSLLMParams(
-        model=DEFAULT_TTS_MODEL,
-        voice=DEFAULT_TTS_VOICE,
-        language=output_lang,
-        response_format=DEFAULT_TTS_FORMAT,
-    )
-    if user is None:
-        return base
-    overrides = user.model_dump(exclude_unset=True)
-    overrides["language"] = output_lang  # route owns this
-    return base.model_copy(update=overrides)
-
-
-def _inline_call_config(
-    type_: BlockType,
-    params: STTLLMParams | TextLLMParams | TTSLLMParams,
+def _call_config(
+    step: STTStepConfig | LLMStepConfig | TTSStepConfig | None,
+    completion_type: CompletionType,
     provider: str | None,
+    params: STTLLMParams | TextLLMParams | TTSLLMParams,
 ) -> LLMCallConfig:
+    if step is not None and step.is_stored_ref:
+        return LLMCallConfig(id=step.id, version=step.version)
     return LLMCallConfig(
         blob=ConfigBlob(
             completion=build_kaapi_completion_config(
-                provider=provider,
-                type=type_,
-                params=params,
+                provider=provider, type=completion_type, params=params
             )
         )
     )
 
 
-def _stored_call_config(config_id: UUID, config_version: int) -> LLMCallConfig:
-    return LLMCallConfig(id=config_id, version=config_version)
-
-
-# ---------- Per-block resolution ----------
-
-
-def _resolve_stt_block(
-    spec: STTBlockSpec | None, input_lang: str, provider: str | None
-) -> ChainBlock:
-    if spec and spec.is_stored_ref:
-        config = _stored_call_config(spec.config_id, spec.config_version)
-    else:
-        merged = _merge_stt(spec.params if spec else None, input_lang)
-        config = _inline_call_config("stt", merged, provider)
-    return ChainBlock(config=config, intermediate_callback=True)
-
-
-def _resolve_rag_block(
-    spec: RAGBlockSpec | None,
-    knowledge_base_ids: list[str],
-    provider: str | None,
-) -> ChainBlock:
-    if spec and spec.is_stored_ref:
-        config = _stored_call_config(spec.config_id, spec.config_version)
-    else:
-        merged = _merge_rag(spec.params if spec else None, knowledge_base_ids)
-        config = _inline_call_config("text", merged, provider or "openai")
-    return ChainBlock(config=config, intermediate_callback=True)
-
-
-def _resolve_tts_block(
-    spec: TTSBlockSpec | None, output_lang: str, provider: str | None
-) -> ChainBlock:
-    if spec and spec.is_stored_ref:
-        config = _stored_call_config(spec.config_id, spec.config_version)
-    else:
-        merged = _merge_tts(spec.params if spec else None, output_lang)
-        config = _inline_call_config("tts", merged, provider)
-    return ChainBlock(config=config, intermediate_callback=False)
-
-
-# ---------- Metadata ----------
-
-
-def _model_for_metadata(
-    spec: STTBlockSpec | RAGBlockSpec | TTSBlockSpec | None, default: str
-) -> str:
-    """Best-effort model label for logs/metadata."""
-    if spec is None:
-        return default
-    if spec.is_stored_ref:
-        return f"stored:{spec.config_id}@v{spec.config_version}"
-    if spec.params and getattr(spec.params, "model", None):
-        return spec.params.model
-    return default
-
-
-def _build_metadata(
-    request: SpeechToSpeechRequest, input_lang: str, output_lang: str
-) -> dict[str, Any]:
-    metadata = dict(request.request_metadata or {})
-    metadata.update(
-        {
-            "speech_to_speech": True,
-            "input_language": input_lang,
-            "output_language": output_lang,
-            "stt_model": _model_for_metadata(request.stt, DEFAULT_STT_MODEL),
-            "llm_model": _model_for_metadata(request.rag, DEFAULT_RAG_MODEL),
-            "tts_model": _model_for_metadata(request.tts, DEFAULT_TTS_MODEL),
-        }
+def _validate_stored_step_type(
+    session: Session,
+    project_id: int,
+    step: STTStepConfig | LLMStepConfig | TTSStepConfig | None,
+    expected_type: CompletionType,
+    step_name: str,
+) -> None:
+    # A stored config carries its own type; catch a mismatch here instead of mid-chain.
+    if step is None or not step.is_stored_ref:
+        return
+    config_crud = ConfigVersionCrud(
+        session=session, project_id=project_id, config_id=step.id
     )
-    return metadata
+    blob, error = resolve_config_blob(
+        config_crud, LLMCallConfig(id=step.id, version=step.version)
+    )
+    if error:
+        raise HTTPException(status_code=422, detail=f"config.{step_name}: {error}")
+    if blob.completion.type != expected_type:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"config.{step_name}: stored config has type "
+                f"'{blob.completion.type}', expected '{expected_type.value}'"
+            ),
+        )
 
 
-# ---------- Endpoint ----------
+def _stt_params(step: STTStepConfig | None) -> STTLLMParams:
+    if step is None:
+        return STTLLMParams(model=DEFAULT_STT_MODEL, input_language="auto")
+    return step.params or STTLLMParams()
+
+
+def _llm_params(step: LLMStepConfig | None) -> TextLLMParams:
+    if step is None:
+        return TextLLMParams(
+            model=DEFAULT_RAG_MODEL,
+            temperature=DEFAULT_LLM_TEMPERATURE,
+            instructions=DEFAULT_LLM_INSTRUCTIONS,
+        )
+    return step.params or TextLLMParams()
+
+
+def _tts_params(
+    step: TTSStepConfig | None, stt_step: STTStepConfig | None
+) -> TTSLLMParams:
+    if step is None:
+        params = TTSLLMParams(
+            model=DEFAULT_TTS_MODEL,
+            voice=DEFAULT_TTS_VOICE,
+            response_format=DEFAULT_TTS_FORMAT,
+        )
+    else:
+        params = step.params or TTSLLMParams()
+    if params.language is not None:
+        return params
+
+    language = DETECTED_LANGUAGE_MARKER
+    if stt_step is None or not stt_step.is_stored_ref:
+        input_language = _stt_params(stt_step).input_language
+        if input_language is not None and input_language not in UNRESOLVED_LANGUAGES:
+            language = input_language
+    # Set after validation: the TTS language normaliser would mangle the marker.
+    return params.model_copy(update={"language": language})
 
 
 @router.post(
     "/llm/chain/sts",
     description=load_description("llm/speech_to_speech.md"),
-    response_model=APIResponse[Message],
+    response_model=APIResponse[LLMJobImmediatePublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def speech_to_speech(
     current_user: AuthContextDep,
     session: SessionDep,
     request: SpeechToSpeechRequest,
-) -> APIResponse[Message]:
-    """Run the STT → RAG → TTS chain for a single voice input."""
+) -> APIResponse[LLMJobImmediatePublic]:
+    """Run the STT -> LLM -> TTS chain for a single voice input."""
     project_id = current_user.project_.id
     organization_id = current_user.organization_.id
 
     if request.callback_url:
         validate_callback_url(str(request.callback_url))
 
-    input_lang, output_lang = _resolve_languages(request)
+    config = request.config
+    stt = config.stt if config else None
+    llm = config.llm if config else None
+    tts = config.tts if config else None
 
-    blocks = [
-        _resolve_stt_block(request.stt, input_lang, request.stt_provider),
-        _resolve_rag_block(
-            request.rag, request.knowledge_base_ids, request.rag_provider
+    for step, expected_type, step_name in (
+        (stt, CompletionType.STT, "stt"),
+        (llm, CompletionType.TEXT, "llm"),
+        (tts, CompletionType.TTS, "tts"),
+    ):
+        _validate_stored_step_type(session, project_id, step, expected_type, step_name)
+
+    stt_block = ChainBlock(
+        config=_call_config(
+            stt, CompletionType.STT, stt.provider if stt else None, _stt_params(stt)
         ),
-        _resolve_tts_block(request.tts, output_lang, request.tts_provider),
-    ]
-
-    logger.info(
-        f"[speech_to_speech] Starting STS chain | "
-        f"project_id={project_id}, "
-        f"input_lang={input_lang}, output_lang={output_lang}"
+        intermediate_callback=True,
+        include_provider_raw_response=request.include_provider_raw_response,
+    )
+    llm_block = ChainBlock(
+        config=_call_config(
+            llm,
+            CompletionType.TEXT,
+            (llm.provider if llm else None) or DEFAULT_LLM_PROVIDER,
+            _llm_params(llm),
+        ),
+        intermediate_callback=True,
+        include_provider_raw_response=request.include_provider_raw_response,
+    )
+    tts_block = ChainBlock(
+        config=_call_config(
+            tts,
+            CompletionType.TTS,
+            tts.provider if tts else None,
+            _tts_params(tts, stt),
+        ),
+        intermediate_callback=False,
+        include_provider_raw_response=request.include_provider_raw_response,
     )
 
     chain_request = LLMChainRequest(
-        query=QueryParams(input=request.query),
-        blocks=blocks,
+        query=request.query,
+        blocks=[stt_block, llm_block, tts_block],
         callback_url=request.callback_url,
-        request_metadata=_build_metadata(request, input_lang, output_lang),
+        request_metadata=request.request_metadata,
     )
 
-    start_chain_job(
+    job_id = start_chain_job(
         db=session,
         request=chain_request,
         project_id=project_id,
         organization_id=organization_id,
     )
+    logger.info(
+        f"[speech_to_speech] Started STS chain | project_id={project_id}, job_id={job_id}"
+    )
+
+    job = JobCrud(session=session).get(job_id=job_id, project_id=project_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    message = "Your response is being generated and will be delivered via callback."
+    if not request.callback_url:
+        message = "Your response is being generated"
 
     return APIResponse.success_response(
-        data=Message(
-            message=(
-                "Speech-to-speech processing initiated. "
-                "You will receive intermediate callbacks for STT and LLM outputs, "
-                "followed by the final callback with audio and text."
-            )
+        data=LLMJobImmediatePublic(
+            job_id=job.id,
+            status=job.status.value,
+            message=message,
+            job_inserted_at=job.inserted_at,
+            job_updated_at=job.updated_at,
         )
     )

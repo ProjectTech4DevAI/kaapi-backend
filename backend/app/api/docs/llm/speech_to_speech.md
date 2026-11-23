@@ -1,236 +1,43 @@
-# Speech-to-Speech (STS) with RAG
+# Speech-to-Speech (STS)
 
-Execute a complete speech-to-speech workflow with knowledge base retrieval.
+Runs a voice note through a 3-block chain as a background job: **STT → LLM → TTS**. Returns the job immediately (poll it, or receive results via `callback_url`).
 
-## Endpoint
+## Request
 
-```http
-POST /llm/chain/sts
-```
-
-## Flow
-
-```text
-Voice Input → STT (auto language) → RAG (Knowledge Base) → TTS → Voice Output
-```
-
-## Input
-
-- **Voice note**: WhatsApp-compatible audio format (required)
-- **Knowledge base IDs**: One or more knowledge bases for RAG (required)
-- **Languages**: Input and output languages (optional, defaults to Hindi)
-- **Models**: STT, LLM, and TTS model selection (optional, defaults to Sarvam)
-
-## Output
-
-You will receive **3 callbacks** to your webhook URL:
-
-1. **STT Callback** (Intermediate): Transcribed text from audio
-2. **LLM Callback** (Intermediate): RAG-enhanced response text
-3. **TTS Callback** (Final): Audio output + response text
-
-Each callback includes:
-- Output from that step
-- Token usage
-- Latency information (check timestamps)
-
-## Supported Languages
-
-### Primary Indian Languages
-- English, Hindi, Hinglish (code-switching)
-- Bengali, Kannada, Malayalam, Marathi
-- Odia, Punjabi, Tamil, Telugu, Gujarati
-
-### Additional Languages (Sarvam Saaras V3)
-- Assamese, Urdu, Nepali
-- Konkani, Kashmiri, Sindhi
-- Sanskrit, Santali, Manipuri
-- Bodo, Maithili, Dogri
-
-**Total: 25 languages** with automatic language detection
-
-## Available Models
-
-### STT (Speech-to-Text)
-- `saaras:v3` - Sarvam Saaras V3 (**default**, fast, auto language detection, optimized for Indian languages)
-- `gemini-2.5-pro` - Google Gemini 2.5 Pro
-
-**Note:** Sarvam STT uses automatic language detection. No need to specify input language.
-
-### LLM (RAG)
-
-Any OpenAI Responses-API model that supports `file_search` can be used for the RAG block by passing it inline via `rag.params.model`. Common choices:
-
-- `gpt-4o` - OpenAI GPT-4o (**default**, best quality)
-- `gpt-4o-mini` - OpenAI GPT-4o Mini (faster, lower cost)
-- `gpt-4.1`, `gpt-4.1-mini`
-- `gpt-5`, `gpt-5-mini`
-- `o3`, `o4-mini` (reasoning models)
-
-The endpoint does not restrict the model list; provider-side validation gates unsupported choices.
-
-### TTS (Text-to-Speech)
-- `bulbul:v3` - Sarvam Bulbul V3 (**default**, natural Indian voices, MP3 output)
-- `gemini-2.5-pro-preview-tts` - Google Gemini 2.5 Pro (OGG OPUS output)
-
-## Edge Cases & Error Handling
-
-### Empty STT Output
-If speech-to-text returns empty/blank:
-- Chain fails immediately
-- Error message: "STT returned no transcription"
-- No subsequent blocks are executed
-
-### Audio Size Limit
-WhatsApp limit: 16MB
-- TTS providers may fail if output exceeds limit
-- Error is caught and reported in callback
-- Consider using shorter responses or compression
-
-### Invalid Audio Format
-If input audio format is unsupported:
-- STT provider fails with format error
-- Error reported in callback
-- Supported: MP3, WAV, OGG, OPUS, M4A
-
-### Provider Failures
-Each block has independent error handling:
-- STT fails → Chain stops, STT error reported
-- LLM fails → Chain stops, RAG error reported
-- TTS fails → Chain stops, TTS error reported
-
-## Example Request
-
-```bash
-curl -X POST https://api.kaapi.ai/llm/chain/sts \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d @- <<EOF
-{
-  "query": {
-    "type": "audio",
-    "content": {
-      "format": "base64",
-      "value": "base64_encoded_audio_data",
-      "mime_type": "audio/ogg"
-    }
-  },
-  "knowledge_base_ids": ["kb_abc123"],
-  "input_language": "hindi",
-  "output_language": "english",
-  "callback_url": "https://your-app.com/webhook"
-}
-EOF
-```
-
-**Note:** `stt_model`, `llm_model`, and `tts_model` are optional and will use defaults if not specified.
-
-## Example Callbacks
-
-### Callback 1: STT Output (Intermediate)
 ```json
 {
-  "success": true,
-  "data": {
-    "block_index": 1,
-    "total_blocks": 3,
-    "response": {
-      "provider_response_id": "stt_xyz789",
-      "provider": "sarvamai-native",
-      "model": "saarika:v1",
-      "output": {
-        "type": "text",
-        "content": {
-          "value": "नमस्ते, मुझे अपने अकाउंट के बारे में जानकारी चाहिए"
-        }
-      }
-    },
-    "usage": {
-      "input_tokens": 0,
-      "output_tokens": 12,
-      "total_tokens": 12
-    }
+  "query": {"input": {"type": "audio", "content": {"format": "url", "value": "https://...", "mime_type": "audio/ogg"}}},
+  "config": {
+    "stt": {"provider": "sarvamai", "params": {"model": "saaras:v3", "input_language": "auto"}},
+    "llm": {"provider": "openai", "params": {"model": "gpt-4o", "knowledge_base_ids": ["vs_abc123"]}},
+    "tts": {"provider": "sarvamai", "params": {"model": "bulbul:v3", "voice": "anushka", "language": "hi-IN"}}
   },
-  "metadata": {
-    "speech_to_speech": true,
-    "input_language": "hi-IN"
-  }
+  "callback_url": "https://client.app/webhook",
+  "include_provider_raw_response": false,
+  "request_metadata": {"user_id": "42"}
 }
 ```
 
-### Callback 2: LLM Output (Intermediate)
-```json
-{
-  "success": true,
-  "data": {
-    "block_index": 2,
-    "total_blocks": 3,
-    "response": {
-      "provider_response_id": "chatcmpl_abc123",
-      "provider": "openai",
-      "model": "gpt-4o",
-      "output": {
-        "type": "text",
-        "content": {
-          "value": "आपके अकाउंट में कुल बैलेंस ₹5,000 है। पिछले महीने में 3 ट्रांजैक्शन हुए हैं।"
-        }
-      }
-    },
-    "usage": {
-      "input_tokens": 150,
-      "output_tokens": 45,
-      "total_tokens": 195
-    }
-  },
-  "metadata": {
-    "speech_to_speech": true
-  }
-}
-```
+- `query.input` must be a single audio input.
+- `config` and each of `config.stt`, `config.llm`, `config.tts` are optional. Each step is **either** a stored config `{"id": "<uuid>", "version": 1}` **or** inline `{"provider": ..., "params": {...}}` — not both. `params` use the same schema as the `stt`, `text` and `tts` completion params of `/llm/call`.
+- An inline step is used as written; missing `params` fields fall back to that params model's defaults (not the endpoint defaults below). An inline `llm` step without `provider` uses `openai`; inline `stt`/`tts` without `provider` use the configured Google credential.
+- `knowledge_base_ids` in `llm.params` enables file-search retrieval. Not supported with provider `google-gcp`.
+- `request_metadata` is passed through unchanged to every callback.
 
-### Callback 3: TTS Output (Final)
-```json
-{
-  "success": true,
-  "data": {
-    "response": {
-      "provider_response_id": "tts_def456",
-      "provider": "sarvamai-native",
-      "model": "bulbul:v1",
-      "output": {
-        "type": "audio",
-        "content": {
-          "format": "base64",
-          "value": "base64_encoded_audio_output",
-          "mime_type": "audio/ogg"
-        }
-      }
-    },
-    "usage": {
-      "input_tokens": 15,
-      "output_tokens": 0,
-      "total_tokens": 15
-    }
-  },
-  "metadata": {
-    "speech_to_speech": true,
-    "output_language": "hi-IN"
-  }
-}
-```
+## Defaults for omitted steps
 
-## Latency Tracking
+- **stt**: Google, model `gemini-3.8-flash`, `input_language: "auto"`.
+- **llm**: `openai`, model `gpt-4o`, `temperature: 0.1`, short concise-answer instructions, no knowledge base.
+- **tts**: Google, model `gemini-3.8-flash-tts`, voice `Kore`, `response_format: "ogg"` (WhatsApp-compatible opus).
 
-Calculate latency from callback timestamps:
-- **STT latency**: Time from request to first callback
-- **LLM latency**: Time between first and second callback
-- **TTS latency**: Time between second and third callback
-- **Total latency**: Time from request to final callback
+## TTS language
 
-## Best Practices
+When the tts step is inline or omitted and `params.language` is not set:
+- if the stt step's `input_language` is a concrete code (e.g. `hi-IN`), TTS speaks that language;
+- otherwise (`auto`/`unknown`, or a stored stt config), TTS uses the language STT detected, falling back to `en-IN`.
 
-1. **Language Consistency**: If not translating, keep input_language = output_language
-2. **Model Selection**: Use Sarvam models for Indian languages (faster, better quality)
-3. **Knowledge Base**: Ensure KB is properly indexed and relevant to expected queries
-4. **Error Handling**: Implement retry logic for transient provider failures
-5. **Webhook Security**: Validate webhook signatures and use HTTPS
+A stored tts config is used untouched.
+
+## Callbacks
+
+With `callback_url` set you receive 3 callbacks: STT transcript (intermediate), LLM answer (intermediate), and the final TTS audio. If STT returns an empty transcript, the chain fails and later blocks do not run; any block failure stops the chain and is reported in the callback.
