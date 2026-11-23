@@ -238,6 +238,26 @@ class TestInlineSteps:
         assert response.status_code == 404
         mock_start.assert_not_called()
 
+    def test_unknown_stored_version_rejected(
+        self, db, client, headers, audio_input, mock_start, user_api_key
+    ):
+        ref = _stored(db, user_api_key.project_id, "stt", "google", DEFAULT_STT_MODEL)
+        config = SpeechToSpeechConfig(stt=STTStepConfig(id=ref["id"], version=99))
+        response = _post(client, headers, _request(audio_input, config=config))
+
+        assert response.status_code == 422
+        assert "config.stt" in response.json()["error"]
+        mock_start.assert_not_called()
+
+    def test_missing_job_after_start_is_404(
+        self, client, headers, audio_input, mock_start
+    ):
+        with patch("app.api.routes.llm_sts.JobCrud") as job_crud:
+            job_crud.return_value.get.return_value = None
+            response = _post(client, headers, _request(audio_input))
+
+        assert response.status_code == 404
+
 
 class TestTTSLanguage:
     def _tts_language(self, client, headers, audio_input, mock_start, config):
