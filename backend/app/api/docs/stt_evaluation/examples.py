@@ -1,8 +1,6 @@
 """Request-body examples for the STT evaluation routes.
 
-Each constant maps a name to `(summary, body)` and is wired onto its route
-with `openapi_extra=request_examples(...)`. The first entry is what the synced
-Postman collection uses as the request body.
+
 """
 
 from app.api.openapi_docs import Examples
