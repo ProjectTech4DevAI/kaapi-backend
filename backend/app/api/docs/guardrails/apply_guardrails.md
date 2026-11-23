@@ -69,6 +69,22 @@ text unchanged and `metadata.warnings` carries a human-readable note (e.g.
 Other warnings may surface for duplicate validators, an empty validator
 list, or a missing sanitised text in the upstream response.
 
+### Guardrail metadata
+
+Set `include_guardrail_metadata: true` to get per-validator results under
+`metadata.guardrail` in the webhook (also on a hard-block failure webhook):
+
+```json
+"guardrail": {
+  "input_from_user": "<submitted text>",
+  "output_to_user": "<sanitised text>",
+  "validators": [ ... ]
+}
+```
+
+Omitted when the flag is off or the guardrails service was bypassed, so its
+absence does not mean the text passed.
+
 ### Notes
 
 - To correlate callbacks with requests, put your keys in `request_metadata`.
