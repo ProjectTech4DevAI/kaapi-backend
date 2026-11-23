@@ -2,7 +2,7 @@ name: Sync Postman Collection
 
 on:
   push:
-    branches: ["feat/auto-sync-postman-collection"]
+    branches: ["main"]
     paths:
       - "backend/**"
       - ".github/workflows/sync-postman-collection.yml"
