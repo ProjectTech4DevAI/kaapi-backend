@@ -18,15 +18,6 @@ logger = logging.getLogger(__name__)
 
 STRUCTURED_OUTPUTS_BETA = "structured-outputs-2025-12-15"
 
-# Anthropic compiles an output schema into a decoding grammar and reports a rejected one
-# per request, only once the batch has ended — so a bad schema fails every row instead of
-# the submission. One throwaway request compiles the same grammar up front.
-SCHEMA_PREFLIGHT_MAX_TOKENS = 16
-# The client carries the SDK's 600s default, twice CELERY_TASK_SOFT_TIME_LIMIT, so a
-# stalled preflight would eat the deadline it is meant to protect. Bounded here instead,
-# leaving the submission itself the rest of the budget.
-SCHEMA_PREFLIGHT_TIMEOUT_SECONDS = 30.0
-
 
 class MessageBatchStatus(str, Enum):
     IN_PROGRESS = "in_progress"
@@ -133,11 +124,14 @@ class AnthropicBatchProvider(BatchProvider):
         try:
             self.client.beta.messages.create(
                 model=model,
-                max_tokens=SCHEMA_PREFLIGHT_MAX_TOKENS,
+                max_tokens=16,
                 messages=[{"role": "user", "content": "x"}],
                 output_config=output_config,
                 betas=[STRUCTURED_OUTPUTS_BETA],
-                timeout=SCHEMA_PREFLIGHT_TIMEOUT_SECONDS,
+                # The client carries the SDK's 600s default, twice
+                # CELERY_TASK_SOFT_TIME_LIMIT, so an unbounded preflight would spend
+                # the deadline it exists to protect.
+                timeout=30.0,
             )
         except APIConnectionError as e:
             # The schema is unjudged, so a network failure here must not cost a submission

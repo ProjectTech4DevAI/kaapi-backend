@@ -6,8 +6,6 @@ from anthropic import APIConnectionError, APIStatusError
 
 from app.core.batch.base import BatchSubmissionRejectedError
 from app.core.batch.anthropic import (
-    SCHEMA_PREFLIGHT_MAX_TOKENS,
-    SCHEMA_PREFLIGHT_TIMEOUT_SECONDS,
     STRUCTURED_OUTPUTS_BETA,
     AnthropicBatchProvider,
 )
@@ -265,10 +263,10 @@ class TestAnthropicBatchProvider:
         preflight = mock_anthropic_client.beta.messages.create.call_args.kwargs
         assert preflight["model"] == "claude-haiku-4-5"
         assert preflight["output_config"] == output_config
-        assert preflight["max_tokens"] == SCHEMA_PREFLIGHT_MAX_TOKENS
+        assert preflight["max_tokens"] == 16
         assert preflight["betas"] == [STRUCTURED_OUTPUTS_BETA]
         # Unbounded, a stalled preflight would spend the task deadline it protects.
-        assert preflight["timeout"] == SCHEMA_PREFLIGHT_TIMEOUT_SECONDS
+        assert preflight["timeout"] == 30.0
         mock_anthropic_client.beta.messages.batches.create.assert_called_once()
 
     def test_create_batch_without_output_config_skips_preflight(
