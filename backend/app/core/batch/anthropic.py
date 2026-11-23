@@ -22,8 +22,10 @@ STRUCTURED_OUTPUTS_BETA = "structured-outputs-2025-12-15"
 # per request, only once the batch has ended — so a bad schema fails every row instead of
 # the submission. One throwaway request compiles the same grammar up front.
 SCHEMA_PREFLIGHT_MAX_TOKENS = 16
-SCHEMA_PREFLIGHT_PROMPT = "x"
-HTTP_STATUS_BAD_REQUEST = 400
+# The client carries the SDK's 600s default, twice CELERY_TASK_SOFT_TIME_LIMIT, so a
+# stalled preflight would eat the deadline it is meant to protect. Bounded here instead,
+# leaving the submission itself the rest of the budget.
+SCHEMA_PREFLIGHT_TIMEOUT_SECONDS = 30.0
 
 
 class MessageBatchStatus(str, Enum):
@@ -132,9 +134,10 @@ class AnthropicBatchProvider(BatchProvider):
             self.client.beta.messages.create(
                 model=model,
                 max_tokens=SCHEMA_PREFLIGHT_MAX_TOKENS,
-                messages=[{"role": "user", "content": SCHEMA_PREFLIGHT_PROMPT}],
+                messages=[{"role": "user", "content": "x"}],
                 output_config=output_config,
                 betas=[STRUCTURED_OUTPUTS_BETA],
+                timeout=SCHEMA_PREFLIGHT_TIMEOUT_SECONDS,
             )
         except APIConnectionError as e:
             # The schema is unjudged, so a network failure here must not cost a submission
@@ -145,7 +148,7 @@ class AnthropicBatchProvider(BatchProvider):
                 exc_info=True,
             )
         except APIStatusError as e:
-            if e.status_code != HTTP_STATUS_BAD_REQUEST:
+            if e.status_code != 400:
                 # Only a 400 is a verdict on the schema; anything else (429, 5xx) is a
                 # transient the batch itself can survive, so it must not block submission.
                 logger.warning(

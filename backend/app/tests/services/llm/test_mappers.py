@@ -1154,7 +1154,10 @@ class TestMapKaapiToAnthropicParams:
             "additionalProperties": False,
             "required": ["score", "tags"],
             "properties": {
-                "score": {"type": "integer"},
+                "score": {
+                    "type": "integer",
+                    "description": "minimum: 0, maximum: 10",
+                },
                 "tags": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -1263,8 +1266,17 @@ class TestEnsureAnthropicStrictSchema:
             }
         )
 
-        assert result["properties"]["name"] == {"type": "string"}
-        assert result["properties"]["score"] == {"type": "integer"}
+        assert result["properties"]["name"] == {
+            "type": "string",
+            "description": "minLength: 2, maxLength: 40",
+        }
+        assert result["properties"]["score"] == {
+            "type": "integer",
+            "description": (
+                "minimum: 0, maximum: 10, exclusiveMinimum: 0, "
+                "exclusiveMaximum: 11, multipleOf: 2"
+            ),
+        }
 
     def test_unsupported_array_and_object_cardinality_keywords_are_stripped(self):
         result = _ensure_anthropic_strict_schema(
@@ -1288,6 +1300,7 @@ class TestEnsureAnthropicStrictSchema:
         assert result["properties"]["tags"] == {
             "type": "array",
             "items": {"type": "string"},
+            "description": "maxItems: 5, uniqueItems: true, minContains: 1, maxContains: 2",
         }
         assert "minProperties" not in result
         assert "maxProperties" not in result
@@ -1297,7 +1310,10 @@ class TestEnsureAnthropicStrictSchema:
             {"type": "string", "not": {"const": "forbidden"}}
         )
 
-        assert result == {"type": "string"}
+        assert result == {
+            "type": "string",
+            "description": 'not: {"const": "forbidden"}',
+        }
 
     def test_one_of_becomes_any_of(self):
         result = _ensure_anthropic_strict_schema(
@@ -1386,12 +1402,18 @@ class TestEnsureAnthropicStrictSchema:
 
         address = result["properties"]["address"]
         assert address["additionalProperties"] is False
-        assert address["properties"]["city"] == {"type": "string"}
+        assert address["properties"]["city"] == {
+            "type": "string",
+            "description": "minLength: 1",
+        }
 
         items = result["properties"]["rows"]["items"]
         assert items["additionalProperties"] is False
         assert items["required"] == ["n"]
-        assert items["properties"]["n"] == {"type": "integer"}
+        assert items["properties"]["n"] == {
+            "type": "integer",
+            "description": "maximum: 9",
+        }
 
     def test_rules_apply_inside_any_of_and_all_of_branches(self):
         result = _ensure_anthropic_strict_schema(
@@ -1428,7 +1450,10 @@ class TestEnsureAnthropicStrictSchema:
         item = result[keyword]["Item"]
         assert item["additionalProperties"] is False
         assert item["required"] == ["label"]
-        assert item["properties"]["label"] == {"type": "string"}
+        assert item["properties"]["label"] == {
+            "type": "string",
+            "description": "maxLength: 3",
+        }
 
     def test_input_schema_is_not_mutated(self):
         schema = {

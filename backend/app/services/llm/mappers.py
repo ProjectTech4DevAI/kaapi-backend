@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any
 
@@ -141,8 +142,19 @@ def _ensure_anthropic_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     """
     normalized = dict(schema)
 
-    for keyword in ANTHROPIC_UNSUPPORTED_SCHEMA_KEYWORDS:
-        normalized.pop(keyword, None)
+    # Anthropic's own SDK helper spells a dropped constraint out in the description,
+    # so the model still reads the bound it can no longer be held to.
+    dropped = {
+        keyword: normalized.pop(keyword)
+        for keyword in ANTHROPIC_UNSUPPORTED_SCHEMA_KEYWORDS
+        if keyword in normalized
+    }
+    if dropped:
+        note = ", ".join(
+            f"{keyword}: {json.dumps(value)}" for keyword, value in dropped.items()
+        )
+        description = normalized.get("description")
+        normalized["description"] = f"{description} ({note})" if description else note
 
     # `oneOf` is not supported; `anyOf` is the nearest expressible equivalent.
     if "oneOf" in normalized and "anyOf" not in normalized:
