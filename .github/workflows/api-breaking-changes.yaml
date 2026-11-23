@@ -70,6 +70,15 @@ jobs:
           uv sync --frozen
           uv run python scripts/kaapi_export_openapi.py "$GITHUB_WORKSPACE/head-openapi.yaml"
 
+      - name: Upload OpenAPI schemas
+        uses: actions/upload-artifact@v7
+        with:
+          name: openapi-specs
+          path: |
+            base-openapi.yaml
+            head-openapi.yaml
+          retention-days: 1
+
       - name: Generate diff (JSON)
         env:
           OASDIFF_IMAGE: tufin/oasdiff:latest
@@ -189,3 +198,30 @@ jobs:
             exit 1
           fi
           echo "No breaking changes detected."
+
+  request-examples:
+    needs: breaking-changes
+    if: ${{ always() && needs.breaking-changes.result != 'cancelled' && !contains(github.event.pull_request.labels.*.name, 'examples-not-needed') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: backend/scripts
+          persist-credentials: false
+
+      - name: Download OpenAPI schemas
+        uses: actions/download-artifact@v8
+        with:
+          name: openapi-specs
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Check request examples follow payload changes
+        run: |
+          uv run --no-project --with pyyaml==6.0.3 \
+            python backend/scripts/check_request_examples.py base-openapi.yaml head-openapi.yaml
