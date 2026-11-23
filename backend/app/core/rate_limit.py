@@ -76,10 +76,7 @@ def enforce_rate_limit(category: RateLimitCategory) -> Callable[[AuthContextDep]
         )
         raise HTTPException(
             status_code=429,
-            detail=(
-                f"Rate limit exceeded: at most {rate_limit_item.amount} {category} "
-                f"requests per minute per organization. Try again in {retry_after} seconds."
-            ),
+            detail=f"Too many requests. Please try again in {retry_after} seconds.",
             headers={"Retry-After": str(retry_after)},
         )
 

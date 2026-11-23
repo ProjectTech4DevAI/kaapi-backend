@@ -238,8 +238,8 @@ class Settings(BaseSettings):
 
     EVAL_SUMMARY_MODEL: str = "claude-sonnet-4-6"
 
-    # EVAL CREATIONG RATE-LIMIT PER ORG (requests per minute); over-limit calls get 429.
-    EVAL_RATE_LIMIT_PER_MINUTE: int = 3
+    # Enforced per-org limit on v2 eval-run creation (requests per minute); over-limit calls get 429
+    EVAL_RATE_LIMIT_PER_MINUTE: int = Field(default=3, ge=1)
 
     # Judge runs alone in the single aggregate task (no response calls competing),
     # so it uses a larger pool than the response stage to finish the max dataset
