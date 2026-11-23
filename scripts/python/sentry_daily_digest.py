@@ -349,9 +349,6 @@ def main() -> None:
         sys.exit("DISCORD_WEBHOOK_URL is not set")
 
     project_id, issues = list_issues(args.project, args.hours)
-    logger.info(
-        f"[main] Fetched issues | project: {args.project} | count: {len(issues)}"
-    )
     payload = build_payload(project_id, issues, args.hours)
 
     if args.send:
