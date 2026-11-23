@@ -7,6 +7,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from sqlmodel import Session
 
 from app.celery.tasks.job_execution import run_assessment_pipeline
+from app.core.batch.base import BatchSubmissionRejectedError
 from app.core.db import engine
 from app.crud.assessment import (
     get_submission_by_id,
@@ -85,6 +86,14 @@ def execute_assessment_pipeline(
     except SoftTimeLimitExceeded:
         logger.error("[execute_assessment_pipeline] soft time limit run_id=%s", run_id)
         _mark_run_failed(run_id, "Assessment run exceeded the time limit.")
+        raise
+    except BatchSubmissionRejectedError as e:
+        # The provider named something the caller can fix, so the run carries that
+        # reason instead of the generic message below.
+        logger.warning(
+            "[execute_assessment_pipeline] submission rejected run_id=%s", run_id
+        )
+        _mark_run_failed(run_id, str(e))
         raise
     except Exception:
         logger.error(

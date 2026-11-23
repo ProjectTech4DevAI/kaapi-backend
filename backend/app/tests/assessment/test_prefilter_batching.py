@@ -8,6 +8,7 @@ from uuid import UUID
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded
 
+from app.core.batch.base import BatchSubmissionRejectedError
 from app.crud.assessment import core as assessment_core
 from app.crud.assessment.core import _read_exec
 from app.models.assessment import AssessmentRun, Stage, StageStatus
@@ -235,6 +236,15 @@ class TestGuardEntrypoint:
             with pytest.raises(RuntimeError):
                 tasks.execute_assessment_pipeline(5, 1, 1)
         mark.assert_called_once()
+
+    def test_rejected_submission_marks_failed_with_the_provider_reason(self) -> None:
+        reason = "[ANTHROPIC] The output schema was rejected (code: 400)"
+        with patch.object(
+            tasks, "_orchestrate", side_effect=BatchSubmissionRejectedError(reason)
+        ), patch.object(tasks, "_mark_run_failed") as mark:
+            with pytest.raises(BatchSubmissionRejectedError):
+                tasks.execute_assessment_pipeline(5, 1, 1)
+        mark.assert_called_once_with(5, reason)
 
     def test_soft_timeout_marks_failed_and_reraises(self) -> None:
         with patch.object(
