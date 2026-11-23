@@ -2,6 +2,7 @@
 
 import logging
 
+from app.core.rate_limit import enforce_rate_limit
 from asgi_correlation_id import correlation_id
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -28,6 +29,7 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation v2"])
     dependencies=[
         Depends(require_permission(Permission.REQUIRE_PROJECT)),
         Depends(monitor_rate("evaluations")),
+        Depends(enforce_rate_limit("evaluations")),
     ],
 )
 def create_evaluation_iteration(

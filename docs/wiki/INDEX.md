@@ -30,6 +30,7 @@ Deep design narrative lives in `docs/architecture/*.md`; open those only for des
 - [cross-cutting/auth.md](cross-cutting/auth.md) — JWT, API keys, org/project permission model.
 - [cross-cutting/exceptions.md](cross-cutting/exceptions.md) — global exception handlers, provider error handling convention.
 - [cross-cutting/observability.md](cross-cutting/observability.md) — Langfuse tracing, logging convention, Sentry, telemetry.
+- [cross-cutting/rate-limiting.md](cross-cutting/rate-limiting.md) — pluggable per-org request limits (429) vs per-project rate alerts; how to attach a limit to any endpoint.
 
 ## Maintenance rule
 
