@@ -25,20 +25,22 @@ from app.models.llm.constants import (
     DEFAULT_TTS_VOICE,
 )
 from app.models.llm.request import (
-    ConversationConfig,
     AudioContent,
-    ConfigBlob,
     AudioInput,
-    LLMStepConfig,
+    ConfigBlob,
+    ConversationConfig,
     QueryParams,
-    SpeechToSpeechConfig,
-    SpeechToSpeechRequest,
     STTLLMParams,
-    STTStepConfig,
     TextLLMParams,
     TTSLLMParams,
-    TTSStepConfig,
     build_kaapi_completion_config,
+)
+from app.models.llm.sts import (
+    LLMStepConfig,
+    SpeechToSpeechConfig,
+    SpeechToSpeechRequest,
+    STTStepConfig,
+    TTSStepConfig,
 )
 from app.services.llm.chain.utils import DEFAULT_LLM_INSTRUCTIONS
 from app.tests.utils.auth import TestAuthContext
