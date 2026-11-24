@@ -1,5 +1,7 @@
 """Builds the STT -> LLM -> TTS chain request for the speech-to-speech endpoint."""
 
+from typing import Literal
+
 from fastapi import HTTPException
 from sqlmodel import Session
 
@@ -32,7 +34,8 @@ from app.models.llm.sts import (
 from app.services.llm.chain.utils import DEFAULT_LLM_INSTRUCTIONS
 from app.services.llm.jobs import resolve_config_blob
 
-DEFAULT_LLM_TEMPERATURE = 0.1
+# Replaces temperature: the mapper suppresses sampling on a reasoning model.
+DEFAULT_LLM_EFFORT: Literal["none"] = "none"
 DEFAULT_LLM_PROVIDER = Provider.OPENAI
 DEFAULT_TTS_FORMAT = "ogg"  # mappers translate to opus (WhatsApp compatible)
 
@@ -106,7 +109,7 @@ def _llm_params(step: LLMStepConfig | None, provider: str) -> TextLLMParams:
     if step is None:
         return TextLLMParams(
             model=DEFAULT_RAG_MODEL,
-            temperature=DEFAULT_LLM_TEMPERATURE,
+            effort=DEFAULT_LLM_EFFORT,
             instructions=DEFAULT_LLM_INSTRUCTIONS,
         )
     params = step.params or TextLLMParams()

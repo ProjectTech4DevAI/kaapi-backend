@@ -42,6 +42,7 @@ from app.models.llm.sts import (
     STTStepConfig,
     TTSStepConfig,
 )
+from app.services.llm.chain.sts import DEFAULT_LLM_EFFORT
 from app.services.llm.chain.utils import DEFAULT_LLM_INSTRUCTIONS
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.test_data import create_test_config
@@ -125,7 +126,7 @@ class TestDefaults:
         assert llm.provider == "openai"
         assert llm.params == TextLLMParams(
             model=DEFAULT_RAG_MODEL,
-            temperature=0.1,
+            effort=DEFAULT_LLM_EFFORT,
             instructions=DEFAULT_LLM_INSTRUCTIONS,
         )
         assert llm.params.knowledge_base_ids is None

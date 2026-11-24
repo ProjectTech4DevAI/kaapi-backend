@@ -28,7 +28,7 @@ Runs a voice note through a 3-block chain as a background job: **STT → LLM →
 ## Defaults for omitted steps
 
 - **stt**: Google, model `gemini-3.8-flash`, `input_language: "auto"`.
-- **llm**: `openai`, model `gpt-4o`, `temperature: 0.1`, short concise-answer instructions, no knowledge base.
+- **llm**: `openai`, model `gpt-6-luna`, `effort: "none"`, short concise-answer instructions, no knowledge base.
 - **tts**: Google, model `gemini-3.8-flash-tts`, voice `Kore`, `response_format: "ogg"` (WhatsApp-compatible opus).
 
 ## TTS language
