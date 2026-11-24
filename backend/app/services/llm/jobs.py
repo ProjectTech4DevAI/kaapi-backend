@@ -46,7 +46,14 @@ from app.crud.llm import (
     save_rephrase_guardrail_call,
 )
 from app.crud.llm_chain import create_llm_chain, update_llm_chain_status
-from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest, LLMChainRequest
+from app.models import (
+    JobStatus,
+    JobType,
+    JobUpdate,
+    LLMCallRequest,
+    LLMChainRequest,
+    WebhookResourceTypeEnum,
+)
 from app.models.llm.request import (
     AudioInput,
     ChainStatus,
@@ -310,6 +317,14 @@ def handle_job_error(
                 callback_url=callback_url,
                 data=callback_response.model_dump(),
                 webhook_secret=webhook_secret,
+                resource_type=(
+                    WebhookResourceTypeEnum.LLM_CHAIN
+                    if chain_id
+                    else WebhookResourceTypeEnum.LLM_CALL
+                ),
+                resource_id=str(job_id),
+                project_id=project_id,
+                organization_id=organization_id,
             )
 
     return callback_response.model_dump()
@@ -1556,6 +1571,10 @@ def execute_job(
                             callback_url=callback_url_str,
                             data=callback_response.model_dump(),
                             webhook_secret=webhook_secret,
+                            resource_type=WebhookResourceTypeEnum.LLM_CALL,
+                            resource_id=str(job_uuid),
+                            project_id=project_id,
+                            organization_id=organization_id,
                         )
 
                 with Session(engine) as session:

@@ -145,6 +145,10 @@ TAG_DESCRIPTIONS: dict[str, str] = {
         "Live monthly usage analytics for the current organization, as a table "
         "and as chart-ready series."
     ),
+    "Webhook Logs": (
+        "Delivery history of callbacks sent to your callback URLs: status, "
+        "attempts, HTTP status, payload and receiver response, per workflow."
+    ),
 }
 
 # Tag metadata for organizing endpoints in documentation
@@ -196,6 +200,7 @@ tag_groups = [
             "Model Config",
             "Languages",
             "Analytics",
+            "Webhook Logs",
         ],
     },
 ]

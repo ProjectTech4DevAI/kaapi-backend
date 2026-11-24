@@ -16,6 +16,7 @@ from app.models.assessment import (
     AssessmentResultData,
     AssessmentStatus,
 )
+from app.models.webhook_log import WebhookResourceTypeEnum
 from app.services.assessment.api.result_files import presign_result_files
 from app.utils import get_webhook_secret, send_callback
 
@@ -66,6 +67,10 @@ def deliver(
             "metadata": {"files": files.model_dump()} if files else None,
         },
         webhook_secret=webhook_secret,
+        resource_type=WebhookResourceTypeEnum.ASSESSMENT,
+        resource_id=str(assessment.id),
+        project_id=assessment.project_id,
+        organization_id=assessment.organization_id,
     )
     logger.info(
         "[deliver] Callback %s | assessment_id=%s | status=%s | files=%s",

@@ -47,6 +47,7 @@ from app.models.evaluation import (
     TraceScoreSummary,
 )
 from app.models.job import Job, JobStatus, JobType, JobUpdate
+from app.models.webhook_log import WebhookResourceTypeEnum
 from app.services.llm.providers.claude import (
     STOP_REASON_COMPLETE,
     ClaudeProvider,
@@ -295,6 +296,7 @@ def _resolve_success_config_version(
 
 def _send_improve_prompt_callback(
     *,
+    job_id: UUID,
     callback_url: str | None,
     payload: dict,
     project_id: int,
@@ -304,7 +306,15 @@ def _send_improve_prompt_callback(
     if not callback_url:
         return
     webhook_secret = get_webhook_secret(project_id, organization_id)
-    send_callback(callback_url, payload, webhook_secret=webhook_secret)
+    send_callback(
+        callback_url,
+        payload,
+        webhook_secret=webhook_secret,
+        resource_type=WebhookResourceTypeEnum.PROMPT_IMPROVEMENT,
+        resource_id=str(job_id),
+        project_id=project_id,
+        organization_id=organization_id,
+    )
 
 
 def execute_prompt_improvement(
@@ -353,6 +363,7 @@ def execute_prompt_improvement(
             # At-least-once delivery: the first callback may have failed before the
             # worker died, so re-send. The client may receive a duplicate callback.
             _send_improve_prompt_callback(
+                job_id=job_uuid,
                 callback_url=callback_url,
                 payload=_build_improve_prompt_payload(
                     job_id=job_uuid,
@@ -473,6 +484,7 @@ def execute_prompt_improvement(
                 JobUpdate(status=JobStatus.FAILED, error_message=error_message),
             )
             _send_improve_prompt_callback(
+                job_id=job_uuid,
                 callback_url=callback_url,
                 payload=_build_improve_prompt_payload(
                     job_id=job_uuid,
@@ -496,6 +508,7 @@ def execute_prompt_improvement(
                 JobUpdate(status=JobStatus.FAILED, error_message=error_message),
             )
             _send_improve_prompt_callback(
+                job_id=job_uuid,
                 callback_url=callback_url,
                 payload=_build_improve_prompt_payload(
                     job_id=job_uuid,
@@ -514,6 +527,7 @@ def execute_prompt_improvement(
         # and defeat the redelivery idempotency guard — that would double-spend the
         # LLM call and mint a duplicate config_version.
         _send_improve_prompt_callback(
+            job_id=job_uuid,
             callback_url=callback_url,
             payload=_build_improve_prompt_payload(
                 job_id=job_uuid,

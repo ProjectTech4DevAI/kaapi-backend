@@ -7,7 +7,7 @@ from app.core.cloud.storage import get_cloud_storage
 from app.core.db import engine
 from app.crud.jobs import JobCrud
 from app.crud.llm_chain import update_llm_chain_block_completed, update_llm_chain_status
-from app.models import JobStatus, JobUpdate
+from app.models import JobStatus, JobUpdate, WebhookResourceTypeEnum
 from app.models.llm.request import (
     ChainStatus,
     LLMChainRequest,
@@ -106,6 +106,10 @@ class ChainExecutor:
                     callback_url=str(self._request.callback_url),
                     data=callback_response.model_dump(),
                     webhook_secret=self._webhook_secret,
+                    resource_type=WebhookResourceTypeEnum.LLM_CHAIN,
+                    resource_id=str(self._context.job_id),
+                    project_id=self._context.project_id,
+                    organization_id=self._context.organization_id,
                 )
             with Session(engine) as session:
                 JobCrud(session).update(
@@ -138,6 +142,10 @@ class ChainExecutor:
                 callback_url=str(self._request.callback_url),
                 data=callback_response.model_dump(),
                 webhook_secret=self._webhook_secret,
+                resource_type=WebhookResourceTypeEnum.LLM_CHAIN,
+                resource_id=str(self._context.job_id),
+                project_id=self._context.project_id,
+                organization_id=self._context.organization_id,
             )
 
         with Session(engine) as session:
@@ -201,6 +209,10 @@ class ChainExecutor:
                 callback_url=str(self._request.callback_url),
                 data=callback_data.model_dump(),
                 webhook_secret=self._webhook_secret,
+                resource_type=WebhookResourceTypeEnum.LLM_CHAIN,
+                resource_id=str(self._context.job_id),
+                project_id=self._context.project_id,
+                organization_id=self._context.organization_id,
             )
             logger.info(
                 f"[_send_intermediate_callback] Sent intermediate callback | "

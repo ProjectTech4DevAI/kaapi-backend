@@ -94,6 +94,13 @@ def no_retry_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("tenacity.nap.time.sleep", lambda _seconds: None)
 
 
+@pytest.fixture(autouse=True)
+def no_webhook_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """send_callback writes webhook_log via its own Session(engine), outside the
+    db fixture's rollback. test_send_callback_webhook_log.py overrides this."""
+    monkeypatch.setattr("app.utils._save_webhook_log", lambda **_kwargs: None)
+
+
 @pytest.fixture(scope="function")
 def client(db: Session) -> Generator[TestClient, None, None]:
     app.dependency_overrides[get_db] = lambda: db

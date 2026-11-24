@@ -80,6 +80,35 @@ def test_llm_call_success(
         mock_start_job.assert_called_once()
 
 
+def test_llm_call_rejected_callback_url_returns_422(
+    client: TestClient, user_api_key_header: dict[str, str]
+) -> None:
+    with patch("app.services.llm.jobs.start_llm_job") as mock_start_job:
+        response = client.post(
+            "api/v1/llm/call",
+            json={
+                "query": {"input": "Hi"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4"},
+                        }
+                    }
+                },
+                "callback_url": "http://example.com/callback",
+            },
+            headers=user_api_key_header,
+        )
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"].startswith("invalid_callback_url: Only HTTPS URLs")
+    mock_start_job.assert_not_called()
+
+
 def test_llm_call_with_kaapi_config(
     client: TestClient, user_api_key_header: dict[str, str]
 ) -> None:

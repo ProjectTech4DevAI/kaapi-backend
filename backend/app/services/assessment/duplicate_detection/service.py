@@ -32,6 +32,7 @@ from app.models.assessment.duplicate_detection import (
 from app.models.config.assessment_blob import AssessmentConfigBlob
 from app.models.config.config import ConfigTag
 from app.models.provider_credentials import Provider
+from app.models.webhook_log import WebhookResourceTypeEnum
 from app.services.assessment.duplicate_detection.detector import (
     DuplicateDetector,
     step_context,
@@ -233,6 +234,8 @@ def _store(
 def _deliver(
     *,
     assessment_id: UUID,
+    project_id: int,
+    organization_id: int,
     request: dict[str, JsonValue],
     status: AssessmentStatus,
     result: DuplicateDetectionResult,
@@ -261,6 +264,10 @@ def _deliver(
                     "metadata": None,
                 },
                 webhook_secret=webhook.get("webhook_secret") if webhook else None,
+                resource_type=WebhookResourceTypeEnum.DUPLICATE_DETECTION,
+                resource_id=str(assessment_id),
+                project_id=project_id,
+                organization_id=organization_id,
             )
 
     finally:
@@ -354,6 +361,8 @@ def run_duplicate_detection(*, assessment_id: UUID) -> None:
     # Sent after the session closes, so a slow callback endpoint does not hold a DB connection.
     _deliver(
         assessment_id=assessment_id,
+        project_id=project_id,
+        organization_id=organization_id,
         request=request,
         status=status,
         result=result,
@@ -380,6 +389,8 @@ def fail_interrupted(*, assessment_id: UUID) -> None:
         )
 
         request = assessment.input
+        organization_id = assessment.organization_id
+        project_id = assessment.project_id
 
         runs = {
             run.execution["level"]: run
@@ -388,8 +399,8 @@ def fail_interrupted(*, assessment_id: UUID) -> None:
 
         webhook = get_provider_credential(
             session=session,
-            org_id=assessment.organization_id,
-            project_id=assessment.project_id,
+            org_id=organization_id,
+            project_id=project_id,
             provider=Provider.WEBHOOK_SECRET,
         )
 
@@ -408,6 +419,8 @@ def fail_interrupted(*, assessment_id: UUID) -> None:
 
     _deliver(
         assessment_id=assessment_id,
+        project_id=project_id,
+        organization_id=organization_id,
         request=request,
         status=status,
         result=result,

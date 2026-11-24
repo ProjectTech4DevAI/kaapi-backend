@@ -29,6 +29,7 @@ from app.models import (
     NotificationEntityType,
     NotificationProvider,
     Project,
+    WebhookResourceTypeEnum,
 )
 from app.models.evaluation import EvaluationRunPublic
 from app.utils import (
@@ -265,7 +266,13 @@ def execute_eval_completion_callback(
 
         try:
             delivered = send_callback(
-                eval_run.callback_url, payload, webhook_secret=webhook_secret
+                eval_run.callback_url,
+                payload,
+                webhook_secret=webhook_secret,
+                resource_type=WebhookResourceTypeEnum.EVALUATION,
+                resource_id=str(evaluation_id),
+                project_id=eval_run.project_id,
+                organization_id=eval_run.organization_id,
             )
         except Exception as e:
             logger.warning(
