@@ -116,10 +116,13 @@ def upgrade():
 
 
 def downgrade():
+    # Only rows this migration inserted: upsert leaves inserted_at < updated_at on a row
+    # that already existed, and deleting that would destroy data 090 never created.
     op.execute(
         f"""
         DELETE FROM global.model_config
-        WHERE (provider = 'openai' AND model_name IN ({_sql_list(SEEDED_OPENAI)}))
-           OR (provider = 'anthropic' AND model_name IN ({_sql_list(SEEDED_ANTHROPIC)}))
+        WHERE inserted_at = updated_at
+          AND ((provider = 'openai' AND model_name IN ({_sql_list(SEEDED_OPENAI)}))
+            OR (provider = 'anthropic' AND model_name IN ({_sql_list(SEEDED_ANTHROPIC)})))
         """
     )

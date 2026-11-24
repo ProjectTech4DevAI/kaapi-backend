@@ -8,6 +8,7 @@ Covers real-world scenarios, edge cases, and provider-specific requirements.
 import pytest
 from sqlmodel import Session
 
+from app.crud.model_config import is_reasoning_model
 from app.models.llm.constants import (
     DEFAULT_ELEVENLABS_TTS_MODEL,
     DEFAULT_TEXT_MODELS,
@@ -49,6 +50,26 @@ class TestMapKaapiToOpenAIParams:
         assert result["reasoning"] == {"effort": "high"}
         assert "temperature" not in result
         assert any("temperature" in warning for warning in warnings)
+
+    def test_default_model_suppresses_sampling_params(self, db: Session):
+        """The default moved from a temperature model to a reasoning one, so a caller
+        still sending temperature/top_p must have both dropped, not forwarded."""
+        result, warnings = map_kaapi_to_openai_params(
+            session=db, kaapi_params={"temperature": 0.7, "top_p": 0.9}
+        )
+
+        assert result["model"] == DEFAULT_TEXT_MODELS["openai"]
+        assert "temperature" not in result
+        assert "top_p" not in result
+        assert any("temperature" in warning for warning in warnings)
+        assert any("top_p" in warning for warning in warnings)
+
+    def test_default_model_is_reasoning_capable(self, db: Session):
+        """Guards the premise of the two tests above: if the OpenAI default ever moves
+        back to a sampling model, they would pass for the wrong reason."""
+        assert is_reasoning_model(
+            session=db, provider="openai", model_name=DEFAULT_TEXT_MODELS["openai"]
+        )
 
     def test_basic_model_mapping(self, db: Session):
         """Test basic model parameter mapping."""
