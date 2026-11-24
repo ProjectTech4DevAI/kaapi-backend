@@ -4,6 +4,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.chatbot.examples import CHATBOT_FLOW_SAVE_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.api.routes.chatbot.errors import CHATBOT_SERVICE_ERRORS, to_http_exception
 from app.models import ChatbotFlowUpdate, ChatbotFlowVersionPublic
@@ -54,6 +56,7 @@ def get_chatbot_flow_route(
     description=load_description("chatbot/save_flow.md"),
     response_model=APIResponse[ChatbotFlowVersionPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(CHATBOT_FLOW_SAVE_EXAMPLES),
 )
 def save_chatbot_flow_route(
     chatbot_id: Annotated[UUID, Path(description="Chatbot identifier")],

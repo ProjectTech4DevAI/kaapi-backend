@@ -4,6 +4,11 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.chatbot.examples import (
+    CHATBOT_CREATE_EXAMPLES,
+    CHATBOT_UPDATE_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.api.routes.chatbot.errors import CHATBOT_SERVICE_ERRORS, to_http_exception
 from app.crud.chatbot import (
@@ -41,6 +46,7 @@ def _get_chatbot_or_404(
     description=load_description("chatbot/create.md"),
     response_model=APIResponse[ChatbotPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(CHATBOT_CREATE_EXAMPLES),
 )
 def create_chatbot_route(
     request: ChatbotCreate,
@@ -103,6 +109,7 @@ def get_chatbot_route(
     description=load_description("chatbot/update.md"),
     response_model=APIResponse[ChatbotPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(CHATBOT_UPDATE_EXAMPLES),
 )
 def update_chatbot_route(
     chatbot_id: Annotated[UUID, Path(description="Chatbot identifier")],

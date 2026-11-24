@@ -129,7 +129,7 @@ jobs:
       - uses: ./.github/actions/discord-notify
         with:
           webhook-url: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          name: kaapi-production
+          name: kaapi-backend-production
           release: ${{ github.ref_name }}
           sha: ${{ github.sha }}
           run-url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

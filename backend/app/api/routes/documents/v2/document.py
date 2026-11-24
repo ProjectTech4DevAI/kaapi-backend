@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends
 from fastapi import Path as FastPath
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.documents.examples import DOCUMENT_UPLOAD_INITIATE_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.models import (
     DocumentPublic,
@@ -26,6 +28,7 @@ router = APIRouter(prefix="/documents", tags=["Documents v2"])
     description=load_description("documents/v2/initiate.md"),
     response_model=APIResponse[DocumentUploadInitiateResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(DOCUMENT_UPLOAD_INITIATE_EXAMPLES),
 )
 def create_upload_url(
     session: SessionDep,
