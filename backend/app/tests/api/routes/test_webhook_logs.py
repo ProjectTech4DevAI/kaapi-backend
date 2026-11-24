@@ -32,7 +32,6 @@ def _make_log(
         "status": WebhookDeliveryStatusEnum.DELIVERED,
         "status_code": 200,
         "attempt_count": 1,
-        "request_body": {"ok": True},
         "request_bytes": 12,
         "signed": True,
         # explicit timestamps so ordering doesn't depend on insert timing
@@ -251,8 +250,8 @@ class TestGetWebhookLog:
             status=WebhookDeliveryStatusEnum.FAILED,
             status_code=503,
             attempt_count=3,
-            duration_ms=1234.5,
-            request_body={"id": 42, "status": "done"},
+            latency=1234.5,
+            request_metadata={"conversation_id": "c-42"},
             request_bytes=30,
             response_body="unavailable",
             error="retries exhausted",
@@ -273,8 +272,9 @@ class TestGetWebhookLog:
         assert body["status"] == "FAILED"
         assert body["status_code"] == 503
         assert body["attempt_count"] == 3
-        assert body["duration_ms"] == 1234.5
-        assert body["request_body"] == {"id": 42, "status": "done"}
+        assert body["latency"] == 1234.5
+        assert body["request_metadata"] == {"conversation_id": "c-42"}
+        assert "request_body" not in body
         assert body["request_bytes"] == 30
         assert body["response_body"] == "unavailable"
         assert body["error"] == "retries exhausted"

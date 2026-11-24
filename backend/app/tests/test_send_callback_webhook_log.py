@@ -67,6 +67,7 @@ def test_rejected_url_records_rejected_row(db: Session, callback_url: str) -> No
     assert log.status == WebhookDeliveryStatusEnum.REJECTED
     assert log.attempt_count == 0
     assert log.status_code is None
+    assert log.latency is None
     assert log.error == "private IP"
 
 
@@ -78,6 +79,7 @@ def test_delivered_first_try(db: Session, callback_url: str) -> None:
     assert log.status == WebhookDeliveryStatusEnum.DELIVERED
     assert log.attempt_count == 1
     assert log.status_code == 200
+    assert log.latency is not None and log.latency >= 0
     assert log.response_body == "ok"
     assert log.error is None
 
@@ -128,12 +130,13 @@ def test_exhausted_connection_error_has_no_status_code(
     assert log.status == WebhookDeliveryStatusEnum.FAILED
     assert log.attempt_count == 4
     assert log.status_code is None
+    assert log.latency is not None and log.latency >= 0
     assert log.response_body is None
     assert "refused" in log.error
 
 
 @pytest.mark.parametrize("secret, signed", [("s3cret", True), (None, False)])
-def test_attribution_and_request_stored(
+def test_attribution_and_request_metadata_stored(
     db: Session,
     callback_url: str,
     user_api_key: TestAuthContext,
@@ -150,6 +153,7 @@ def test_attribution_and_request_stored(
             resource_id="job-123",
             project_id=user_api_key.project_id,
             organization_id=user_api_key.organization_id,
+            request_metadata={"conversation_id": "c-1"},
         )
 
     [log] = _logs(db, callback_url)
@@ -158,9 +162,23 @@ def test_attribution_and_request_stored(
     assert log.resource_id == "job-123"
     assert log.project_id == user_api_key.project_id
     assert log.organization_id == user_api_key.organization_id
-    assert log.request_body == payload
+    assert log.request_metadata == {"conversation_id": "c-1"}
     # compact JSON: {"success":true,"data":{"answer":"hi"}}
     assert log.request_bytes == 39
+
+
+def test_request_metadata_null_when_omitted(db: Session, callback_url: str) -> None:
+    with patch("app.utils._post_callback", return_value=_response(200, "ok")):
+        send_callback(callback_url, {"request_metadata": {"leak": True}})
+
+    [log] = _logs(db, callback_url)
+    # payload's own request_metadata key must not be picked up; only the kwarg counts
+    assert log.request_metadata is None
+
+
+def test_payload_is_not_persisted() -> None:
+    assert "request_body" not in WebhookLog.__table__.columns
+    assert not hasattr(WebhookLog, "request_body")
 
 
 def test_log_write_failure_does_not_change_outcome(

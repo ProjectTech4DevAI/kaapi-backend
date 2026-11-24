@@ -71,6 +71,7 @@ def deliver(
         resource_id=str(assessment.id),
         project_id=assessment.project_id,
         organization_id=assessment.organization_id,
+        request_metadata=request_metadata,
     )
     logger.info(
         "[deliver] Callback %s | assessment_id=%s | status=%s | files=%s",

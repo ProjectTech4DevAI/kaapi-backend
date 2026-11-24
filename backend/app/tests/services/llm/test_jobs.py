@@ -169,6 +169,26 @@ class TestHandleJobError:
             assert result["error"] == callback_response.error
             assert result["data"] is None
 
+    def test_handle_job_error_forwards_request_metadata(self, db: Session):
+        job = JobCrud(session=db).create(job_type=JobType.LLM_API, trace_id="t")
+        db.commit()
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback") as mock_send_callback,
+        ):
+            mock_session_class.return_value.__enter__.return_value = db
+            handle_job_error(
+                job_id=job.id,
+                callback_url="https://example.com/callback",
+                callback_response=APIResponse.failure_response(error="boom"),
+                request_metadata={"tracking_id": "track-1"},
+            )
+
+        assert mock_send_callback.call_args.kwargs["request_metadata"] == {
+            "tracking_id": "track-1"
+        }
+
     def test_handle_job_error_without_callback_url(self, db: Session):
         """Test handle_job_error updates job when no callback URL provided."""
         job_crud = JobCrud(session=db)
@@ -1575,6 +1595,60 @@ class TestExecuteJob:
         assert validators[0]["outcome"] == "FAIL"
         assert validators[0]["input_text"] == unsafe_input
         assert validators[0]["output_text"] == sanitized_input
+
+    @pytest.mark.parametrize(
+        "guardrail_response",
+        [
+            {
+                "success": True,
+                "bypassed": False,
+                "data": {"safe_text": "[REDACTED]", "rephrase_needed": False},
+            },
+            {"success": False, "error": "Unsafe content detected"},
+        ],
+        ids=["delivered", "blocked"],
+    )
+    def test_webhook_log_gets_client_metadata_not_guardrail_merged(
+        self, db, job_env, job_for_execution, guardrail_response
+    ):
+        env = job_env
+        env["provider"].execute.return_value = (env["mock_llm_response"], None)
+
+        with (
+            patch(
+                "app.services.llm.guardrails.run_guardrails_validation",
+                return_value=guardrail_response,
+            ),
+            patch(
+                "app.services.llm.guardrails.list_validators_config",
+                return_value=([{"type": "pii_remover", "stage": "input"}], []),
+            ),
+        ):
+            request_data = {
+                "query": {"input": "My card is 4111 1111 1111 1111"},
+                "config": {
+                    "blob": {
+                        "completion": {
+                            "provider": "openai-native",
+                            "type": "text",
+                            "params": {"model": "gpt-4o"},
+                        },
+                        "input_guardrails": [
+                            {"validator_config_id": VALIDATOR_CONFIG_ID_1}
+                        ],
+                        "output_guardrails": [],
+                    }
+                },
+                "include_guardrail_metadata": True,
+                "request_metadata": {"tracking_id": "track-789"},
+                "callback_url": "https://example.com/callback",
+            }
+            self._execute_job(job_for_execution, db, request_data)
+
+        kwargs = env["send_callback"].call_args.kwargs
+        # The echoed payload carries the guardrail merge; webhook_log must not.
+        assert "input_guardrail" in kwargs["data"]["metadata"]
+        assert kwargs["request_metadata"] == {"tracking_id": "track-789"}
 
     def test_guardrails_metadata_omitted_by_default(
         self, db, job_env, job_for_execution

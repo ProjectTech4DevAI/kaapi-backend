@@ -242,6 +242,7 @@ def _deliver(
     webhook: dict[str, str] | None,
 ) -> None:
     """Send the stored outcome to the caller's callback URL."""
+    client_metadata = request.get("request_metadata")
     # Its own step, so it shows after the checks instead of inside the task's span.
     token = otel_context.attach(step_context())
 
@@ -268,6 +269,9 @@ def _deliver(
                 resource_id=str(assessment_id),
                 project_id=project_id,
                 organization_id=organization_id,
+                request_metadata=(
+                    client_metadata if isinstance(client_metadata, dict) else None
+                ),
             )
 
     finally:

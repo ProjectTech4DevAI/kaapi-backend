@@ -43,7 +43,6 @@ def upgrade():
                 "GUARDRAILS",
                 "RESPONSE",
                 "PROMPT_IMPROVEMENT",
-                "DOC_TRANSFORM",
                 "COLLECTION",
                 "EVALUATION",
                 "EVALUATION_ITERATION",
@@ -53,7 +52,7 @@ def upgrade():
                 name="webhookresourcetypeenum",
             ),
             nullable=True,
-            comment="Kind of resource the callback reports on: LLM_CALL, LLM_CHAIN, GUARDRAILS, RESPONSE, PROMPT_IMPROVEMENT, DOC_TRANSFORM, COLLECTION, EVALUATION, EVALUATION_ITERATION, ASSESSMENT, DUPLICATE_DETECTION, CHATBOT_SESSION",
+            comment="Kind of resource the callback reports on: LLM_CALL, LLM_CHAIN, GUARDRAILS, RESPONSE, PROMPT_IMPROVEMENT, COLLECTION, EVALUATION, EVALUATION_ITERATION, ASSESSMENT, DUPLICATE_DETECTION, CHATBOT_SESSION",
         ),
         sa.Column(
             "resource_id",
@@ -91,16 +90,16 @@ def upgrade():
             comment="HTTP attempts made; 0 when rejected",
         ),
         sa.Column(
-            "duration_ms",
+            "latency",
             sa.Float(),
             nullable=True,
-            comment="Total wall time in milliseconds across all attempts including retry backoff",
+            comment="Milliseconds: total wall time across all attempts including retry backoff",
         ),
         sa.Column(
-            "request_body",
+            "request_metadata",
             postgresql.JSONB(astext_type=sa.Text()),
-            nullable=False,
-            comment="JSON payload exactly as sent to the receiver",
+            nullable=True,
+            comment="Client-provided request_metadata echoed in the callback; null when the workflow has none",
         ),
         sa.Column(
             "request_bytes",

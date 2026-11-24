@@ -16,7 +16,6 @@ class WebhookResourceTypeEnum(StrEnum):
     GUARDRAILS = "GUARDRAILS"
     RESPONSE = "RESPONSE"
     PROMPT_IMPROVEMENT = "PROMPT_IMPROVEMENT"
-    DOC_TRANSFORM = "DOC_TRANSFORM"
     COLLECTION = "COLLECTION"
     EVALUATION = "EVALUATION"
     EVALUATION_ITERATION = "EVALUATION_ITERATION"
@@ -67,7 +66,7 @@ class WebhookLog(SQLModel, table=True):
         default=None,
         nullable=True,
         sa_column_kwargs={
-            "comment": "Kind of resource the callback reports on: LLM_CALL, LLM_CHAIN, GUARDRAILS, RESPONSE, PROMPT_IMPROVEMENT, DOC_TRANSFORM, COLLECTION, EVALUATION, EVALUATION_ITERATION, ASSESSMENT, DUPLICATE_DETECTION, CHATBOT_SESSION",
+            "comment": "Kind of resource the callback reports on: LLM_CALL, LLM_CHAIN, GUARDRAILS, RESPONSE, PROMPT_IMPROVEMENT, COLLECTION, EVALUATION, EVALUATION_ITERATION, ASSESSMENT, DUPLICATE_DETECTION, CHATBOT_SESSION",
         },
     )
     resource_id: str | None = Field(
@@ -98,18 +97,19 @@ class WebhookLog(SQLModel, table=True):
         nullable=False,
         sa_column_kwargs={"comment": "HTTP attempts made; 0 when rejected"},
     )
-    duration_ms: float | None = Field(
+    latency: float | None = Field(
         default=None,
         nullable=True,
         sa_column_kwargs={
-            "comment": "Total wall time in milliseconds across all attempts including retry backoff"
+            "comment": "Milliseconds: total wall time across all attempts including retry backoff"
         },
     )
-    request_body: dict[str, Any] = Field(
+    request_metadata: dict[str, Any] | None = Field(
+        default=None,
         sa_column=Column(
             JSONB,
-            nullable=False,
-            comment="JSON payload exactly as sent to the receiver",
+            nullable=True,
+            comment="Client-provided request_metadata echoed in the callback; null when the workflow has none",
         ),
     )
     request_bytes: int = Field(
@@ -160,8 +160,8 @@ class WebhookLogPublic(SQLModel):
     status: WebhookDeliveryStatusEnum
     status_code: int | None
     attempt_count: int
-    duration_ms: float | None
-    request_body: dict[str, Any]
+    latency: float | None
+    request_metadata: dict[str, Any] | None
     request_bytes: int
     response_body: str | None
     error: str | None

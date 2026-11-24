@@ -23,7 +23,6 @@ from app.models import (
     TransformedDocumentPublic,
     DocTransformationJob,
     Project,
-    WebhookResourceTypeEnum,
 )
 from app.core.cloud import get_cloud_storage
 from app.celery.utils import start_doctransform_job
@@ -114,7 +113,6 @@ def _handle_job_failure(
     webhook_secret: str | None,
     job_for_payload: DocTransformationJob | None,
     log_context: str = "",
-    organization_id: int | None = None,
 ) -> DocTransformationJob | None:
     context_suffix = f" on {log_context}" if log_context else ""
     try:
@@ -136,15 +134,7 @@ def _handle_job_failure(
     if callback_url and job_for_payload:
         try:
             failure_payload = build_failure_payload(job_for_payload, error_message)
-            send_callback(
-                callback_url,
-                failure_payload,
-                webhook_secret=webhook_secret,
-                resource_type=WebhookResourceTypeEnum.DOC_TRANSFORM,
-                resource_id=str(job_uuid),
-                project_id=project_id,
-                organization_id=organization_id,
-            )
+            send_callback(callback_url, failure_payload, webhook_secret=webhook_secret)
         except Exception as cb_error:
             logger.error(
                 "[doc_transform.execute_job] callback failed%s | job_id=%s | error=%s",
@@ -171,7 +161,6 @@ def execute_job(
 
     job_for_payload = None  # keep latest job snapshot for payloads
     webhook_secret: str | None = None
-    organization_id: int | None = None
 
     job_uuid = UUID(job_id)
 
@@ -182,8 +171,7 @@ def execute_job(
             with Session(engine) as db:
                 project = db.get(Project, project_id)
             if project is not None:
-                organization_id = project.organization_id
-                webhook_secret = get_webhook_secret(project_id, organization_id)
+                webhook_secret = get_webhook_secret(project_id, project.organization_id)
 
         logger.info(
             "[doc_transform.execute_job] started | job_id=%s | transformer=%s | target=%s | project_id=%s",
@@ -285,15 +273,7 @@ def execute_job(
         )
 
         if callback_url:
-            send_callback(
-                callback_url,
-                success_payload,
-                webhook_secret=webhook_secret,
-                resource_type=WebhookResourceTypeEnum.DOC_TRANSFORM,
-                resource_id=str(job_uuid),
-                project_id=project_id,
-                organization_id=organization_id,
-            )
+            send_callback(callback_url, success_payload, webhook_secret=webhook_secret)
 
     except (Timeout, SoftTimeLimitExceeded) as err:
         timeout_err = TimeoutError("Task exceeded soft time limit")
@@ -309,7 +289,6 @@ def execute_job(
             webhook_secret,
             job_for_payload,
             log_context="timeout",
-            organization_id=organization_id,
         )
         raise
 
@@ -321,13 +300,7 @@ def execute_job(
             exc_info=True,
         )
         _handle_job_failure(
-            str(e),
-            job_uuid,
-            project_id,
-            callback_url,
-            webhook_secret,
-            job_for_payload,
-            organization_id=organization_id,
+            str(e), job_uuid, project_id, callback_url, webhook_secret, job_for_payload
         )
         raise
     finally:

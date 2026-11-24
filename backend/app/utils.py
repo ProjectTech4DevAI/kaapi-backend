@@ -582,6 +582,7 @@ def send_callback(
     resource_id: str | None = None,
     project_id: int | None = None,
     organization_id: int | None = None,
+    request_metadata: dict[str, Any] | None = None,
 ) -> bool:
     """
     Send results to the callback URL (synchronously) with SSRF protection.
@@ -597,7 +598,8 @@ def send_callback(
     - Optional HMAC-SHA256 signing when webhook_secret is provided
 
     Every call records one webhook_log row; resource_type/resource_id and
-    project_id/organization_id attribute it.
+    project_id/organization_id attribute it. Only request_metadata (the
+    client's own, echoed back) is stored, never the payload itself.
 
     Args:
         callback_url: The HTTPS URL to send the callback to
@@ -611,7 +613,7 @@ def send_callback(
     raw_body = json.dumps(data, separators=(",", ":")).encode()
     log_fields = {
         "callback_url": callback_url,
-        "data": data,
+        "request_metadata": request_metadata,
         "request_bytes": len(raw_body),
         "signed": bool(webhook_secret),
         "resource_type": resource_type,
@@ -647,8 +649,8 @@ def send_callback(
             with attempt:
                 attempt_count = attempt.retry_state.attempt_number
                 response = _post_callback(callback_url, raw_body, webhook_secret)
-                duration_ms = (time.perf_counter() - started_at) * 1000
-                span.set_attribute("callback.duration_ms", round(duration_ms, 2))
+                latency = (time.perf_counter() - started_at) * 1000
+                span.set_attribute("callback.duration_ms", round(latency, 2))
                 span.set_attribute(
                     "callback.response.status_code", response.status_code
                 )
@@ -657,16 +659,16 @@ def send_callback(
                     status=WebhookDeliveryStatusEnum.DELIVERED,
                     attempt_count=attempt_count,
                     status_code=response.status_code,
-                    duration_ms=duration_ms,
+                    latency=latency,
                     response_text=response.text,
                 )
                 return True
     except requests.RequestException as e:
-        duration_ms = (time.perf_counter() - started_at) * 1000
+        latency = (time.perf_counter() - started_at) * 1000
         status = e.response.status_code if e.response is not None else None
         logger.warning(
             f"[send_callback] Callback failed | url={callback_url} | status={status} "
-            f"| duration_ms={duration_ms:.2f} "
+            f"| latency_ms={latency:.2f} "
             f"| bytes={len(raw_body)} | payload={log_payload} | error={e}",
             exc_info=True,
         )
@@ -675,7 +677,7 @@ def send_callback(
             status=WebhookDeliveryStatusEnum.FAILED,
             attempt_count=attempt_count,
             status_code=status,
-            duration_ms=duration_ms,
+            latency=latency,
             response_text=e.response.text if e.response is not None else None,
             error=str(e),
         )
@@ -688,7 +690,7 @@ def send_callback(
 def _save_webhook_log(
     *,
     callback_url: str,
-    data: dict[str, Any],
+    request_metadata: dict[str, Any] | None,
     request_bytes: int,
     signed: bool,
     resource_type: WebhookResourceTypeEnum | None,
@@ -698,7 +700,7 @@ def _save_webhook_log(
     status: WebhookDeliveryStatusEnum,
     attempt_count: int,
     status_code: int | None = None,
-    duration_ms: float | None = None,
+    latency: float | None = None,
     response_text: str | None = None,
     error: str | None = None,
 ) -> None:
@@ -717,8 +719,8 @@ def _save_webhook_log(
             status=status,
             status_code=status_code,
             attempt_count=attempt_count,
-            duration_ms=duration_ms,
-            request_body=data,
+            latency=latency,
+            request_metadata=request_metadata,
             request_bytes=request_bytes,
             response_body=(
                 response_text[:WEBHOOK_LOG_RESPONSE_MAX_CHARS]

@@ -162,6 +162,7 @@ def _send_failure_callback(
     callback_url: str | None,
     error: str,
     request_metadata: dict[str, Any] | None,
+    client_request_metadata: dict[str, Any] | None,
     project_id: int,
     organization_id: int,
 ) -> None:
@@ -182,6 +183,7 @@ def _send_failure_callback(
             resource_id=str(job_id),
             project_id=project_id,
             organization_id=organization_id,
+            request_metadata=client_request_metadata,
         )
 
 
@@ -190,6 +192,7 @@ def _dispatch_success_callback(
     job_id: UUID,
     callback_url: str | None,
     payload: dict[str, Any],
+    client_request_metadata: dict[str, Any] | None,
     project_id: int,
     organization_id: int,
 ) -> None:
@@ -207,6 +210,7 @@ def _dispatch_success_callback(
             resource_id=str(job_id),
             project_id=project_id,
             organization_id=organization_id,
+            request_metadata=client_request_metadata,
         )
 
 
@@ -282,6 +286,7 @@ def _fail_job(
     error: str,
     callback_url: str | None,
     request_metadata: dict[str, Any] | None,
+    client_request_metadata: dict[str, Any] | None,
     project_id: int,
     organization_id: int,
     meta: dict[str, Any] | None = None,
@@ -299,6 +304,7 @@ def _fail_job(
         callback_url=callback_url,
         error=error,
         request_metadata=request_metadata,
+        client_request_metadata=client_request_metadata,
         project_id=project_id,
         organization_id=organization_id,
     )
@@ -362,6 +368,7 @@ def execute_job(
                 error=str(e),
                 callback_url=callback_url,
                 request_metadata=request.request_metadata,
+                client_request_metadata=request.request_metadata,
                 project_id=project_id,
                 organization_id=organization_id,
             )
@@ -388,6 +395,7 @@ def execute_job(
                 error=outcome.error,
                 callback_url=callback_url,
                 request_metadata=callback_metadata,
+                client_request_metadata=request.request_metadata,
                 project_id=project_id,
                 organization_id=organization_id,
                 meta={
@@ -426,6 +434,7 @@ def execute_job(
             job_id=job_uuid,
             callback_url=callback_url,
             payload=callback_payload,
+            client_request_metadata=request.request_metadata,
             project_id=project_id,
             organization_id=organization_id,
         )

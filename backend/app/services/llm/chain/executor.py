@@ -1,3 +1,4 @@
+import copy
 import logging
 
 from sqlmodel import Session
@@ -37,6 +38,8 @@ class ChainExecutor:
         self._chain = chain
         self._context = context
         self._request = request
+        # Blocks' input guardrails merge into request_metadata in place; keep the client's copy for webhook_log.
+        self._client_request_metadata = copy.deepcopy(request.request_metadata)
         self._webhook_secret: str | None = None
 
     def run(self) -> dict:
@@ -110,6 +113,7 @@ class ChainExecutor:
                     resource_id=str(self._context.job_id),
                     project_id=self._context.project_id,
                     organization_id=self._context.organization_id,
+                    request_metadata=self._client_request_metadata,
                 )
             with Session(engine) as session:
                 JobCrud(session).update(
@@ -146,6 +150,7 @@ class ChainExecutor:
                 resource_id=str(self._context.job_id),
                 project_id=self._context.project_id,
                 organization_id=self._context.organization_id,
+                request_metadata=self._client_request_metadata,
             )
 
         with Session(engine) as session:
@@ -213,6 +218,7 @@ class ChainExecutor:
                 resource_id=str(self._context.job_id),
                 project_id=self._context.project_id,
                 organization_id=self._context.organization_id,
+                request_metadata=self._client_request_metadata,
             )
             logger.info(
                 f"[_send_intermediate_callback] Sent intermediate callback | "
