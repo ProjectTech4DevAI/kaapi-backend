@@ -17,6 +17,8 @@ Use this when you submitted `POST /guardrails` without a `callback_url`, or to i
 
 `warnings` mirrors the `metadata.warnings` of the webhook payload, so polling callers do not miss a bypass signal — most importantly the case where the guardrails service was unavailable and the original text was returned unchanged. It is always empty for a hard-blocked job.
 
+`guardrail_metadata` mirrors `metadata.guardrail` of the webhook. It is `null` unless the request set `include_guardrail_metadata`, and is also returned for `FAILED` (hard-blocked) jobs.
+
 ### Notes
 
 - If the upstream response carried no sanitised text, the value falls back to the original submitted text.
