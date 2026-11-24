@@ -233,7 +233,7 @@ class Settings(BaseSettings):
 
     EVAL_JUDGE_MODEL: str = "gpt-6-luna"
 
-    # One of: none | minimal | low | medium | high | xhigh.
+    # One of: none | low | medium | high | xhigh | max.
     EVAL_JUDGE_REASONING_EFFORT: str = "medium"
 
     EVAL_SUMMARY_MODEL: str = "claude-sonnet-5-5"
