@@ -34,6 +34,13 @@ class GuardrailsRequest(SQLModel):
             "the caller must poll GET /guardrails/{job_id}."
         ),
     )
+    include_guardrail_metadata: bool = Field(
+        default=False,
+        description=(
+            "Include per-validator guardrail metadata (input/output text, "
+            "pass/fail) under `metadata.guardrail` in the callback."
+        ),
+    )
     request_metadata: dict[str, Any] | None = Field(
         default=None,
         description=(

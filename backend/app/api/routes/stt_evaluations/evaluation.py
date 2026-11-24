@@ -6,6 +6,8 @@ from asgi_correlation_id import correlation_id
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.stt_evaluation.examples import STT_RUN_CREATE_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.celery.utils import start_stt_batch_submission
 from app.core.cloud import get_cloud_storage
@@ -35,6 +37,7 @@ router = APIRouter()
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Start STT evaluation",
     description=load_description("stt_evaluation/start_evaluation.md"),
+    openapi_extra=request_examples(STT_RUN_CREATE_EXAMPLES),
 )
 def start_stt_evaluation(
     session: SessionDep,

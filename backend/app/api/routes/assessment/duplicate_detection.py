@@ -5,6 +5,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.assessment.examples import DUPLICATE_DETECTION_CREATE_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.models.assessment.duplicate_detection import (
     DuplicateDetectionCreate,
@@ -25,6 +27,7 @@ router = APIRouter(
     description=load_description("assessment/duplicate_detection_create.md"),
     response_model=APIResponse[DuplicateDetectionPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(DUPLICATE_DETECTION_CREATE_EXAMPLES),
 )
 def create_duplicate_detection(
     request: DuplicateDetectionCreate,

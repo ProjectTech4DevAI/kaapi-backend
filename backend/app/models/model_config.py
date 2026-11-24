@@ -183,31 +183,6 @@ class ModelConfigUpdate(SQLModel):
     pricing: dict[str, Any] | None = None
     is_active: bool | None = None
 
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "completion_type": ["text", "stt"],
-                "config": {
-                    "temperature": {
-                        "type": "float",
-                        "default": 1.0,
-                        "min": 0.0,
-                        "max": 2.0,
-                        "description": "Controls randomness.",
-                    }
-                },
-                "input_modalities": ["TEXT", "AUDIO"],
-                "output_modalities": ["TEXT"],
-                "pricing": {
-                    "response": {"input_token_cost": 0.5, "output_token_cost": 2.0},
-                    "batch": {"input_token_cost": 0.25, "output_token_cost": 1.0},
-                    "audio": {"input_token_cost": 1.0, "output_token_cost": 2.0},
-                },
-                "is_active": True,
-            }
-        }
-    }
-
 
 class ModelConfigBulkUpdateItem(ModelConfigUpdate):
     provider: Provider

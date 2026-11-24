@@ -3,6 +3,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Path, Query
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.config.examples import CONFIG_VERSION_CREATE_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.crud.config import ConfigVersionCrud
 from app.models import (
@@ -22,6 +24,7 @@ router = APIRouter()
     response_model=APIResponse[ConfigVersionPublic],
     status_code=201,
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(CONFIG_VERSION_CREATE_EXAMPLES),
 )
 def create_version(
     config_id: UUID,
