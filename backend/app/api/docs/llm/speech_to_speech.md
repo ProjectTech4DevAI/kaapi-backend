@@ -10,7 +10,7 @@ Runs a voice note through a 3-block chain as a background job: **STT → LLM →
   "config": {
     "stt": {"provider": "sarvamai", "params": {"model": "saaras:v3", "input_language": "auto"}},
     "llm": {"provider": "openai", "params": {"model": "gpt-4o", "knowledge_base_ids": ["vs_abc123"]}, "conversation": {"id": "conv_abc123"}},
-    "tts": {"provider": "sarvamai", "params": {"model": "bulbul:v3", "voice": "anushka", "language": "hi-IN"}}
+    "tts": {"provider": "sarvamai", "params": {"model": "bulbul:v3", "voice": "shubh", "language": "hi-IN"}}
   },
   "callback_url": "https://client.app/webhook",
   "include_provider_raw_response": false,
@@ -35,7 +35,7 @@ Runs a voice note through a 3-block chain as a background job: **STT → LLM →
 
 When the tts step is inline or omitted and `params.language` is not set:
 - if the stt step's `input_language` is a concrete code (e.g. `hi-IN`), TTS speaks that language;
-- otherwise (`auto`/`unknown`, or a stored stt config), TTS uses the language STT detected, falling back to `en-IN`.
+- otherwise (`auto`/`unknown`, or a stored stt config), Sarvam and ElevenLabs TTS use the language STT detected, falling back to `en-IN`. Google TTS (the default) gets no language and detects it from the answer text; set `tts.params.language` to pin it.
 
 A stored tts config is used untouched.
 
