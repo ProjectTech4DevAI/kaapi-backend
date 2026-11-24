@@ -8,6 +8,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import HttpUrl
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.evaluation.examples import EVALUATION_V2_CREATE_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.core.rate_monitor import monitor_rate
 from app.models.evaluation import EvaluationRunPublic
@@ -22,6 +24,7 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation v2"])
 @router.post(
     "",
     description=load_description("evaluation/v2/create_evaluation.md"),
+    openapi_extra=request_examples(EVALUATION_V2_CREATE_EXAMPLES),
     response_model=APIResponse[EvaluationRunPublic],
     dependencies=[
         Depends(require_permission(Permission.REQUIRE_PROJECT)),

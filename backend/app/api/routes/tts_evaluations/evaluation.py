@@ -6,6 +6,8 @@ from asgi_correlation_id import correlation_id
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.tts_evaluation.examples import TTS_RUN_CREATE_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.celery.utils import start_tts_batch_submission
 from app.core.cloud import get_cloud_storage
@@ -39,6 +41,7 @@ router = APIRouter()
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Start TTS evaluation",
     description=load_description("tts_evaluation/start_evaluation.md"),
+    openapi_extra=request_examples(TTS_RUN_CREATE_EXAMPLES),
 )
 def start_tts_evaluation(
     session: SessionDep,

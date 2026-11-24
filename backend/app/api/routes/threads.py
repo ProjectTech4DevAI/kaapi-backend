@@ -8,6 +8,12 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.threads.examples import (
+    THREAD_CREATE_EXAMPLES,
+    THREAD_START_EXAMPLES,
+    THREAD_SYNC_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.core import logging
 from app.models import OpenAIThreadCreate
@@ -289,6 +295,7 @@ def poll_run_and_prepare_response(request: dict, client: OpenAI, db: SessionDep)
 @router.post(
     "/threads",
     dependencies=[Depends(require_permission(Permission.REQUIRE_ORGANIZATION))],
+    openapi_extra=request_examples(THREAD_CREATE_EXAMPLES),
 )
 async def threads(
     request: dict,
@@ -362,6 +369,7 @@ async def threads(
 @router.post(
     "/threads/sync",
     dependencies=[Depends(require_permission(Permission.REQUIRE_ORGANIZATION))],
+    openapi_extra=request_examples(THREAD_SYNC_EXAMPLES),
 )
 async def threads_sync(
     request: dict,
@@ -425,6 +433,7 @@ async def threads_sync(
 @router.post(
     "/threads/start",
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(THREAD_START_EXAMPLES),
 )
 async def start_thread(
     request: StartThreadRequest,

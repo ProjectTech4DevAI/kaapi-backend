@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.llm.examples import SPEECH_TO_SPEECH_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.crud.config import ConfigVersionCrud
 from app.crud.jobs import JobCrud
@@ -157,6 +159,7 @@ def _tts_params(
     description=load_description("llm/speech_to_speech.md"),
     response_model=APIResponse[LLMJobImmediatePublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(SPEECH_TO_SPEECH_EXAMPLES),
 )
 def speech_to_speech(
     current_user: AuthContextDep,
