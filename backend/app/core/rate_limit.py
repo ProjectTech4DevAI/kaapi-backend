@@ -30,10 +30,13 @@ from app.core.telemetry import record_rate_limit_exceeded
 logger = logging.getLogger(__name__)
 
 # Extendable for other categories in the future
-RateLimitCategory = Literal["evaluations"]
+RateLimitCategory = Literal["evaluations", "prompt_improvement"]
 
 RATE_LIMITS: dict[RateLimitCategory, RateLimitItem] = {
     "evaluations": RateLimitItemPerMinute(settings.EVAL_RATE_LIMIT_PER_MINUTE),
+    "prompt_improvement": RateLimitItemPerMinute(
+        settings.PROMPT_IMPROVEMENT_RATE_LIMIT_PER_MINUTE
+    ),
 }
 
 _limiter = MovingWindowRateLimiter(
@@ -41,8 +44,8 @@ _limiter = MovingWindowRateLimiter(
         settings.REDIS_URL,
         key_prefix="rate_limit",
         wrap_exceptions=True,
-        socket_timeout=1,
-        socket_connect_timeout=1,
+        socket_timeout=settings.RATE_LIMIT_REDIS_TIMEOUT_SECONDS,
+        socket_connect_timeout=settings.RATE_LIMIT_REDIS_TIMEOUT_SECONDS,
     )
 )
 

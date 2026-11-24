@@ -9,14 +9,17 @@ All paths relative to `backend/app/`.
 | Scope | per organization (all projects of an org share one window) | per project |
 | Window | moving 60 s window, `limits` library (`MovingWindowRateLimiter` + `RedisStorage`, atomic Lua) | fixed 1-minute bucket, raw redis-py INCR |
 | Config | `RATE_LIMITS` map ← `*_RATE_LIMIT_PER_MINUTE` settings | `THRESHOLD_*_RATE` settings |
-| Redis down | fails open: logs an error, request proceeds (1 s socket timeout) | skips silently |
+| Redis down | fails open: logs an error, request proceeds (`RATE_LIMIT_REDIS_TIMEOUT_SECONDS`, default 1 s, bounds connect + read) | skips silently |
 
-Both attach as FastAPI route dependencies; neither touches the DB. A limited route needs only `enforce_rate_limit`: it alerts on its own, so `monitor_rate` is not stacked on it (the v2 eval-run routes dropped it).
+Both attach as FastAPI route dependencies; neither touches the DB. A limited route needs only `enforce_rate_limit`: it alerts on its own, so `monitor_rate` is not stacked on it (the limited v2 routes dropped it; unlimited routes such as `/iterations` keep it).
 
 ## Enforced limits
 | Category | Setting | Default | Endpoints |
 |---|---|---|---|
-| `evaluations` | `EVAL_RATE_LIMIT_PER_MINUTE` | 3 | `POST /api/v2/evaluations`, `POST /api/v2/evaluations/iterations` (one shared bucket). v1 `POST /api/v1/evaluations` is not limited. |
+| `evaluations` | `EVAL_RATE_LIMIT_PER_MINUTE` | 3 | `POST /api/v2/evaluations` |
+| `prompt_improvement` | `PROMPT_IMPROVEMENT_RATE_LIMIT_PER_MINUTE` | 3 | `POST /api/v2/evaluations/{evaluation_id}/improve-prompt` |
+
+Each category is its own bucket: eval runs never eat into prompt-improvement capacity. Not limited: v1 `POST /api/v1/evaluations` and `/improve-prompt`, and `POST /api/v2/evaluations/iterations` (not exposed in the UI yet).
 
 ## Response contract
 - Status `429`, header `Retry-After: <seconds>`, body is the standard `APIResponse` failure with a generic `error`: `Too many requests. Please try again in N seconds.` The category, the limit value and the per-org scope are never exposed.

@@ -19,6 +19,8 @@ from app.core.telemetry import metrics as telemetry
 
 V2_EVALUATIONS_URL = f"{settings.API_V2_STR}/evaluations"
 V2_ITERATIONS_URL = f"{settings.API_V2_STR}/evaluations/iterations"
+# The run id is never looked up: the empty body 422s right after the limiter counts the hit
+V2_IMPROVE_PROMPT_URL = f"{settings.API_V2_STR}/evaluations/1/improve-prompt"
 GENERIC_DETAIL = re.compile(r"^Too many requests\. Please try again in \d+ seconds\.$")
 
 
@@ -206,15 +208,36 @@ class TestV2EvaluationRoutesRateLimit:
         assert body["success"] is False
         assert GENERIC_DETAIL.match(body["error"])
 
-    def test_v2_evaluation_and_iteration_share_one_bucket(
+    def test_v2_improve_prompt_returns_429_after_its_own_limit(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        for _ in range(settings.PROMPT_IMPROVEMENT_RATE_LIMIT_PER_MINUTE):
+            resp = client.post(
+                V2_IMPROVE_PROMPT_URL, headers=user_api_key_header, json={}
+            )
+            assert resp.status_code == 422
+
+        resp = client.post(V2_IMPROVE_PROMPT_URL, headers=user_api_key_header, json={})
+
+        assert resp.status_code == 429
+        assert GENERIC_DETAIL.match(resp.json()["error"])
+
+    def test_evaluation_and_improve_prompt_use_separate_buckets(
         self, client: TestClient, user_api_key_header: dict[str, str]
     ) -> None:
         for _ in range(settings.EVAL_RATE_LIMIT_PER_MINUTE):
             client.post(V2_EVALUATIONS_URL, headers=user_api_key_header, json={})
 
-        resp = client.post(V2_ITERATIONS_URL, headers=user_api_key_header, json={})
+        resp = client.post(V2_IMPROVE_PROMPT_URL, headers=user_api_key_header, json={})
 
-        assert resp.status_code == 429
+        assert resp.status_code == 422
+
+    def test_v2_iteration_is_not_rate_limited(
+        self, client: TestClient, user_api_key_header: dict[str, str]
+    ) -> None:
+        for _ in range(settings.EVAL_RATE_LIMIT_PER_MINUTE + 1):
+            resp = client.post(V2_ITERATIONS_URL, headers=user_api_key_header, json={})
+            assert resp.status_code == 422
 
     def test_v1_evaluation_is_not_rate_limited(
         self, client: TestClient, user_api_key_header: dict[str, str]

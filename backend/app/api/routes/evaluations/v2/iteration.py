@@ -2,7 +2,6 @@
 
 import logging
 
-from app.core.rate_limit import enforce_rate_limit
 from asgi_correlation_id import correlation_id
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -10,6 +9,7 @@ from app.api.deps import AuthContextDep, SessionDep
 from app.api.docs.evaluation.examples import EVALUATION_ITERATION_CREATE_EXAMPLES
 from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
+from app.core.rate_monitor import monitor_rate
 from app.models.evaluation_iteration import (
     EvaluationIterationCreateRequest,
     EvaluationIterationRunImmediatePublic,
@@ -30,7 +30,7 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation v2"])
     status_code=202,
     dependencies=[
         Depends(require_permission(Permission.REQUIRE_PROJECT)),
-        Depends(enforce_rate_limit("evaluations")),
+        Depends(monitor_rate("evaluations")),
     ],
 )
 def create_evaluation_iteration(
