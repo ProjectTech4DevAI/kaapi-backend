@@ -3,6 +3,11 @@ import logging
 from fastapi import APIRouter, Depends
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.credentials.examples import (
+    CREDENTIALS_CREATE_EXAMPLES,
+    CREDENTIALS_UPDATE_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.core.exception_handlers import HTTPException
 from app.core.providers import mask_credential_fields, validate_provider
@@ -27,6 +32,7 @@ router = APIRouter(prefix="/credentials", tags=["Credentials"])
     response_model=APIResponse[list[CredsPublic]],
     description=load_description("credentials/create.md"),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(CREDENTIALS_CREATE_EXAMPLES),
 )
 def create_new_credential(
     *,
@@ -108,6 +114,7 @@ def read_provider_credential(
     response_model=APIResponse[list[CredsPublic]],
     description=load_description("credentials/update.md"),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(CREDENTIALS_UPDATE_EXAMPLES),
 )
 def update_credential(
     *,
@@ -247,6 +254,7 @@ def read_provider_credential_by_org_project(
     response_model=APIResponse[list[CredsPublic]],
     description=load_description("credentials/update_by_org_project.md"),
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+    openapi_extra=request_examples(CREDENTIALS_UPDATE_EXAMPLES),
 )
 def update_credential_by_org_project(
     *,

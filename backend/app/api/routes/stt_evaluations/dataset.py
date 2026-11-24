@@ -5,6 +5,11 @@ import logging
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.stt_evaluation.examples import (
+    STT_DATASET_CREATE_EXAMPLES,
+    STT_SAMPLE_UPDATE_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.core.cloud import get_cloud_storage
 from app.crud.file import get_files_by_ids
@@ -36,6 +41,7 @@ router = APIRouter()
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Create STT dataset",
     description=load_description("stt_evaluation/create_dataset.md"),
+    openapi_extra=request_examples(STT_DATASET_CREATE_EXAMPLES),
 )
 def create_dataset(
     session: SessionDep,
@@ -212,6 +218,7 @@ def get_dataset(
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Update STT sample",
     description=load_description("stt_evaluation/update_sample.md"),
+    openapi_extra=request_examples(STT_SAMPLE_UPDATE_EXAMPLES),
 )
 def update_sample(
     session: SessionDep,
@@ -220,7 +227,7 @@ def update_sample(
     sample_update: STTSampleUpdate = Body(...),
 ) -> APIResponse[STTSamplePublic]:
     """Update an STT sample's language and/or ground truth."""
-    logger.info(f"[update_sample] Updating sample | " f"sample_id: {sample_id}")
+    logger.info(f"[update_sample] Updating sample | sample_id: {sample_id}")
 
     if sample_update.language_id is not None:
         get_language_by_id(session=session, language_id=sample_update.language_id)

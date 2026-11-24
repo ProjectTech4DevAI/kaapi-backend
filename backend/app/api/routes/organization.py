@@ -5,6 +5,12 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from app.api.deps import SessionDep
+from app.api.docs.organization.examples import (
+    ORGANIZATION_CREATE_EXAMPLES,
+    ORGANIZATION_DELETE_EXAMPLES,
+    ORGANIZATION_UPDATE_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.crud.organization import (
     cascade_deactivate_organization,
@@ -67,6 +73,7 @@ def read_organizations(
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[OrganizationPublic],
     description=load_description("organization/create.md"),
+    openapi_extra=request_examples(ORGANIZATION_CREATE_EXAMPLES),
 )
 def create_new_organization(
     *, session: SessionDep, org_in: OrganizationCreate
@@ -99,6 +106,7 @@ def read_organization(
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[OrganizationPublic],
     description=load_description("organization/update.md"),
+    openapi_extra=request_examples(ORGANIZATION_UPDATE_EXAMPLES),
 )
 def update_organization(
     *, session: SessionDep, org_id: int, org_in: OrganizationUpdate
@@ -142,6 +150,7 @@ def update_organization(
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[None],
     description=load_description("organization/delete.md"),
+    openapi_extra=request_examples(ORGANIZATION_DELETE_EXAMPLES),
 )
 def delete_organization_endpoint(
     session: SessionDep,

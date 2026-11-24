@@ -7,6 +7,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.llm.examples import SPEECH_TO_SPEECH_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.models import Message
 from app.models.llm.constants import (
@@ -205,6 +207,7 @@ def _build_metadata(
     description=load_description("llm/speech_to_speech.md"),
     response_model=APIResponse[Message],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(SPEECH_TO_SPEECH_EXAMPLES),
 )
 def speech_to_speech(
     current_user: AuthContextDep,

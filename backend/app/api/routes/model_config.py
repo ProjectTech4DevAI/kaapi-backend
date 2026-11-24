@@ -4,6 +4,12 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import SessionDep
+from app.api.docs.model_config.examples import (
+    MODEL_BULK_UPDATE_EXAMPLES,
+    MODEL_CREATE_EXAMPLES,
+    MODEL_UPDATE_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.models.llm.constants import Provider
 from app.crud.model_config import (
@@ -105,6 +111,7 @@ def get_model(
     description=load_description("model_config/create_models.md"),
     status_code=201,
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+    openapi_extra=request_examples(MODEL_CREATE_EXAMPLES),
 )
 def create_models(
     session: SessionDep, data: ModelConfigCreate | list[ModelConfigCreate]
@@ -119,6 +126,7 @@ def create_models(
     response_model=APIResponse[ModelConfigPublic],
     description=load_description("model_config/update_model.md"),
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+    openapi_extra=request_examples(MODEL_UPDATE_EXAMPLES),
 )
 def update_model(
     session: SessionDep, provider: Provider, model_name: str, data: ModelConfigUpdate
@@ -135,6 +143,7 @@ def update_model(
     description=load_description("model_config/update_models.md"),
     summary="Update Models",
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
+    openapi_extra=request_examples(MODEL_BULK_UPDATE_EXAMPLES),
 )
 def bulk_update_models(
     session: SessionDep, items: list[ModelConfigBulkUpdateItem]

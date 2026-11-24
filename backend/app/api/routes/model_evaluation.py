@@ -25,6 +25,8 @@ from app.core.cloud import get_cloud_storage
 from app.core.finetune.evaluation import ModelEvaluator
 from app.utils import get_openai_client, APIResponse, load_description
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.model_evaluation.examples import MODEL_EVALUATION_CREATE_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 
 
@@ -116,6 +118,7 @@ def run_model_evaluation(
     "/evaluate_models",
     response_model=APIResponse,
     description=load_description("model_evaluation/evaluate.md"),
+    openapi_extra=request_examples(MODEL_EVALUATION_CREATE_EXAMPLES),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
 )
 def evaluate_models(
