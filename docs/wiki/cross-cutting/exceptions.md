@@ -19,6 +19,7 @@ Raise `HTTPException` directly with the right status code from routes, crud, and
 | Upstream errored or unreachable (Langfuse, OpenAI, Gemini, KMS, object storage) | 502 |
 | Our async infra could not accept the work (Celery broker) | 503 |
 | Our bug (DB write failed, unexpected exception) | 500 |
+| Caller over its rate limit (`core/rate_limit.py`, sets `Retry-After`) | 429 |
 
 - A broad `except Exception` around a DB write must re-raise `HTTPException` first, otherwise a typed 4xx/5xx gets flattened to 500.
 

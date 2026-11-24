@@ -238,6 +238,12 @@ class Settings(BaseSettings):
 
     EVAL_SUMMARY_MODEL: str = "claude-sonnet-5-5"
 
+    # Enforced per-org limits (requests per minute); over-limit calls get 429
+    EVAL_RATE_LIMIT_PER_MINUTE: int = Field(default=3, ge=1)
+    PROMPT_IMPROVEMENT_RATE_LIMIT_PER_MINUTE: int = Field(default=3, ge=1)
+    # Bounds every limiter Redis call so a hung Redis fails open fast instead of stalling requests
+    RATE_LIMIT_REDIS_TIMEOUT_SECONDS: float = Field(default=1.0, gt=0)
+
     # Judge runs alone in the single aggregate task (no response calls competing),
     # so it uses a larger pool than the response stage to finish the max dataset
     # (EVAL_FAST_MAX_UNIQUE_ROWS x duplication) well under CELERY_TASK_SOFT_TIME_LIMIT.
