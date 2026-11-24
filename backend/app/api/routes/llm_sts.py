@@ -98,6 +98,14 @@ def _validate_stored_step_type(
     return blob
 
 
+def _uses_gcp_with_kb(blob: ConfigBlob) -> bool:
+    # Same rule as LLMStepConfig: Vertex has no file-search stores, so KB ids would be dropped.
+    completion = blob.completion
+    return completion.provider == Provider.GOOGLE_GCP and bool(
+        getattr(completion.params, "knowledge_base_ids", None)
+    )
+
+
 def _stt_params(step: STTStepConfig | None) -> STTLLMParams:
     if step is None:
         return STTLLMParams(model=DEFAULT_STT_MODEL, input_language="auto")
@@ -184,6 +192,14 @@ def speech_to_speech(
             status_code=422,
             detail=(
                 "config.llm: conversation is not supported with provider "
+                f"'{stored_llm_blob.completion.provider}'"
+            ),
+        )
+    if stored_llm_blob is not None and _uses_gcp_with_kb(stored_llm_blob):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "config.llm: knowledge_base_ids is not supported with provider "
                 f"'{stored_llm_blob.completion.provider}'"
             ),
         )

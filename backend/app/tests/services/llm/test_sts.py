@@ -187,6 +187,14 @@ class TestInlineSteps:
             model=DEFAULT_TEXT_MODELS["google"], instructions="Reply in one line."
         )
 
+    def test_inline_llm_model_is_kept(self, client, headers, audio_input, mock_start):
+        config = SpeechToSpeechConfig(
+            llm=LLMStepConfig(provider="openai", params=TextLLMParams(model="gpt-5.4"))
+        )
+        _post(client, headers, _request(audio_input, config=config))
+
+        assert _completions(mock_start)[1].params.model == "gpt-5.4"
+
     def test_inline_step_without_params_or_provider(
         self, client, headers, audio_input, mock_start
     ):
@@ -241,6 +249,30 @@ class TestInlineSteps:
         response = _post(client, headers, _request(audio_input, config=config))
 
         assert response.status_code == 404
+        mock_start.assert_not_called()
+
+    def test_stored_gcp_config_with_kb_rejected(
+        self, db, client, headers, audio_input, mock_start, user_api_key
+    ):
+        config = create_test_config(
+            db,
+            project_id=user_api_key.project_id,
+            config_blob=ConfigBlob(
+                completion=build_kaapi_completion_config(
+                    provider="google-gcp",
+                    type="text",
+                    params={
+                        "model": "gemini-3.1-pro-preview",
+                        "knowledge_base_ids": ["kb_1"],
+                    },
+                )
+            ),
+        )
+        step = SpeechToSpeechConfig(llm=LLMStepConfig(id=config.id, version=1))
+        response = _post(client, headers, _request(audio_input, config=step))
+
+        assert response.status_code == 422
+        assert "knowledge_base_ids" in response.json()["error"]
         mock_start.assert_not_called()
 
     def test_unknown_stored_version_rejected(
