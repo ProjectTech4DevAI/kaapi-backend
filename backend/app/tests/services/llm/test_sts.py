@@ -20,6 +20,7 @@ from app.models.llm.constants import (
     DEFAULT_RAG_MODEL,
     DEFAULT_SARVAM_STT_MODEL,
     DEFAULT_STT_MODEL,
+    DEFAULT_TEXT_MODELS,
     DEFAULT_TTS_MODEL,
     DEFAULT_TTS_VOICE,
 )
@@ -180,8 +181,11 @@ class TestInlineSteps:
 
         llm = _completions(mock_start)[1]
         assert llm.provider == "google"
-        # No merge with endpoint defaults: model stays unset (default would be DEFAULT_RAG_MODEL).
-        assert llm.params == TextLLMParams(instructions="Reply in one line.")
+        # No merge with endpoint defaults (DEFAULT_RAG_MODEL etc.); only the
+        # provider's default model is filled in, since a text config needs one.
+        assert llm.params == TextLLMParams(
+            model=DEFAULT_TEXT_MODELS["google"], instructions="Reply in one line."
+        )
 
     def test_inline_step_without_params_or_provider(
         self, client, headers, audio_input, mock_start
@@ -195,7 +199,7 @@ class TestInlineSteps:
         assert stt.provider == "sarvamai"
         assert stt.params == STTLLMParams(model=DEFAULT_SARVAM_STT_MODEL)
         assert llm.provider == "openai"
-        assert llm.params == TextLLMParams()
+        assert llm.params == TextLLMParams(model=DEFAULT_TEXT_MODELS["openai"])
 
     def test_stored_steps_pass_id_and_version_only(
         self, db, client, headers, audio_input, mock_start, user_api_key

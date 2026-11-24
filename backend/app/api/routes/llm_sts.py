@@ -14,6 +14,7 @@ from app.models.llm.constants import (
     DEFAULT_RAG_MODEL,
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
+    DEFAULT_TEXT_MODELS,
     DEFAULT_TTS_VOICE,
     CompletionType,
     Provider,
@@ -103,14 +104,21 @@ def _stt_params(step: STTStepConfig | None) -> STTLLMParams:
     return step.params or STTLLMParams()
 
 
-def _llm_params(step: LLMStepConfig | None) -> TextLLMParams:
+def _llm_params(step: LLMStepConfig | None, provider: str) -> TextLLMParams:
     if step is None:
         return TextLLMParams(
             model=DEFAULT_RAG_MODEL,
             temperature=DEFAULT_LLM_TEMPERATURE,
             instructions=DEFAULT_LLM_INSTRUCTIONS,
         )
-    return step.params or TextLLMParams()
+    params = step.params or TextLLMParams()
+    if params.model is not None:
+        return params
+    # Blob validation rejects a model-less text config; AI Studio shares Google's default.
+    default_model = (
+        DEFAULT_TEXT_MODELS.get(provider) or DEFAULT_TEXT_MODELS[Provider.GOOGLE]
+    )
+    return params.model_copy(update={"model": default_model})
 
 
 def _tts_params(
@@ -166,6 +174,7 @@ def speech_to_speech(
     _validate_stored_step_type(session, project_id, tts, CompletionType.TTS, "tts")
 
     conversation = llm.conversation if llm else None
+    llm_provider = (llm.provider if llm else None) or DEFAULT_LLM_PROVIDER
     if (
         conversation is not None
         and stored_llm_blob is not None
@@ -190,8 +199,8 @@ def speech_to_speech(
         config=_call_config(
             llm,
             CompletionType.TEXT,
-            (llm.provider if llm else None) or DEFAULT_LLM_PROVIDER,
-            _llm_params(llm),
+            llm_provider,
+            _llm_params(llm, llm_provider),
         ),
         intermediate_callback=True,
         include_provider_raw_response=request.include_provider_raw_response,
