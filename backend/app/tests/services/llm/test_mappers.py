@@ -8,7 +8,11 @@ Covers real-world scenarios, edge cases, and provider-specific requirements.
 import pytest
 from sqlmodel import Session
 
-from app.models.llm.constants import DEFAULT_ELEVENLABS_TTS_MODEL
+from app.crud.model_config import is_reasoning_model
+from app.models.llm.constants import (
+    DEFAULT_ELEVENLABS_TTS_MODEL,
+    DEFAULT_TEXT_MODELS,
+)
 from app.models.llm.request import (
     NativeCompletionConfig,
     STTLLMParams,
@@ -34,6 +38,38 @@ from app.services.llm.mappers import (
 
 class TestMapKaapiToOpenAIParams:
     """Test cases for map_kaapi_to_openai_params function."""
+
+    def test_omitted_model_maps_against_the_resolved_default(self, db: Session):
+        """An omitted model still runs on the default, so reasoning support must be
+        decided from the resolved default rather than from a bare None."""
+        result, warnings = map_kaapi_to_openai_params(
+            session=db, kaapi_params={"effort": "high", "temperature": 0.7}
+        )
+
+        assert result["model"] == DEFAULT_TEXT_MODELS["openai"]
+        assert result["reasoning"] == {"effort": "high"}
+        assert "temperature" not in result
+        assert any("temperature" in warning for warning in warnings)
+
+    def test_default_model_suppresses_sampling_params(self, db: Session):
+        """The default moved from a temperature model to a reasoning one, so a caller
+        still sending temperature/top_p must have both dropped, not forwarded."""
+        result, warnings = map_kaapi_to_openai_params(
+            session=db, kaapi_params={"temperature": 0.7, "top_p": 0.9}
+        )
+
+        assert result["model"] == DEFAULT_TEXT_MODELS["openai"]
+        assert "temperature" not in result
+        assert "top_p" not in result
+        assert any("temperature" in warning for warning in warnings)
+        assert any("top_p" in warning for warning in warnings)
+
+    def test_default_model_is_reasoning_capable(self, db: Session):
+        """Guards the premise of the two tests above: if the OpenAI default ever moves
+        back to a sampling model, they would pass for the wrong reason."""
+        assert is_reasoning_model(
+            session=db, provider="openai", model_name=DEFAULT_TEXT_MODELS["openai"]
+        )
 
     def test_basic_model_mapping(self, db: Session):
         """Test basic model parameter mapping."""
@@ -1012,7 +1048,7 @@ class TestMapKaapiToAnthropicParams:
         default when caller omits it."""
         result, warnings = map_kaapi_to_anthropic_params({})
 
-        assert result == {"model": "claude-sonnet-4-6"}
+        assert result == {"model": DEFAULT_TEXT_MODELS["anthropic"]}
         assert warnings == []
 
     def test_max_output_tokens_renamed_to_max_tokens(self):

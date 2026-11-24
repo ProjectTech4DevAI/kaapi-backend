@@ -50,9 +50,11 @@ entry; nothing else needs to know.
 ## Model config catalog
 
 `global.model_config` rows are seeded by migrations (052 OpenAI, 063 STT/TTS,
-066 `google-aistudio` copies, 086 Anthropic `claude-sonnet-4-6` /
-`claude-opus-5-5`). `GET /models/providers` lists only providers that have an
-active row, so a provider with no rows is invisible to the config UI.
+066 `google-aistudio` copies, 090 current-generation OpenAI + Anthropic).
+`GET /models/providers` lists only providers that have an active row, so a
+provider with no rows is invisible to the config UI.
+
+090 upserts its rows, so an existing row is repaired rather than skipped.
 
 A `config.effort` key marks a reasoning model (`is_reasoning_model`): the OpenAI
 mapper routes `effort` into `reasoning`, and config-version updates strip

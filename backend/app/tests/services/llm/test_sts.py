@@ -22,6 +22,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from app.api.routes.llm_sts import DEFAULT_RAG_EFFORT
 from app.models.llm.constants import (
     DEFAULT_RAG_MODEL,
     DEFAULT_STT_MODEL,
@@ -114,7 +115,7 @@ class TestDefaults:
 
         assert stt.model == DEFAULT_STT_MODEL
         assert rag.model == DEFAULT_RAG_MODEL
-        assert rag.temperature == 0.1
+        assert rag.effort == DEFAULT_RAG_EFFORT
         assert tts.model == DEFAULT_TTS_MODEL
         assert tts.voice == DEFAULT_TTS_VOICE
         assert tts.response_format == "ogg"
@@ -396,6 +397,43 @@ class TestInlineOverrides:
         assert rag_params.model == "gpt-4o-mini"
         assert rag_params.instructions == "Be brief."
         assert rag_params.temperature == 0.5
+
+    def test_rag_model_override_does_not_inherit_default_effort(
+        self, client, user_api_key_header, audio_input, kb_ids
+    ):
+        """A caller-supplied model may not accept "none"; gpt-5 has no such level."""
+        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
+            _post(
+                client,
+                user_api_key_header,
+                SpeechToSpeechRequest(
+                    query=audio_input,
+                    knowledge_base_ids=kb_ids,
+                    rag=RAGBlockSpec(params=TextLLMParams(model="gpt-5")),
+                ),
+            )
+        rag_params = _chain_request(mock).blocks[1].config.blob.completion.params
+        assert rag_params.model == "gpt-5"
+        assert rag_params.effort is None
+
+    def test_rag_explicit_reasoning_wins_over_default_effort(
+        self, client, user_api_key_header, audio_input, kb_ids
+    ):
+        """The mapper prefers 'effort' over the legacy 'reasoning' alias, so the
+        default must not be injected when the caller supplied only 'reasoning'."""
+        with patch("app.api.routes.llm_sts.start_chain_job") as mock:
+            _post(
+                client,
+                user_api_key_header,
+                SpeechToSpeechRequest(
+                    query=audio_input,
+                    knowledge_base_ids=kb_ids,
+                    rag=RAGBlockSpec(params=TextLLMParams(reasoning="high")),
+                ),
+            )
+        rag_params = _chain_request(mock).blocks[1].config.blob.completion.params
+        assert rag_params.reasoning == "high"
+        assert rag_params.effort is None
 
     def test_rag_inline_still_injects_kb_ids(
         self, client, user_api_key_header, audio_input, kb_ids

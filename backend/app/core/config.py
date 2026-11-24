@@ -205,7 +205,7 @@ class Settings(BaseSettings):
     LLM_CALL_RETENTION_HOURS: int = Field(default=168, ge=1)
 
     ANTHROPIC_API_KEY: str = ""
-    PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-4-8"
+    PROMPT_IMPROVEMENT_MODEL: str = "claude-opus-5-5"
 
     # Fast evaluation (run_mode="fast") configuration.
     # See "Fast Evaluation SRD.md" for the full design rationale.
@@ -231,12 +231,12 @@ class Settings(BaseSettings):
     # Loops stalled longer are reaped; must exceed 25 hard-cap rounds worst-case time
     EVAL_ITERATION_STALL_THRESHOLD_HOURS: int = 48
 
-    EVAL_JUDGE_MODEL: str = "gpt-5.6-luna"
+    EVAL_JUDGE_MODEL: str = "gpt-6-luna"
 
-    # One of: none | minimal | low | medium | high | xhigh.
+    # One of: none | low | medium | high | xhigh | max.
     EVAL_JUDGE_REASONING_EFFORT: str = "medium"
 
-    EVAL_SUMMARY_MODEL: str = "claude-sonnet-4-6"
+    EVAL_SUMMARY_MODEL: str = "claude-sonnet-5-5"
 
     # Enforced per-org limits (requests per minute); over-limit calls get 429
     EVAL_RATE_LIMIT_PER_MINUTE: int = Field(default=3, ge=1)
