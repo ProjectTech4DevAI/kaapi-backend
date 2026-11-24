@@ -231,7 +231,7 @@ class Settings(BaseSettings):
     # Loops stalled longer are reaped; must exceed 25 hard-cap rounds worst-case time
     EVAL_ITERATION_STALL_THRESHOLD_HOURS: int = 48
 
-    EVAL_JUDGE_MODEL: str = "gpt-5.6-luna"
+    EVAL_JUDGE_MODEL: str = "gpt-6-luna"
 
     # One of: none | minimal | low | medium | high | xhigh.
     EVAL_JUDGE_REASONING_EFFORT: str = "medium"
