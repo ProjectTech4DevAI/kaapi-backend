@@ -4,9 +4,8 @@ Revision ID: 090
 Revises: 089
 Create Date: 2026-11-24 00:00:00.000000
 
-One row per send_callback call so callback deliveries can be audited and
-debugged per resource. Project/org FKs are nullable because some callers send
-callbacks without tenant attribution.
+Project/org FKs are nullable because some callers send callbacks without
+tenant attribution.
 """
 
 import sqlalchemy as sa
