@@ -6,7 +6,7 @@ moving window, so each test starts with an empty window.
 
 import re
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -15,6 +15,7 @@ from limits.errors import StorageError
 
 from app.core import rate_limit
 from app.core.config import settings
+from app.core.telemetry import metrics as telemetry
 
 V2_EVALUATIONS_URL = f"{settings.API_V2_STR}/evaluations"
 V2_ITERATIONS_URL = f"{settings.API_V2_STR}/evaluations/iterations"
@@ -91,6 +92,101 @@ class TestEnforceRateLimit:
     def test_unknown_category_fails_when_route_is_declared(self) -> None:
         with pytest.raises(KeyError):
             rate_limit.enforce_rate_limit("unknown")  # type: ignore[arg-type]
+
+
+class TestRateLimitAlert:
+    # Sentry is the external boundary, so the alert helper is patched where rate_limit imports it
+    def test_each_rejection_sends_an_alert_with_org_and_project(self) -> None:
+        enforce = rate_limit.enforce_rate_limit("evaluations")
+        limit = settings.EVAL_RATE_LIMIT_PER_MINUTE
+
+        with patch.object(rate_limit, "record_rate_limit_exceeded") as alert:
+            for _ in range(limit):
+                enforce(_auth_context(org_id=7, project_id=70))
+            assert alert.call_count == 0
+
+            for _ in range(2):
+                with pytest.raises(HTTPException):
+                    enforce(_auth_context(org_id=7, project_id=70))
+
+        assert alert.call_count == 2
+        alert.assert_called_with(
+            organization_id=7,
+            project_id=70,
+            category="evaluations",
+            limit_per_minute=limit,
+        )
+
+    def test_no_alert_when_redis_is_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        broken_limiter = MagicMock()
+        broken_limiter.hit.side_effect = StorageError(ConnectionError("redis down"))
+        monkeypatch.setattr(rate_limit, "_limiter", broken_limiter)
+        enforce = rate_limit.enforce_rate_limit("evaluations")
+
+        with patch.object(rate_limit, "record_rate_limit_exceeded") as alert:
+            enforce(_auth_context())
+
+        alert.assert_not_called()
+
+
+class TestRecordRateLimitExceeded:
+    def test_emits_warning_with_org_and_project_tags(self) -> None:
+        client = MagicMock()
+        client.is_active.return_value = True
+        scope = MagicMock()
+        scope_cm = MagicMock()
+        scope_cm.__enter__.return_value = scope
+
+        with (
+            patch.object(telemetry.sentry_sdk, "get_client", return_value=client),
+            patch.object(telemetry.sentry_sdk, "new_scope", return_value=scope_cm),
+            patch.object(telemetry.sentry_sdk, "capture_message") as capture,
+        ):
+            telemetry.record_rate_limit_exceeded(
+                organization_id=7,
+                project_id=70,
+                category="evaluations",
+                limit_per_minute=3,
+            )
+
+        capture.assert_called_once()
+        assert capture.call_args.kwargs["level"] == "warning"
+        scope.set_tag.assert_any_call("alert.type", "rate_limit_exceeded")
+        scope.set_tag.assert_any_call("tenant.organization_id", 7)
+        scope.set_tag.assert_any_call("tenant.project_id", 70)
+        scope.set_tag.assert_any_call("route_category", "evaluations")
+        scope.set_extra.assert_any_call("limit_per_minute", 3)
+
+    def test_noop_when_sentry_inactive(self) -> None:
+        client = MagicMock()
+        client.is_active.return_value = False
+
+        with (
+            patch.object(telemetry.sentry_sdk, "get_client", return_value=client),
+            patch.object(telemetry.sentry_sdk, "capture_message") as capture,
+        ):
+            telemetry.record_rate_limit_exceeded(
+                organization_id=7,
+                project_id=None,
+                category="evaluations",
+                limit_per_minute=3,
+            )
+
+        capture.assert_not_called()
+
+    def test_sentry_failure_never_propagates(self) -> None:
+        client = MagicMock()
+        client.is_active.side_effect = RuntimeError("sentry exploded")
+
+        with patch.object(telemetry.sentry_sdk, "get_client", return_value=client):
+            telemetry.record_rate_limit_exceeded(
+                organization_id=7,
+                project_id=70,
+                category="evaluations",
+                limit_per_minute=3,
+            )
 
 
 class TestV2EvaluationRoutesRateLimit:

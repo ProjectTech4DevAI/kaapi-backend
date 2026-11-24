@@ -25,6 +25,7 @@ from limits.strategies import (
 
 from app.api.deps import AuthContextDep
 from app.core.config import settings
+from app.core.telemetry import record_rate_limit_exceeded
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,12 @@ def enforce_rate_limit(category: RateLimitCategory) -> Callable[[AuthContextDep]
         logger.warning(
             f"[enforce_rate_limit] Rate limit exceeded | category: {category} | "
             f"org_id: {org_id} | project_id: {project_id} | retry_after: {retry_after}s"
+        )
+        record_rate_limit_exceeded(
+            organization_id=org_id,
+            project_id=project_id,
+            category=category,
+            limit_per_minute=rate_limit_item.amount,
         )
         raise HTTPException(
             status_code=429,
