@@ -1715,6 +1715,7 @@ def execute_chain_job(
                     index=i,
                     context=context,
                     include_provider_raw_response=block.include_provider_raw_response,
+                    conversation=block.conversation,
                 )
                 for i, block in enumerate(request.blocks)
             ]

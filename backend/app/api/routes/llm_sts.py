@@ -48,6 +48,7 @@ DEFAULT_TTS_FORMAT = "ogg"  # mappers translate to opus (WhatsApp compatible)
 # Substituted in jobs.py with the language STT detected (en-IN if none).
 DETECTED_LANGUAGE_MARKER = "{{detected}}"
 UNRESOLVED_LANGUAGES = ("auto", "unknown")
+CONVERSATION_PROVIDERS = (Provider.OPENAI, "openai-native")
 
 
 def _call_config(
@@ -73,10 +74,10 @@ def _validate_stored_step_type(
     step: STTStepConfig | LLMStepConfig | TTSStepConfig | None,
     expected_type: CompletionType,
     step_name: str,
-) -> None:
+) -> ConfigBlob | None:
     # A stored config carries its own type; catch a mismatch here instead of mid-chain.
     if step is None or not step.is_stored_ref:
-        return
+        return None
     config_crud = ConfigVersionCrud(
         session=session, project_id=project_id, config_id=step.id
     )
@@ -93,6 +94,7 @@ def _validate_stored_step_type(
                 f"'{blob.completion.type}', expected '{expected_type.value}'"
             ),
         )
+    return blob
 
 
 def _stt_params(step: STTStepConfig | None) -> STTLLMParams:
@@ -157,12 +159,25 @@ def speech_to_speech(
     llm = config.llm if config else None
     tts = config.tts if config else None
 
-    for step, expected_type, step_name in (
-        (stt, CompletionType.STT, "stt"),
-        (llm, CompletionType.TEXT, "llm"),
-        (tts, CompletionType.TTS, "tts"),
+    _validate_stored_step_type(session, project_id, stt, CompletionType.STT, "stt")
+    stored_llm_blob = _validate_stored_step_type(
+        session, project_id, llm, CompletionType.TEXT, "llm"
+    )
+    _validate_stored_step_type(session, project_id, tts, CompletionType.TTS, "tts")
+
+    conversation = llm.conversation if llm else None
+    if (
+        conversation is not None
+        and stored_llm_blob is not None
+        and stored_llm_blob.completion.provider not in CONVERSATION_PROVIDERS
     ):
-        _validate_stored_step_type(session, project_id, step, expected_type, step_name)
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "config.llm: conversation is not supported with provider "
+                f"'{stored_llm_blob.completion.provider}'"
+            ),
+        )
 
     stt_block = ChainBlock(
         config=_call_config(
@@ -180,6 +195,7 @@ def speech_to_speech(
         ),
         intermediate_callback=True,
         include_provider_raw_response=request.include_provider_raw_response,
+        conversation=conversation,
     )
     tts_block = ChainBlock(
         config=_call_config(

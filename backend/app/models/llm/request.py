@@ -920,6 +920,15 @@ class ChainBlock(SQLModel):
         description="Whether to send intermediate callback after this block completes",
     )
 
+    conversation: ConversationConfig | None = Field(
+        default=None,
+        description=(
+            "Conversation for this block's LLM call. Blocks after the first get "
+            "a fresh query built from the previous output, so this is how a later "
+            "block continues a conversation."
+        ),
+    )
+
 
 class LLMChainRequest(SQLModel):
     """
@@ -1158,6 +1167,25 @@ class LLMStepConfig(_StepConfigBase):
         default=None,
         description="Inline text LLM parameters, used as written. Omit to use the params defaults.",
     )
+    conversation: ConversationConfig | None = Field(
+        default=None,
+        description=(
+            "Continue a conversation (`id`) or start one (`auto_create`), as in "
+            "/llm/call `query.conversation`. OpenAI only."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_provider_supports_conversation(self) -> Self:
+        # Stored steps are checked in the route, once their provider is known.
+        if self.conversation is not None and self.provider not in (
+            None,
+            Provider.OPENAI,
+        ):
+            raise ValueError(
+                f"conversation is not supported with provider '{self.provider}'"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_provider_supports_kb(self) -> Self:
@@ -1233,4 +1261,7 @@ class SpeechToSpeechRequest(SQLModel):
     def validate_audio_input(self) -> Self:
         if not isinstance(self.query.input, AudioInput):
             raise ValueError("query.input must be a single audio input")
+        # The STT block would receive it and drop it; the LLM step owns conversations.
+        if self.query.conversation is not None:
+            raise ValueError("Set conversation on config.llm, not on query")
         return self

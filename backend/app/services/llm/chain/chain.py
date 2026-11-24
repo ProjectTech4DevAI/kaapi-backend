@@ -4,6 +4,7 @@ from typing import Any, Callable
 from uuid import UUID
 
 from app.models.llm.request import (
+    ConversationConfig,
     LLMCallConfig,
     QueryParams,
     TextInput,
@@ -98,11 +99,13 @@ class ChainBlock:
         index: int,
         context: ChainContext,
         include_provider_raw_response: bool = False,
+        conversation: ConversationConfig | None = None,
     ):
         self._config = config
         self._index = index
         self._context = context
         self._include_provider_raw_response = include_provider_raw_response
+        self._conversation = conversation
 
     def execute(self, query: QueryParams) -> BlockResult:
         """Execute this block and return the result."""
@@ -110,6 +113,8 @@ class ChainBlock:
             f"[ChainBlock.execute] Executing block {self._index} | "
             f"job_id={self._context.job_id}"
         )
+        if self._conversation is not None:
+            query = query.model_copy(update={"conversation": self._conversation})
 
         return execute_llm_call(
             config=self._config,

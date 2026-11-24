@@ -24,6 +24,7 @@ from app.models.llm.constants import (
     DEFAULT_TTS_VOICE,
 )
 from app.models.llm.request import (
+    ConversationConfig,
     AudioContent,
     ConfigBlob,
     AudioInput,
@@ -257,6 +258,60 @@ class TestInlineSteps:
             response = _post(client, headers, _request(audio_input))
 
         assert response.status_code == 404
+
+
+class TestConversation:
+    def test_llm_conversation_reaches_only_the_llm_block(
+        self, client, headers, audio_input, mock_start
+    ):
+        config = SpeechToSpeechConfig(
+            llm=LLMStepConfig(conversation=ConversationConfig(id="conv_123"))
+        )
+        response = _post(client, headers, _request(audio_input, config=config))
+
+        assert response.status_code == 200
+        stt, llm, tts = _chain_request(mock_start).blocks
+        assert llm.conversation == ConversationConfig(id="conv_123")
+        assert stt.conversation is None and tts.conversation is None
+
+    def test_conversation_with_non_openai_inline_provider_rejected(self):
+        with pytest.raises(ValidationError, match="conversation is not supported"):
+            LLMStepConfig(
+                provider="google", conversation=ConversationConfig(auto_create=True)
+            )
+
+    def test_conversation_with_stored_openai_config_accepted(
+        self, db, client, headers, audio_input, mock_start, user_api_key
+    ):
+        ref = _stored(db, user_api_key.project_id, "text", "openai", "gpt-4o")
+        config = SpeechToSpeechConfig(
+            llm=LLMStepConfig(**ref, conversation=ConversationConfig(id="conv_123"))
+        )
+        response = _post(client, headers, _request(audio_input, config=config))
+
+        assert response.status_code == 200
+        assert _chain_request(mock_start).blocks[1].conversation.id == "conv_123"
+
+    def test_conversation_with_stored_non_openai_config_rejected(
+        self, db, client, headers, audio_input, mock_start, user_api_key
+    ):
+        ref = _stored(db, user_api_key.project_id, "text", "google", "gemini-2.5-pro")
+        config = SpeechToSpeechConfig(
+            llm=LLMStepConfig(**ref, conversation=ConversationConfig(id="conv_123"))
+        )
+        response = _post(client, headers, _request(audio_input, config=config))
+
+        assert response.status_code == 422
+        assert "config.llm" in response.json()["error"]
+        mock_start.assert_not_called()
+
+    def test_conversation_on_query_rejected(self, audio_input):
+        with pytest.raises(ValidationError, match="config.llm"):
+            SpeechToSpeechRequest(
+                query=QueryParams(
+                    input=audio_input, conversation=ConversationConfig(id="conv_123")
+                )
+            )
 
 
 class TestTTSLanguage:
