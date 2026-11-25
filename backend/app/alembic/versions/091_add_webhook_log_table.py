@@ -1,7 +1,7 @@
 """add webhook_log table
 
-Revision ID: 090
-Revises: 089
+Revision ID: 091
+Revises: 090
 Create Date: 2026-11-24 00:00:00.000000
 
 Project/org FKs are nullable because some callers send callbacks without
@@ -13,8 +13,8 @@ import sqlmodel.sql.sqltypes
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "090"
-down_revision = "089"
+revision = "091"
+down_revision = "090"
 branch_labels = None
 depends_on = None
 
