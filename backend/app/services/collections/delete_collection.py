@@ -17,6 +17,7 @@ from app.models import (
     CollectionJob,
     CollectionJobPublic,
     CollectionIDPublic,
+    WebhookResourceTypeEnum,
 )
 from app.models.collection import DeletionRequest
 from app.services.collections.helpers import extract_error_message
@@ -162,7 +163,15 @@ def _mark_job_failed_and_callback(
             error_message=str(err),
         )
         webhook_secret = get_webhook_secret(project_id, organization_id)
-        send_callback(callback_url, failure_payload, webhook_secret=webhook_secret)
+        send_callback(
+            callback_url,
+            failure_payload,
+            webhook_secret=webhook_secret,
+            resource_type=WebhookResourceTypeEnum.COLLECTION,
+            resource_id=str(job_id),
+            project_id=project_id,
+            organization_id=organization_id,
+        )
 
 
 def execute_job(
@@ -257,6 +266,10 @@ def execute_job(
                     callback_url,
                     success_payload,
                     webhook_secret=webhook_secret,
+                    resource_type=WebhookResourceTypeEnum.COLLECTION,
+                    resource_id=str(job_uuid),
+                    project_id=project_id,
+                    organization_id=organization_id,
                 )
 
         except (Timeout, SoftTimeLimitExceeded) as err:

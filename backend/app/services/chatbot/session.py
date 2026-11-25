@@ -27,6 +27,7 @@ from app.models import (
     ChatbotSessionMessage,
     ChatbotSessionStatusEnum,
     ChatbotSessionSummary,
+    WebhookResourceTypeEnum,
 )
 from app.services.chatbot.agents.coordinator.graph import run_coordinator_turn
 from app.services.chatbot.agents.coordinator.prompts import (
@@ -523,6 +524,8 @@ def _send_success_webhook(
     outcome: _TurnOutcome,
     webhook_url: str,
     webhook_secret: str | None,
+    project_id: int,
+    organization_id: int,
 ) -> None:
     turn_result = outcome.result
     envelope = APIResponse.success_response(
@@ -537,7 +540,15 @@ def _send_success_webhook(
             "sources": turn_result.sources,
         }
     )
-    send_callback(webhook_url, envelope.model_dump(exclude_none=True), webhook_secret)
+    send_callback(
+        webhook_url,
+        envelope.model_dump(exclude_none=True),
+        webhook_secret,
+        resource_type=WebhookResourceTypeEnum.CHATBOT_SESSION,
+        resource_id=str(session_id),
+        project_id=project_id,
+        organization_id=organization_id,
+    )
 
 
 def _send_failure_webhook(
@@ -545,12 +556,22 @@ def _send_failure_webhook(
     session_id: UUID,
     webhook_url: str,
     webhook_secret: str | None,
+    project_id: int,
+    organization_id: int,
     error: str,
 ) -> None:
     envelope = APIResponse.failure_response(
         error=error, data={"session_id": str(session_id)}
     )
-    send_callback(webhook_url, envelope.model_dump(exclude_none=True), webhook_secret)
+    send_callback(
+        webhook_url,
+        envelope.model_dump(exclude_none=True),
+        webhook_secret,
+        resource_type=WebhookResourceTypeEnum.CHATBOT_SESSION,
+        resource_id=str(session_id),
+        project_id=project_id,
+        organization_id=organization_id,
+    )
 
 
 def process_chatbot_session_message(
@@ -579,6 +600,8 @@ def process_chatbot_session_message(
             session_id=session_id,
             webhook_url=webhook_url,
             webhook_secret=webhook_secret,
+            project_id=project_id,
+            organization_id=organization_id,
             error=str(e),
         )
         return
@@ -590,4 +613,6 @@ def process_chatbot_session_message(
         outcome=outcome,
         webhook_url=webhook_url,
         webhook_secret=webhook_secret,
+        project_id=project_id,
+        organization_id=organization_id,
     )

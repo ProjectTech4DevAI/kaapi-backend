@@ -76,4 +76,5 @@ def execute_job(
             request_dict=request_data.model_dump(),
             organization_id=organization_id,
             project_id=project_id,
+            job_id=job_id,
         )
