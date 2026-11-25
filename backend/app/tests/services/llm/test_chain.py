@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 
 from app.models.llm.request import (
+    ConversationConfig,
     LLMCallConfig,
     ConfigBlob,
     NativeCompletionConfig,
@@ -192,6 +193,30 @@ class TestLLMChain:
 
             assert result.success
             assert mock_execute.call_count == 3
+
+    def test_block_conversation_applies_only_to_that_block(
+        self, context, text_response
+    ):
+        conversation = ConversationConfig(id="conv_123")
+        blocks = [
+            ChainBlock(config=make_config(), index=0, context=context),
+            ChainBlock(
+                config=make_config(),
+                index=1,
+                context=context,
+                conversation=conversation,
+            ),
+        ]
+
+        with patch("app.services.llm.chain.chain.execute_llm_call") as mock_execute:
+            mock_execute.return_value = BlockResult(
+                response=text_response, usage=text_response.usage
+            )
+            LLMChain(blocks, context).execute(QueryParams(input="hello"))
+
+        first, second = (c.kwargs["query"] for c in mock_execute.call_args_list)
+        assert first.conversation is None
+        assert second.conversation == conversation
 
     def test_execute_stops_on_failure(self, context, text_response):
         config = make_config()

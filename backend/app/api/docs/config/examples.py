@@ -26,6 +26,24 @@ CONFIG_CREATE_EXAMPLES: Examples = {
             "commit_message": "Initial configuration",
         },
     ),
+    "text_to_speech": (
+        "Create a Gemini text-to-speech config",
+        {
+            "name": "helpline-voice",
+            "config_blob": {
+                "completion": {
+                    "provider": "google",
+                    "type": "tts",
+                    "params": {
+                        "model": "gemini-3.8-flash-tts",
+                        "voice": "Kore",
+                        "language": "en-IN",
+                        "response_format": "ogg",
+                    },
+                }
+            },
+        },
+    ),
 }
 
 CONFIG_UPDATE_EXAMPLES: Examples = {
