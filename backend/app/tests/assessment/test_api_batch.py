@@ -420,6 +420,23 @@ class TestParseOne:
             "[OPENAI] empty_output: the model returned no text (stop reason: not given)"
         )
 
+    def test_openai_failed_response_with_status_200_uses_body_error(self) -> None:
+        body = {
+            "status": "failed",
+            "error": {
+                "code": "server_error",
+                "message": "The model failed to respond.",
+            },
+            "output": [],
+        }
+        result = parse_one(
+            {"response": {"status_code": 200, "request_id": "req_9", "body": body}},
+            "openai",
+        )
+        assert result["error"] == (
+            "[OPENAI] server_error: The model failed to respond. (request_id=req_9)"
+        )
+
     def test_openai_incomplete_output_names_the_reason(self) -> None:
         body = {
             "status": "incomplete",
@@ -1029,6 +1046,50 @@ class TestPollOutcome:
         db.refresh(job)
         assert outcome == "failed"
         assert job.error_message == "[OPENAI] model_not_found: unknown model (line=1)"
+
+    def test_unreadable_output_file_still_reads_the_error_file(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        job = _make_batch_job(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            provider_status="completed",
+            provider_output_file_id="file-out",
+            provider_error_file_id="file-err",
+        )
+        provider = self._provider()
+        provider.download_batch_results.side_effect = RuntimeError("network")
+        provider.download_file.return_value = '{"custom_id": "row_0"}\n'
+        with patch(
+            "app.services.assessment.api.batch.poll_batch_status",
+            return_value={"request_counts": {"completed": 0, "failed": 1}},
+        ):
+            outcome, results = _poll_outcome(db, provider, job, uuid4())
+        assert outcome == "failed"
+        assert results == [{"custom_id": "row_0"}]
+
+    def test_expired_batch_reads_the_error_file(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        job = _make_batch_job(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            provider_status="expired",
+            provider_error_file_id="file-err",
+        )
+        provider = self._provider()
+        provider.download_file.return_value = (
+            '{"custom_id": "row_0", "error": {"code": "batch_expired", '
+            '"message": "This request could not be executed before the completion '
+            'window expired."}}\n'
+        )
+        with patch(
+            "app.services.assessment.api.batch.poll_batch_status",
+            return_value={"error_message": "Batch expired"},
+        ):
+            outcome, results = _poll_outcome(db, provider, job, uuid4())
+        assert outcome == "failed"
+        assert results[0]["error"]["code"] == "batch_expired"
 
     def test_success_output_not_ready(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -1711,7 +1772,10 @@ class TestFinalizeAndFail:
                 RuntimeError("boom"),
             )
         assert outcome == {"requeue": False}
-        assert fail.call_args.args[-1] == "[ANTHROPIC] RuntimeError: boom"
+        assert (
+            fail.call_args.args[-1]
+            == "[ANTHROPIC] internal_error: the batch could not be submitted because of an internal error"
+        )
 
     def test_fail_never_records_an_empty_reason(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -1871,6 +1935,7 @@ class TestRunBatchStageProcessingBranches:
             }
             for i in range(2)
         ]
+        uploaded: list = []
         with (
             patch(
                 "app.services.assessment.api.batch.Session",
@@ -1881,7 +1946,11 @@ class TestRunBatchStageProcessingBranches:
                 "app.services.assessment.api.batch._poll_outcome",
                 return_value=("failed", failed_rows),
             ),
-            patch("app.services.assessment.api.result_files.finalize_result_files"),
+            patch("app.services.assessment.api.result_files.get_cloud_storage"),
+            patch(
+                "app.services.assessment.api.result_files.upload_jsonl_to_object_store",
+                side_effect=lambda **kw: uploaded.append(kw) or "s3://b/errors.jsonl",
+            ),
         ):
             assert self._tick(db, execution, auth) == {"requeue": False}
 
@@ -1904,6 +1973,22 @@ class TestRunBatchStageProcessingBranches:
         result = build_result(session=db, assessment=assessment, execution=execution)
         assert [item.error for item in result.items] == [row_error, row_error]
         assert result.counts.errors == 2
+        errors_jsonl = [kw for kw in uploaded if kw["filename"] == "errors.jsonl"]
+        assert errors_jsonl[0]["results"] == [
+            {"type": "execution_error", "stage": "assessment", "error": expected},
+            {
+                "type": "row_error",
+                "stage": "assessment",
+                "row_index": 0,
+                "error": row_error,
+            },
+            {
+                "type": "row_error",
+                "stage": "assessment",
+                "row_index": 1,
+                "error": row_error,
+            },
+        ]
 
     def test_all_rows_failed_marks_rows_missing_from_the_results(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -2206,7 +2291,10 @@ class TestRunBatchStageFailurePaths:
             assert self._tick(db, execution, auth) == {"requeue": False}
         db.refresh(execution)
         assert execution.status == AssessmentStatus.FAILED
-        assert "provider credentials missing" in execution.error_message
+        assert (
+            execution.error_message
+            == "[OPENAI] internal_error: the batch could not be submitted because of an internal error"
+        )
         assert len(delivered) == 1
 
     def test_advance_submit_non_value_error_fails_run(self, db) -> None:
@@ -2278,7 +2366,7 @@ class TestRunBatchStageFailurePaths:
         assert execution.status == AssessmentStatus.FAILED
         assert (
             execution.error_message
-            == "[OPENAI] RuntimeError: provider blew up on next stage"
+            == "[OPENAI] internal_error: the batch could not be submitted because of an internal error"
         )
         assert len(delivered) == 1
 
@@ -2378,6 +2466,19 @@ class TestBuildResult:
             "app.services.assessment.api.results.get_cloud_storage",
             return_value=storage,
         )
+
+    def test_failed_stage_row_errors_are_used_for_items(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        bag = self._bag(
+            gate_passed=[True, True],
+            pipeline=[{"stage": "topic_relevance"}, {"stage": "assessment"}],
+            stage="topic_relevance",
+            stage_status="FAILED",
+            stage_errors={"topic_relevance": {"0": "[OPENAI] e0", "1": "[OPENAI] e1"}},
+        )
+        assessment = self._seed(db, auth, data=[{"a": "1"}, {"a": "2"}], bag=bag)
+        result = build_result(session=db, assessment=assessment)
+        assert [item.error for item in result.items] == ["[OPENAI] e0", "[OPENAI] e1"]
 
     def test_structured_output_and_verdict(self, db) -> None:
         auth = get_user_test_auth_context(db)

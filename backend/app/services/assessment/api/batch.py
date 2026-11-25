@@ -599,6 +599,16 @@ def parse_one(result: dict[str, Any], provider_name: str) -> ParsedResult:
                 "response_id": body.get("id"),
             }
         text = body.get("output_text") or _openai_output_text(body.get("output"))
+        if not text and isinstance(body.get("error"), dict):
+            return {
+                "output": None,
+                "error": error_from_payload(
+                    LLMProvider.OPENAI,
+                    {**body["error"], "request_id": response.get("request_id")},
+                ),
+                "usage": body.get("usage"),
+                "response_id": body.get("id"),
+            }
         return {
             "output": text or None,
             "error": None if text else _empty_output_error(provider_name, body),
@@ -815,22 +825,27 @@ def error_file_entries(provider: BatchProvider, file_id: str) -> list[dict[str, 
 def _fetch_failed_rows(
     provider: BatchProvider, batch_job: BatchJob
 ) -> list[dict[str, Any]] | None:
-    """Per-row results of a batch where nothing succeeded; None when unreadable."""
+    """Per-row results of a failed batch; None when nothing was readable."""
     rows: list[dict[str, Any]] = []
-    try:
-        if batch_job.provider_output_file_id:
-            rows.extend(
-                provider.download_batch_results(batch_job.provider_output_file_id)
+    reads = (
+        (batch_job.provider_output_file_id, provider.download_batch_results),
+        (
+            batch_job.provider_error_file_id,
+            lambda file_id: error_file_entries(provider, file_id),
+        ),
+    )
+    for file_id, read in reads:
+        if not file_id:
+            continue
+        try:
+            rows.extend(read(file_id))
+        except Exception:
+            logger.warning(
+                "[_fetch_failed_rows] Provider results unreadable | batch_job_id=%s | file_id=%s",
+                batch_job.id,
+                file_id,
+                exc_info=True,
             )
-        if batch_job.provider_error_file_id:
-            rows.extend(error_file_entries(provider, batch_job.provider_error_file_id))
-    except Exception:
-        logger.warning(
-            "[_fetch_failed_rows] Provider results unreadable | batch_job_id=%s",
-            batch_job.id,
-            exc_info=True,
-        )
-        return None
     return rows or None
 
 
@@ -904,7 +919,7 @@ def _poll_outcome(
         return "processing", None  # output not ready yet
     if status in _FAILED_STATUSES:
         _record_job_reason(session, batch_job, status_result)
-        return "failed", None
+        return "failed", _fetch_failed_rows(provider, batch_job)
     return "processing", None
 
 
@@ -1004,6 +1019,12 @@ def _submit_failed(
         except Exception:
             provider_name = bag.get("provider") or "provider"
         message = describe_exception(provider_name, exc)
+        logger.error(
+            "[_submit_failed] Submission failed | execution_id=%s | stage=%s",
+            execution.id,
+            stage,
+            exc_info=exc,
+        )
     _fail(session, execution, assessment, bag, message)
     return {"requeue": False}
 

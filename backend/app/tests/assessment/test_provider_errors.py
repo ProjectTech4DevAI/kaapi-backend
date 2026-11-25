@@ -239,9 +239,19 @@ class TestDescribeException:
             "[VERTEX] 404: google-gcp credentials not configured for this project"
         )
 
-    def test_unknown_exception(self) -> None:
-        assert describe_exception("openai", RuntimeError("boom")) == (
-            "[OPENAI] RuntimeError: boom"
+    def test_unknown_exception_text_is_not_exposed(self) -> None:
+        exc = PermissionError("/srv/app/secrets.json: permission denied")
+        assert (
+            describe_exception("openai", exc)
+            == "[OPENAI] internal_error: the batch could not be submitted because of an internal error"
+        )
+
+    def test_sdk_connection_error_text_is_kept(self) -> None:
+        exc = AnthropicConnectionError(
+            request=httpx2.Request("POST", "https://api.anthropic.com/v1/messages")
+        )
+        assert describe_exception("anthropic", exc) == (
+            "[ANTHROPIC] APIConnectionError: Connection error."
         )
 
 

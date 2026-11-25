@@ -166,6 +166,9 @@ def job_failure_reason(provider: str, status_result: dict[str, Any]) -> str | No
     return None
 
 
+_SDK_MODULES = frozenset({"anthropic", "openai", "google", "httpx", "httpx2"})
+
+
 def describe_exception(provider: str, exc: BaseException) -> str:
     """Client-facing text for an exception raised while talking to a provider or bucket."""
     # Wrappers (e.g. CloudStorageError) keep the real error as their cause.
@@ -198,6 +201,13 @@ def describe_exception(provider: str, exc: BaseException) -> str:
             )
         return format_provider_error(provider, code=status or code, message=message)
 
+    if type(root).__module__.split(".")[0] in _SDK_MODULES:
+        return format_provider_error(
+            provider, code=type(root).__name__, message=str(root) or None
+        )
+    # May hold internal detail (paths, SQL); logged server-side only.
     return format_provider_error(
-        provider, code=type(root).__name__, message=str(root) or None
+        provider,
+        code="internal_error",
+        message="the batch could not be submitted because of an internal error",
     )
