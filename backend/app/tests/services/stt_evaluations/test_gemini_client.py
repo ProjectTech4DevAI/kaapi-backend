@@ -62,6 +62,25 @@ class TestGeminiClientFromCredentials:
         )
         assert client._api_key == "stored-api-key"
 
+    @patch("app.core.batch.client.genai.Client")
+    @patch("app.core.batch.client.get_provider_credential")
+    def test_falls_back_to_google_credential(self, mock_get_creds, mock_genai_client):
+        """A project with only a `google` credential still gets a batch client."""
+        mock_get_creds.side_effect = [None, {"api_key": "google-api-key"}]
+        mock_session = MagicMock()
+
+        client = GeminiClient.from_credentials(
+            session=mock_session,
+            org_id=1,
+            project_id=2,
+        )
+
+        assert [c.kwargs["provider"] for c in mock_get_creds.call_args_list] == [
+            "google-aistudio",
+            "google",
+        ]
+        assert client._api_key == "google-api-key"
+
     @patch("app.core.batch.client.get_provider_credential")
     def test_credentials_not_found(self, mock_get_creds):
         """Test error when credentials are not found."""
