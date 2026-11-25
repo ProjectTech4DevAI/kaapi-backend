@@ -26,7 +26,19 @@ TTS_RUN_CREATE_EXAMPLES: Examples = {
         {
             "run_name": "hindi-ivr-gemini-tts",
             "dataset_id": 15,
-            "models": ["gemini-2.5-pro-preview-tts"],
+            "models": ["gemini-3.8-flash-tts"],
+        },
+    ),
+    "voices": (
+        "Compare providers with a chosen voice per model",
+        {
+            "run_name": "hindi-ivr-voices",
+            "dataset_id": 15,
+            "models": [
+                {"model": "gemini-3.8-flash-tts", "voice": "Puck"},
+                {"model": "bulbul:v3", "voice": "priya"},
+                {"model": "eleven_v3", "voice": "Rahul"},
+            ],
         },
     ),
 }
@@ -41,6 +53,7 @@ TTS_FEEDBACK_UPDATE_EXAMPLES: Examples = {
                 "Speech Naturalness": "medium",
                 "Pronunciation Accuracy": "high",
             },
+            "issues": ["robotic"],
         },
     ),
 }

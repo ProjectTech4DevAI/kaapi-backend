@@ -1,6 +1,7 @@
 """TTS result feedback API routes."""
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
@@ -68,13 +69,15 @@ def update_result_feedback(
     # Build kwargs only for explicitly provided fields so that
     # sending {"is_correct": null} clears the value, while omitting
     # the field leaves it unchanged.
-    update_kwargs: dict = {}
+    update_kwargs: dict[str, Any] = {}
     if "is_correct" in feedback.model_fields_set:
         update_kwargs["is_correct"] = feedback.is_correct
     if "comment" in feedback.model_fields_set:
         update_kwargs["comment"] = feedback.comment
     if "score" in feedback.model_fields_set:
         update_kwargs["score"] = feedback.score
+    if "issues" in feedback.model_fields_set:
+        update_kwargs["issues"] = feedback.issues
 
     result = update_tts_human_feedback(
         session=session,

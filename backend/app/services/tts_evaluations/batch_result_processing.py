@@ -11,18 +11,23 @@ from typing import Any
 
 from gevent import Timeout
 from celery.exceptions import SoftTimeLimitExceeded
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from app.core.batch import BATCH_KEY, GeminiBatchProvider, GeminiClient
 from app.core.cloud.storage import get_cloud_storage
 from app.core.db import engine
 from app.core.storage_utils import upload_to_object_store
 from app.core.util import now
-from app.crud.tts_evaluations.result import count_results_by_status
-from app.crud.tts_evaluations.run import update_tts_run
+from app.crud.tts_evaluations.result import (
+    UNFINISHED_TTS_STATUSES,
+    claim_pending_tts_results,
+    fail_pending_tts_results,
+    save_processed_tts_results,
+)
 from app.models.job import JobStatus
-from app.models.tts_evaluation import TTSResult
-from app.core.audio_utils import calculate_duration, pcm_to_wav
+from app.models.tts_evaluation import TTSResult, TTSUsageUnitEnum
+from app.core.audio_utils import calculate_duration, pcm_to_wav, strip_wav_header
+from app.services.tts_evaluations.constants import TTS_AUDIO_SUBDIRECTORY
 
 logger = logging.getLogger(__name__)
 
@@ -62,211 +67,249 @@ def execute_tts_result_processing(
         f"provider={tts_provider}, celery_task_id={task_id}"
     )
 
-    with Session(engine) as session:
-        try:
-            # Initialize Gemini client and batch provider
+    result_map: dict[int, TTSResult] = {}
+
+    try:
+        with Session(engine) as session:
+            # Claimed before any download: a task the cron re-dispatched for the same
+            # batch claims nothing and exits.
+            claimed = claim_pending_tts_results(
+                session=session, run_id=evaluation_run_id, provider=tts_provider
+            )
+            if not claimed:
+                logger.info(
+                    f"[execute_tts_result_processing] No pending rows to claim | "
+                    f"run_id={evaluation_run_id}, provider={tts_provider}"
+                )
+                return {
+                    "success": True,
+                    "run_id": evaluation_run_id,
+                    "processed": 0,
+                    "failed": 0,
+                }
+            for result in claimed:
+                result_map[result.id] = result
+
             gemini_client = GeminiClient.from_credentials(
                 session=session,
                 org_id=organization_id,
                 project_id=project_id,
             )
-            batch_provider = GeminiBatchProvider(client=gemini_client.client)
-
-            # Get cloud storage for S3 uploads
             storage = get_cloud_storage(session=session, project_id=project_id)
 
-            # Download batch results
-            results = batch_provider.download_batch_results(provider_batch_id)
+        logger.info(
+            f"[execute_tts_result_processing] Claimed result records | "
+            f"run_id={evaluation_run_id}, provider={tts_provider}, "
+            f"count={len(result_map)}"
+        )
 
+        # Download, conversion and uploads run with no session open; the detached
+        # rows are modified in memory and written back in one short session below.
+        batch_provider = GeminiBatchProvider(client=gemini_client.client)
+        results = batch_provider.download_batch_results(provider_batch_id)
+
+        logger.info(
+            f"[execute_tts_result_processing] Got batch results | "
+            f"run_id={evaluation_run_id}, result_count={len(results)}"
+        )
+
+        if results:
+            first = results[0]
+            resp = first.get("response") or {}
+            resp_keys = (
+                list(resp.keys()) if isinstance(resp, dict) else type(resp).__name__
+            )
             logger.info(
-                f"[execute_tts_result_processing] Got batch results | "
-                f"run_id={evaluation_run_id}, result_count={len(results)}"
+                f"[execute_tts_result_processing] First result structure | "
+                f"keys={list(first.keys())}, response_keys={resp_keys}"
             )
 
-            if results:
-                first = results[0]
-                resp = first.get("response") or {}
-                resp_keys = (
-                    list(resp.keys()) if isinstance(resp, dict) else type(resp).__name__
+        processed_count = 0
+        failed_count = 0
+
+        for batch_result in results:
+            custom_id = batch_result[BATCH_KEY]
+            try:
+                result_id = int(custom_id)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"[execute_tts_result_processing] Invalid {BATCH_KEY} | "
+                    f"run_id={evaluation_run_id}, {BATCH_KEY}={custom_id}"
                 )
-                logger.info(
-                    f"[execute_tts_result_processing] First result structure | "
-                    f"keys={list(first.keys())}, response_keys={resp_keys}"
+                failed_count += 1
+                continue
+
+            result_record = result_map.get(result_id)
+
+            if not result_record:
+                logger.warning(
+                    f"[execute_tts_result_processing] Result record not found or "
+                    f"not claimed | result_id={result_id}"
                 )
+                failed_count += 1
+                continue
 
-            # Pre-fetch all TTSResult records for this run+provider
-            prefetch_stmt = select(TTSResult).where(
-                TTSResult.evaluation_run_id == evaluation_run_id,
-                TTSResult.provider == tts_provider,
-            )
-            result_map: dict[int, TTSResult] = {
-                r.id: r for r in session.exec(prefetch_stmt).all()  # type: ignore[misc]
-            }
-
-            logger.info(
-                f"[execute_tts_result_processing] Pre-fetched result records | "
-                f"run_id={evaluation_run_id}, provider={tts_provider}, "
-                f"count={len(result_map)}"
-            )
-
-            processed_count = 0
-            failed_count = 0
-
-            for batch_result in results:
-                custom_id = batch_result[BATCH_KEY]
+            if batch_result.get("response"):
                 try:
-                    result_id = int(custom_id)
-                except (ValueError, TypeError):
-                    logger.warning(
-                        f"[execute_tts_result_processing] Invalid {BATCH_KEY} | "
-                        f"run_id={evaluation_run_id}, {BATCH_KEY}={custom_id}"
+                    # Tokens are spent even if the audio later fails to process.
+                    result_record.usage = _extract_usage_from_response(
+                        batch_result["response"]
                     )
-                    failed_count += 1
-                    continue
+                    audio_b64 = _extract_audio_from_response(batch_result["response"])
 
-                # Look up result record from pre-fetched map
-                result_record = result_map.get(result_id)
-
-                if not result_record:
-                    logger.warning(
-                        f"[execute_tts_result_processing] Result record not found | "
-                        f"result_id={result_id}"
-                    )
-                    failed_count += 1
-                    continue
-
-                if batch_result.get("response"):
-                    try:
-                        audio_b64 = _extract_audio_from_response(
-                            batch_result["response"]
-                        )
-
-                        if not audio_b64:
-                            result_record.status = JobStatus.FAILED.value
-                            result_record.error_message = "No audio data in response"
-                            result_record.updated_at = now()
-                            failed_count += 1
-                            continue
-
-                        # Decode base64 -> raw PCM bytes
-                        pcm_data = base64.b64decode(audio_b64)
-
-                        # Wrap in WAV container
-                        wav_data = pcm_to_wav(pcm_data)
-
-                        # Calculate duration
-                        duration = calculate_duration(len(pcm_data))
-
-                        # Upload WAV to S3
-                        audio_filename = f"{uuid.uuid4()}.wav"
-                        audio_url = upload_to_object_store(
-                            storage=storage,
-                            content=wav_data,
-                            filename=audio_filename,
-                            subdirectory="evaluations/tts/audio",
-                            content_type="audio/wav",
-                        )
-
-                        if not audio_url:
-                            result_record.status = JobStatus.FAILED.value
-                            result_record.error_message = (
-                                "Audio upload to object store failed"
-                            )
-                            result_record.updated_at = now()
-                            failed_count += 1
-                            continue
-
-                        # Update result
-                        result_record.object_store_url = audio_url
-                        result_record.metadata_ = {
-                            "duration_seconds": round(duration, 3),
-                            "size_bytes": len(wav_data),
-                        }
-                        result_record.status = JobStatus.SUCCESS.value
+                    if not audio_b64:
+                        result_record.status = JobStatus.FAILED.value
+                        result_record.error_message = "No audio data in response"
                         result_record.updated_at = now()
-                        processed_count += 1
+                        failed_count += 1
+                        continue
 
-                    except Exception as audio_err:
-                        logger.warning(
-                            f"[execute_tts_result_processing] Audio processing failed | "
-                            f"result_id={result_id}, error={str(audio_err)}"
-                        )
+                    # Without validate=True, garbage decodes to b"" and is stored as a 0s "success".
+                    # Requests ask for raw PCM; unwrap in case a model still sends WAV.
+                    pcm_data = strip_wav_header(
+                        base64.b64decode(audio_b64, validate=True)
+                    )
+
+                    wav_data = pcm_to_wav(pcm_data)
+                    duration = calculate_duration(len(pcm_data))
+
+                    audio_filename = f"{uuid.uuid4()}.wav"
+                    audio_url = upload_to_object_store(
+                        storage=storage,
+                        content=wav_data,
+                        filename=audio_filename,
+                        subdirectory=TTS_AUDIO_SUBDIRECTORY,
+                        content_type="audio/wav",
+                    )
+
+                    if not audio_url:
                         result_record.status = JobStatus.FAILED.value
                         result_record.error_message = (
-                            f"Audio processing failed: {str(audio_err)}"
+                            "Audio upload to object store failed"
                         )
                         result_record.updated_at = now()
                         failed_count += 1
-                else:
+                        continue
+
+                    result_record.object_store_url = audio_url
+                    result_record.metadata_ = {
+                        "duration_seconds": round(duration, 3),
+                        "size_bytes": len(wav_data),
+                    }
+                    result_record.status = JobStatus.SUCCESS.value
+                    result_record.updated_at = now()
+                    processed_count += 1
+
+                except SoftTimeLimitExceeded:
+                    # An Exception subclass; without this it would fail only this
+                    # row and the loop would run past the soft limit.
+                    raise
+                except Exception as audio_err:
+                    logger.warning(
+                        f"[execute_tts_result_processing] Audio processing failed | "
+                        f"result_id={result_id}, error={str(audio_err)}"
+                    )
                     result_record.status = JobStatus.FAILED.value
-                    result_record.error_message = batch_result.get(
-                        "error", "Unknown error"
+                    result_record.error_message = (
+                        f"Audio processing failed: {str(audio_err)}"
                     )
                     result_record.updated_at = now()
                     failed_count += 1
+            else:
+                result_record.status = JobStatus.FAILED.value
+                result_record.error_message = batch_result.get("error", "Unknown error")
+                result_record.updated_at = now()
+                failed_count += 1
 
-            session.commit()
-
-            # Finalize run status
-            status_counts = count_results_by_status(
-                session=session, run_id=evaluation_run_id
-            )
-            pending = status_counts.get(JobStatus.PENDING.value, 0)
-            total_failed = status_counts.get(JobStatus.FAILED.value, 0)
-
-            final_status = "completed" if pending == 0 else "processing"
-            error_message = (
-                f"{total_failed} synthesis(es) failed" if total_failed > 0 else None
-            )
-
-            update_tts_run(
-                session=session,
-                run_id=evaluation_run_id,
-                status=final_status,
-                error_message=error_message,
-            )
-
-            logger.info(
-                f"[execute_tts_result_processing] Completed | "
-                f"run_id={evaluation_run_id}, provider={tts_provider}, "
-                f"processed={processed_count}, failed={failed_count}, "
-                f"run_status={final_status}"
-            )
-
-            return {
-                "success": True,
-                "run_id": evaluation_run_id,
-                "processed": processed_count,
-                "failed": failed_count,
-                "run_status": final_status,
-            }
-
-        except (Timeout, SoftTimeLimitExceeded) as err:
-            timeout_err = TimeoutError("Task exceeded soft time limit")
+        missing_count = 0
+        for result_record in result_map.values():
+            if result_record.status != JobStatus.PROCESSING.value:
+                continue
+            result_record.status = JobStatus.FAILED.value
+            result_record.error_message = "No result in batch output"
+            result_record.updated_at = now()
+            missing_count += 1
+        if missing_count:
+            # Left PROCESSING, these rows would wait for the cron's dead-worker sweep.
             logger.warning(
-                f"[execute_tts_result_processing] TTS result processing timed out | run_id={evaluation_run_id}"
+                f"[execute_tts_result_processing] Rows missing from batch output | "
+                f"run_id={evaluation_run_id}, provider={tts_provider}, "
+                f"count={missing_count}"
             )
-            update_tts_run(
-                session=session,
-                run_id=evaluation_run_id,
-                status="failed",
-                error_message=str(timeout_err),
-            )
-            raise
+            failed_count += missing_count
 
-        except Exception as e:
-            logger.error(
-                f"[execute_tts_result_processing] Failed | "
-                f"run_id={evaluation_run_id}, error={str(e)}",
-                exc_info=True,
+        with Session(engine) as session:
+            save_processed_tts_results(
+                session=session, results=list(result_map.values())
             )
-            update_tts_run(
+
+        logger.info(
+            f"[execute_tts_result_processing] Completed | "
+            f"run_id={evaluation_run_id}, provider={tts_provider}, "
+            f"processed={processed_count}, failed={failed_count}"
+        )
+
+        return {
+            "success": True,
+            "run_id": evaluation_run_id,
+            "processed": processed_count,
+            "failed": failed_count,
+        }
+
+    except (Timeout, SoftTimeLimitExceeded):
+        logger.warning(
+            f"[execute_tts_result_processing] TTS result processing timed out | run_id={evaluation_run_id}"
+        )
+        # Rows finished before the timeout already have audio uploaded; save them
+        # so only the unprocessed rows are failed.
+        finished = [
+            r for r in result_map.values() if r.status != JobStatus.PROCESSING.value
+        ]
+        with Session(engine) as session:
+            save_processed_tts_results(session=session, results=finished)
+            fail_pending_tts_results(
                 session=session,
                 run_id=evaluation_run_id,
-                status="failed",
-                error_message=f"Result processing failed: {str(e)}",
+                provider=tts_provider,
+                error_message="Result processing exceeded soft time limit",
+                statuses=UNFINISHED_TTS_STATUSES,
             )
-            return {"success": False, "error": str(e)}
+        raise
+
+    except Exception as e:
+        logger.error(
+            f"[execute_tts_result_processing] Failed | "
+            f"run_id={evaluation_run_id}, error={str(e)}",
+            exc_info=True,
+        )
+        with Session(engine) as session:
+            fail_pending_tts_results(
+                session=session,
+                run_id=evaluation_run_id,
+                provider=tts_provider,
+                error_message=f"Result processing failed: {str(e)}",
+                statuses=UNFINISHED_TTS_STATUSES,
+            )
+        return {"success": False, "error": str(e)}
+
+
+def _extract_usage_from_response(response: dict[str, Any]) -> dict[str, Any] | None:
+    """Read token usage from a Gemini response's usageMetadata (camelCase or snake_case)."""
+    usage_metadata = response.get("usageMetadata") or response.get("usage_metadata")
+    if not isinstance(usage_metadata, dict):
+        return None
+
+    def count(camel: str, snake: str) -> int | None:
+        # Not `or`: a real 0 count must not fall through to None.
+        value = usage_metadata.get(camel)
+        return usage_metadata.get(snake) if value is None else value
+
+    return {
+        "unit": TTSUsageUnitEnum.TOKENS.value,
+        "input_tokens": count("promptTokenCount", "prompt_token_count"),
+        "output_tokens": count("candidatesTokenCount", "candidates_token_count"),
+        "total_tokens": count("totalTokenCount", "total_token_count"),
+    }
 
 
 def _extract_audio_from_response(response: dict[str, Any]) -> str | None:

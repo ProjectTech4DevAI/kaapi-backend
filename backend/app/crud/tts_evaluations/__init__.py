@@ -17,6 +17,7 @@ from .result import (
     create_tts_results,
     get_tts_result_by_id,
     get_results_by_run_id,
+    get_tts_usage_by_model,
     update_tts_human_feedback,
 )
 
@@ -38,5 +39,6 @@ __all__ = [
     "create_tts_results",
     "get_tts_result_by_id",
     "get_results_by_run_id",
+    "get_tts_usage_by_model",
     "update_tts_human_feedback",
 ]
