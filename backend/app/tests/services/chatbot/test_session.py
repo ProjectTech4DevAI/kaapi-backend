@@ -92,7 +92,11 @@ class CallbackRecorder:
     calls: list[tuple[str, dict[str, Any], str | None]] = field(default_factory=list)
 
     def __call__(
-        self, url: str, payload: dict[str, Any], secret: str | None = None
+        self,
+        url: str,
+        payload: dict[str, Any],
+        secret: str | None = None,
+        **_log_kwargs: Any,
     ) -> bool:
         self.calls.append((url, payload, secret))
         return True

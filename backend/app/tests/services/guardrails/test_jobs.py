@@ -625,6 +625,45 @@ class TestIncludeGuardrailMetadata:
         assert metadata["guardrail"] == expected
         assert meta["callback"]["guardrail"] == expected
 
+    @pytest.mark.parametrize("error", [None, "text rejected"], ids=["ok", "hard_block"])
+    def test_webhook_log_gets_client_metadata_only(
+        self, user_api_key: TestAuthContext, error: str | None
+    ) -> None:
+        outcome = GuardrailsOutcome(
+            safe_text=None if error else self.SAFE,
+            error=error,
+            bypassed=False,
+            rephrase_needed=False,
+            raw=self.RAW,
+        )
+        # duplicate validator ids make the server add `warnings` to the callback metadata
+        req = GuardrailsRequest.model_validate(
+            {
+                "text": self.INPUT,
+                "config": [{"validator_config_id": str(VALIDATOR_A)}] * 2,
+                "callback_url": "https://example.com/cb",
+                "request_metadata": {"client_id": "abc"},
+                "include_guardrail_metadata": True,
+            }
+        )
+        with _patched_worker_db(), patch(
+            "app.services.guardrails.jobs.apply_guardrails", return_value=outcome
+        ), patch("app.services.guardrails.jobs.send_callback") as mock_send, patch(
+            "app.services.guardrails.jobs.get_webhook_secret", return_value="s"
+        ):
+            execute_job(
+                project_id=user_api_key.project_id,
+                job_id=str(uuid4()),
+                task_id="t",
+                task_instance=None,
+                request_data=req.model_dump(mode="json"),
+                organization_id=user_api_key.organization_id,
+            )
+
+        kwargs = mock_send.call_args.kwargs
+        assert "guardrail" in kwargs["data"]["metadata"]
+        assert kwargs["request_metadata"] == {"client_id": "abc"}
+
 
 class TestIncludeGuardrailMetadataRequestModel:
     @pytest.mark.parametrize(

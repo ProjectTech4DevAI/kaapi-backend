@@ -19,6 +19,7 @@ from typing import Any, Dict, Generic, Optional, TypeVar
 from urllib.parse import urlparse
 
 import emails
+from asgi_correlation_id import correlation_id
 from jinja2 import Template
 from fastapi import HTTPException
 from langfuse import Langfuse
@@ -29,7 +30,7 @@ from openai import OpenAI
 from pydantic import BaseModel, JsonValue
 from sqlmodel import Session
 from tenacity import (
-    retry,
+    Retrying,
     retry_if_exception_type,
     stop_after_attempt,
     wait_exponential,
@@ -39,6 +40,11 @@ from app.core import security
 from app.core.audio_utils import AudioRef
 from app.core.config import settings
 from app.crud.credentials import get_provider_credential
+from app.models.webhook_log import (
+    WebhookDeliveryStatusEnum,
+    WebhookLog,
+    WebhookResourceTypeEnum,
+)
 from app.models.llm.request import (
     TextInput,
     AudioInput,
@@ -445,6 +451,10 @@ def _is_private_ip(ip: str) -> tuple[bool, str]:
         return (False, "")
 
 
+class InvalidCallbackURLError(ValueError):
+    """A callback URL failed the SSRF guard; the API maps it to 422."""
+
+
 def validate_callback_url(url: str) -> None:
     """
     Validate callback URL to prevent SSRF attacks.
@@ -461,18 +471,18 @@ def validate_callback_url(url: str) -> None:
         url: The callback URL to validate
 
     Raises:
-        ValueError: If URL is not allowed
+        InvalidCallbackURLError: If URL is not allowed
     """
     try:
         parsed = urlparse(url)
 
         if parsed.scheme != "https":
-            raise ValueError(
+            raise InvalidCallbackURLError(
                 f"Only HTTPS URLs are allowed for callbacks. Got: {parsed.scheme}"
             )
 
         if not parsed.hostname:
-            raise ValueError("URL must have a valid hostname")
+            raise InvalidCallbackURLError("URL must have a valid hostname")
 
         addr_info = socket.getaddrinfo(
             parsed.hostname,
@@ -485,15 +495,15 @@ def validate_callback_url(url: str) -> None:
             ip_address = info[4][0]
             is_blocked, reason = _is_private_ip(ip_address)
             if is_blocked:
-                raise ValueError(
+                raise InvalidCallbackURLError(
                     f"Callback URL resolves to {reason} IP address: {ip_address}. "
                     f"This IP type is not allowed for callbacks."
                 )
 
-    except ValueError:
+    except InvalidCallbackURLError:
         raise
     except Exception as e:
-        raise ValueError(f"Error validating callback URL: {str(e)}") from e
+        raise InvalidCallbackURLError(f"Error validating callback URL: {str(e)}") from e
 
 
 def sign_webhook_payload(
@@ -558,12 +568,21 @@ def get_webhook_secret(
 
 
 CALLBACK_USER_DATA_KEY = "data"
+CALLBACK_MAX_ATTEMPTS = 4
+CALLBACK_RETRY_WAIT_MAX_SECONDS = 10
+WEBHOOK_LOG_RESPONSE_MAX_CHARS = 2000
 
 
 def send_callback(
     callback_url: str,
     data: dict[str, Any],
     webhook_secret: str | None = None,
+    *,
+    resource_type: WebhookResourceTypeEnum | None = None,
+    resource_id: str | None = None,
+    project_id: int | None = None,
+    organization_id: int | None = None,
+    request_metadata: dict[str, Any] | None = None,
 ) -> bool:
     """
     Send results to the callback URL (synchronously) with SSRF protection.
@@ -578,6 +597,10 @@ def send_callback(
     - Strict timeouts
     - Optional HMAC-SHA256 signing when webhook_secret is provided
 
+    Every call records one webhook_log row; resource_type/resource_id and
+    project_id/organization_id attribute it. Only request_metadata (the
+    client's own, echoed back) is stored, never the payload itself.
+
     Args:
         callback_url: The HTTPS URL to send the callback to
         data: The JSON data to send in the POST request
@@ -587,42 +610,137 @@ def send_callback(
     Returns:
         bool: True if callback succeeded, False once retries are exhausted
     """
+    raw_body = json.dumps(data, separators=(",", ":")).encode()
+    log_fields = {
+        "callback_url": callback_url,
+        "request_metadata": request_metadata,
+        "request_bytes": len(raw_body),
+        "signed": bool(webhook_secret),
+        "resource_type": resource_type,
+        "resource_id": resource_id,
+        "project_id": project_id,
+        "organization_id": organization_id,
+    }
     try:
         validate_callback_url(str(callback_url))
     except ValueError as ve:
         logger.warning(f"[send_callback] Invalid callback URL: {ve}", exc_info=True)
+        _save_webhook_log(
+            **log_fields,
+            status=WebhookDeliveryStatusEnum.REJECTED,
+            attempt_count=0,
+            error=str(ve),
+        )
         return False
     log_payload = {k: v for k, v in data.items() if k != CALLBACK_USER_DATA_KEY}
-    raw_body = json.dumps(data, separators=(",", ":")).encode()
     span = trace.get_current_span()
     span.set_attribute("callback.request.body.size", len(raw_body))
     started_at = time.perf_counter()
+    attempt_count = 0
+    # Explicit Retrying instead of @retry: decorator .statistics is shared across
+    # concurrent gevent greenlets, so the attempt count would be wrong.
     try:
-        response = _post_callback(callback_url, raw_body, webhook_secret)
-        span.set_attribute(
-            "callback.duration_ms",
-            round((time.perf_counter() - started_at) * 1000, 2),
-        )
-        span.set_attribute("callback.response.status_code", response.status_code)
-        return True
-
+        for attempt in Retrying(
+            stop=stop_after_attempt(CALLBACK_MAX_ATTEMPTS),
+            wait=wait_exponential(max=CALLBACK_RETRY_WAIT_MAX_SECONDS),
+            retry=retry_if_exception_type(requests.RequestException),
+            reraise=True,
+        ):
+            with attempt:
+                attempt_count = attempt.retry_state.attempt_number
+                response = _post_callback(callback_url, raw_body, webhook_secret)
+                latency = (time.perf_counter() - started_at) * 1000
+                span.set_attribute("callback.duration_ms", round(latency, 2))
+                span.set_attribute(
+                    "callback.response.status_code", response.status_code
+                )
+                _save_webhook_log(
+                    **log_fields,
+                    status=WebhookDeliveryStatusEnum.DELIVERED,
+                    attempt_count=attempt_count,
+                    status_code=response.status_code,
+                    latency=latency,
+                    response_text=response.text,
+                )
+                return True
     except requests.RequestException as e:
+        latency = (time.perf_counter() - started_at) * 1000
         status = e.response.status_code if e.response is not None else None
         logger.warning(
             f"[send_callback] Callback failed | url={callback_url} | status={status} "
-            f"| duration_ms={(time.perf_counter() - started_at) * 1000:.2f} "
+            f"| latency_ms={latency:.2f} "
             f"| bytes={len(raw_body)} | payload={log_payload} | error={e}",
             exc_info=True,
         )
+        _save_webhook_log(
+            **log_fields,
+            status=WebhookDeliveryStatusEnum.FAILED,
+            attempt_count=attempt_count,
+            status_code=status,
+            latency=latency,
+            response_text=e.response.text if e.response is not None else None,
+            error=str(e),
+        )
         return False
 
+    # Unreachable: with reraise=True the loop either returns or raises.
+    return False
 
-@retry(
-    stop=stop_after_attempt(4),
-    wait=wait_exponential(max=10),
-    retry=retry_if_exception_type(requests.RequestException),
-    reraise=True,
-)
+
+def _save_webhook_log(
+    *,
+    callback_url: str,
+    request_metadata: dict[str, Any] | None,
+    request_bytes: int,
+    signed: bool,
+    resource_type: WebhookResourceTypeEnum | None,
+    resource_id: str | None,
+    project_id: int | None,
+    organization_id: int | None,
+    status: WebhookDeliveryStatusEnum,
+    attempt_count: int,
+    status_code: int | None = None,
+    latency: float | None = None,
+    response_text: str | None = None,
+    error: str | None = None,
+) -> None:
+    # Audit trail only: a DB failure here must never change the callback outcome.
+    try:
+        # Imported lazily: see get_webhook_secret.
+        from app.core.db import engine
+        from app.crud.webhook_log import create_webhook_log
+
+        webhook_log = WebhookLog(
+            project_id=project_id,
+            organization_id=organization_id,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            url=str(callback_url),
+            status=status,
+            status_code=status_code,
+            attempt_count=attempt_count,
+            latency=latency,
+            request_metadata=request_metadata,
+            request_bytes=request_bytes,
+            response_body=(
+                response_text[:WEBHOOK_LOG_RESPONSE_MAX_CHARS]
+                if response_text is not None
+                else None
+            ),
+            error=error,
+            signed=signed,
+            trace_id=correlation_id.get(),
+        )
+        with Session(engine) as session:
+            create_webhook_log(session=session, webhook_log=webhook_log)
+    except Exception:
+        logger.error(
+            f"[_save_webhook_log] Failed to record webhook log | url={callback_url} "
+            f"| status={status}",
+            exc_info=True,
+        )
+
+
 def _post_callback(
     callback_url: str, raw_body: bytes, webhook_secret: str | None
 ) -> requests.Response:

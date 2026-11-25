@@ -1,4 +1,5 @@
 import base64
+import copy
 import json
 import logging
 import socket
@@ -46,7 +47,14 @@ from app.crud.llm import (
     save_rephrase_guardrail_call,
 )
 from app.crud.llm_chain import create_llm_chain, update_llm_chain_status
-from app.models import JobStatus, JobType, JobUpdate, LLMCallRequest, LLMChainRequest
+from app.models import (
+    JobStatus,
+    JobType,
+    JobUpdate,
+    LLMCallRequest,
+    LLMChainRequest,
+    WebhookResourceTypeEnum,
+)
 from app.models.llm.request import (
     AudioInput,
     ChainStatus,
@@ -269,6 +277,8 @@ def handle_job_error(
     organization_id: int | None = None,
     project_id: int | None = None,
     chain_id: UUID | None = None,
+    request_metadata: dict[str, Any] | None = None,
+    resource_type: WebhookResourceTypeEnum = WebhookResourceTypeEnum.LLM_CALL,
 ) -> dict:
     """Handle job failure uniformly — send callback and update DB."""
     with Session(engine) as session:
@@ -310,6 +320,11 @@ def handle_job_error(
                 callback_url=callback_url,
                 data=callback_response.model_dump(),
                 webhook_secret=webhook_secret,
+                resource_type=resource_type,
+                resource_id=str(job_id),
+                project_id=project_id,
+                organization_id=organization_id,
+                request_metadata=request_metadata,
             )
 
     return callback_response.model_dump()
@@ -1464,6 +1479,8 @@ def execute_job(
         dict: Serialized APIResponse[LLMCallResponse] on success, APIResponse[None] on failure
     """
     request = LLMCallRequest(**request_data)
+    # Input guardrails merge into request.request_metadata in place; keep the client's copy for webhook_log.
+    client_request_metadata = copy.deepcopy(request.request_metadata)
     job_uuid = UUID(job_id)
     callback_url_str = str(request.callback_url) if request.callback_url else None
 
@@ -1556,6 +1573,11 @@ def execute_job(
                             callback_url=callback_url_str,
                             data=callback_response.model_dump(),
                             webhook_secret=webhook_secret,
+                            resource_type=WebhookResourceTypeEnum.LLM_CALL,
+                            resource_id=str(job_uuid),
+                            project_id=project_id,
+                            organization_id=organization_id,
+                            request_metadata=client_request_metadata,
                         )
 
                 with Session(engine) as session:
@@ -1578,6 +1600,7 @@ def execute_job(
                 callback_response,
                 organization_id=organization_id,
                 project_id=project_id,
+                request_metadata=client_request_metadata,
             )
 
         except (Timeout, SoftTimeLimitExceeded):
@@ -1594,6 +1617,7 @@ def execute_job(
                 callback_response,
                 organization_id=organization_id,
                 project_id=project_id,
+                request_metadata=client_request_metadata,
             )
             raise
 
@@ -1612,6 +1636,7 @@ def execute_job(
                 callback_response,
                 organization_id=organization_id,
                 project_id=project_id,
+                request_metadata=client_request_metadata,
             )
         finally:
             # Ensure task spans are pushed promptly so Sentry dashboards update faster.
@@ -1636,6 +1661,8 @@ def execute_chain_job(
     from app.services.llm.chain.executor import ChainExecutor
 
     request = LLMChainRequest(**request_data)
+    # Input guardrails merge into request.request_metadata in place; keep the client's copy for webhook_log.
+    client_request_metadata = copy.deepcopy(request.request_metadata)
     job_uuid = UUID(job_id)
     callback_url_str = str(request.callback_url) if request.callback_url else None
     chain_uuid = None
@@ -1741,6 +1768,8 @@ def execute_chain_job(
                 organization_id=organization_id,
                 project_id=project_id,
                 chain_id=chain_uuid,
+                resource_type=WebhookResourceTypeEnum.LLM_CHAIN,
+                request_metadata=client_request_metadata,
             )
             raise
 
@@ -1761,6 +1790,8 @@ def execute_chain_job(
                 organization_id=organization_id,
                 project_id=project_id,
                 chain_id=chain_uuid,
+                resource_type=WebhookResourceTypeEnum.LLM_CHAIN,
+                request_metadata=client_request_metadata,
             )
         finally:
             # Ensure task spans are pushed promptly so Sentry dashboards update faster.

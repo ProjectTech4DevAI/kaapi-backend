@@ -27,6 +27,7 @@ from app.models import (
     CollectionJobPublic,
     CreationRequest,
     Document,
+    WebhookResourceTypeEnum,
 )
 from app.services.collections.helpers import (
     batch_documents,
@@ -171,6 +172,10 @@ def _handle_job_failure(
             str(creation_request.callback_url),
             failure_payload,
             webhook_secret=webhook_secret,
+            resource_type=WebhookResourceTypeEnum.COLLECTION,
+            resource_id=str(job_id),
+            project_id=project_id,
+            organization_id=organization_id,
         )
 
 
@@ -522,6 +527,10 @@ def execute_batch_job(
                     str(creation_request.callback_url),
                     success_payload,
                     webhook_secret=webhook_secret,
+                    resource_type=WebhookResourceTypeEnum.COLLECTION,
+                    resource_id=str(job_uuid),
+                    project_id=project_id,
+                    organization_id=organization_id,
                 )
 
         except (Timeout, SoftTimeLimitExceeded):

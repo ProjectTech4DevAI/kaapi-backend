@@ -1,4 +1,10 @@
-from app.models import ResponsesAPIRequest, ResponsesSyncAPIRequest
+from uuid import UUID
+
+from app.models import (
+    ResponsesAPIRequest,
+    ResponsesSyncAPIRequest,
+    WebhookResourceTypeEnum,
+)
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
 
@@ -21,6 +27,7 @@ def send_response_callback(
     request_dict: dict,
     organization_id: int,
     project_id: int,
+    job_id: UUID,
 ) -> None:
     """Send a standardized callback response to the provided callback URL."""
 
@@ -40,4 +47,8 @@ def send_response_callback(
             "metadata": None,
         },
         webhook_secret=webhook_secret,
+        resource_type=WebhookResourceTypeEnum.RESPONSE,
+        resource_id=str(job_id),
+        project_id=project_id,
+        organization_id=organization_id,
     )
