@@ -303,13 +303,14 @@ def start_tts_sync_generation(
 ) -> str:
     from app.celery.tasks.job_execution import run_tts_sync_generation
 
-    task_id = _enqueue_with_trace_context(
-        run_tts_sync_generation,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_tts_sync_generation.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_tts_sync_generation] Started job {job_id} with Celery task {task_id}"
     )

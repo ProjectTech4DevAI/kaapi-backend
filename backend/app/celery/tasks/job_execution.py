@@ -423,15 +423,12 @@ def run_tts_sync_generation(
     )
 
     _set_trace(trace_id)
-    return _run_with_otel_parent(
-        self,
-        lambda: execute_tts_sync_generation(
-            project_id=project_id,
-            job_id=job_id,
-            task_id=current_task.request.id,
-            task_instance=self,
-            **kwargs,
-        ),
+    return execute_tts_sync_generation(
+        project_id=project_id,
+        job_id=job_id,
+        task_id=current_task.request.id,
+        task_instance=self,
+        **kwargs,
     )
 
 

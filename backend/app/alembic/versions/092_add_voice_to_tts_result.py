@@ -1,7 +1,7 @@
 """add voice to tts_result
 
-Revision ID: 089
-Revises: 088
+Revision ID: 092
+Revises: 090
 Create Date: 2026-11-05 00:00:00.000000
 
 TTS evaluation runs now pick a voice per model. Nullable with no backfill: rows of
@@ -13,8 +13,8 @@ import sqlalchemy as sa
 import sqlmodel.sql.sqltypes
 from alembic import op
 
-revision = "089"
-down_revision = "088"
+revision = "092"
+down_revision = "090"
 branch_labels = None
 depends_on = None
 
