@@ -479,7 +479,7 @@ def worker(db: Session):
     sent: list[dict] = []
     _FakeDetector.outcome = None
 
-    def _capture(url, payload, webhook_secret=None):
+    def _capture(url, payload, webhook_secret=None, **_log_kwargs):
         sent.append({"url": url, "payload": payload, "secret": webhook_secret})
         return True
 

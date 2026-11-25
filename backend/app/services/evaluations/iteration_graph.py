@@ -39,6 +39,7 @@ from app.models.evaluation_iteration import (
     EvaluationIterationStatusEnum,
 )
 from app.models.job import JobStatus
+from app.models.webhook_log import WebhookResourceTypeEnum
 from app.services.evaluations.fast import validate_and_start_fast_evaluation
 from app.services.evaluations.iteration import (
     STOP_REASON_MAX_ROUNDS_REACHED,
@@ -278,7 +279,13 @@ def finalize_node(state: EvaluationIterationState) -> dict[str, Any]:
     )
     webhook_secret = get_webhook_secret(state["project_id"], state["organization_id"])
     send_callback(
-        state["callback_url"], envelope.model_dump(), webhook_secret=webhook_secret
+        state["callback_url"],
+        envelope.model_dump(),
+        webhook_secret=webhook_secret,
+        resource_type=WebhookResourceTypeEnum.EVALUATION_ITERATION,
+        resource_id=str(state["iteration_run_id"]),
+        project_id=state["project_id"],
+        organization_id=state["organization_id"],
     )
 
     return {}
@@ -385,7 +392,13 @@ def mark_iteration_run_failed(
         envelope = APIResponse.failure_response(error=error_message)
         webhook_secret = get_webhook_secret(project_id, organization_id)
         send_callback(
-            callback_url, envelope.model_dump(), webhook_secret=webhook_secret
+            callback_url,
+            envelope.model_dump(),
+            webhook_secret=webhook_secret,
+            resource_type=WebhookResourceTypeEnum.EVALUATION_ITERATION,
+            resource_id=str(iteration_run_id),
+            project_id=project_id,
+            organization_id=organization_id,
         )
     except Exception:
         logger.error(

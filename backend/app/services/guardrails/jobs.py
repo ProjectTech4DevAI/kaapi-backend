@@ -12,7 +12,7 @@ from app.celery.utils import start_guardrails_job
 from app.core.db import engine
 from app.core.telemetry import log_context
 from app.crud.jobs import JobCrud
-from app.models import Job, JobStatus, JobType, JobUpdate
+from app.models import Job, JobStatus, JobType, JobUpdate, WebhookResourceTypeEnum
 from app.models.guardrails import (
     GuardrailsCallbackData,
     GuardrailsCallbackResponse,
@@ -158,9 +158,11 @@ def _build_callback_payload(
 
 def _send_failure_callback(
     *,
+    job_id: UUID,
     callback_url: str | None,
     error: str,
     request_metadata: dict[str, Any] | None,
+    client_request_metadata: dict[str, Any] | None,
     project_id: int,
     organization_id: int,
 ) -> None:
@@ -177,13 +179,20 @@ def _send_failure_callback(
             callback_url=callback_url,
             data=payload,
             webhook_secret=webhook_secret,
+            resource_type=WebhookResourceTypeEnum.GUARDRAILS,
+            resource_id=str(job_id),
+            project_id=project_id,
+            organization_id=organization_id,
+            request_metadata=client_request_metadata,
         )
 
 
 def _dispatch_success_callback(
     *,
+    job_id: UUID,
     callback_url: str | None,
     payload: dict[str, Any],
+    client_request_metadata: dict[str, Any] | None,
     project_id: int,
     organization_id: int,
 ) -> None:
@@ -197,6 +206,11 @@ def _dispatch_success_callback(
             callback_url=callback_url,
             data=payload,
             webhook_secret=webhook_secret,
+            resource_type=WebhookResourceTypeEnum.GUARDRAILS,
+            resource_id=str(job_id),
+            project_id=project_id,
+            organization_id=organization_id,
+            request_metadata=client_request_metadata,
         )
 
 
@@ -272,6 +286,7 @@ def _fail_job(
     error: str,
     callback_url: str | None,
     request_metadata: dict[str, Any] | None,
+    client_request_metadata: dict[str, Any] | None,
     project_id: int,
     organization_id: int,
     meta: dict[str, Any] | None = None,
@@ -285,9 +300,11 @@ def _fail_job(
         fields["meta"] = meta
     _update_job(job_uuid, **fields)
     _send_failure_callback(
+        job_id=job_uuid,
         callback_url=callback_url,
         error=error,
         request_metadata=request_metadata,
+        client_request_metadata=client_request_metadata,
         project_id=project_id,
         organization_id=organization_id,
     )
@@ -351,6 +368,7 @@ def execute_job(
                 error=str(e),
                 callback_url=callback_url,
                 request_metadata=request.request_metadata,
+                client_request_metadata=request.request_metadata,
                 project_id=project_id,
                 organization_id=organization_id,
             )
@@ -377,6 +395,7 @@ def execute_job(
                 error=outcome.error,
                 callback_url=callback_url,
                 request_metadata=callback_metadata,
+                client_request_metadata=request.request_metadata,
                 project_id=project_id,
                 organization_id=organization_id,
                 meta={
@@ -412,8 +431,10 @@ def execute_job(
             },
         )
         _dispatch_success_callback(
+            job_id=job_uuid,
             callback_url=callback_url,
             payload=callback_payload,
+            client_request_metadata=request.request_metadata,
             project_id=project_id,
             organization_id=organization_id,
         )
