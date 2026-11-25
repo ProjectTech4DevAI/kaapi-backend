@@ -180,13 +180,13 @@ def normalize_bcp47_language(value: str) -> str:
 DEFAULT_STT_MODEL = "gemini-3.8-flash"
 DEFAULT_TTS_MODEL = "gemini-3.8-flash-tts"
 DEFAULT_TTS_VOICE = "Kore"
-DEFAULT_RAG_MODEL = "gpt-4o"
+DEFAULT_RAG_MODEL = "gpt-6-luna"
 
 # Default text-completion model per provider. Used by both the native flow
 # (provider.execute) and the Kaapi mapper so the two stay in sync.
 DEFAULT_TEXT_MODELS: dict[str, str] = {
-    "anthropic": "claude-sonnet-4-6",
-    "openai": "gpt-4.1-mini",
+    "anthropic": "claude-sonnet-5-5",
+    "openai": "gpt-6-luna",
     "google": "gemini-2.5-pro",
     "google-gcp": "gemini-3.1-pro-preview",
 }

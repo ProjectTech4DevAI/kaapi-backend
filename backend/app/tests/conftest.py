@@ -6,11 +6,14 @@ os.environ["ENVIRONMENT"] = "testing"
 
 from fastapi.testclient import TestClient
 from filelock import FileLock
+from limits.storage import MemoryStorage
+from limits.strategies import MovingWindowRateLimiter
 from sqlmodel import Session
 from sqlalchemy import event
 from typing import Any, Generator
 
 # Now import after setting environment
+from app.core import rate_limit
 from app.core.config import settings
 from app.core.db import engine
 from app.api.deps import get_db
@@ -76,6 +79,14 @@ def seed_baseline(
                 seed_database(session)
             seeded_flag.touch()
     yield
+
+
+@pytest.fixture(autouse=True)
+def isolated_rate_limiter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fresh in-memory limiter per test, so route tests sharing one org never trip 429 or touch real Redis."""
+    monkeypatch.setattr(
+        rate_limit, "_limiter", MovingWindowRateLimiter(MemoryStorage())
+    )
 
 
 @pytest.fixture

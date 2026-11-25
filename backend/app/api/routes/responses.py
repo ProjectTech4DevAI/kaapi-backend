@@ -5,6 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.responses.examples import (
+    RESPONSE_CREATE_EXAMPLES,
+    RESPONSE_SYNC_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.core.langfuse.langfuse import LangfuseTracer
 from app.crud.credentials import get_provider_credential
@@ -36,6 +41,7 @@ router = APIRouter(tags=["Responses"])
     response_model=APIResponse[ResponseJobStatus],
     description=load_description("responses/create_async.md"),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(RESPONSE_CREATE_EXAMPLES),
 )
 async def responses(
     request: ResponsesAPIRequest,
@@ -71,6 +77,7 @@ async def responses(
     response_model=APIResponse[CallbackResponse],
     description=load_description("responses/create_sync.md"),
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(RESPONSE_SYNC_EXAMPLES),
 )
 async def responses_sync(
     request: ResponsesSyncAPIRequest,

@@ -8,6 +8,14 @@ from typing import Any
 BATCH_KEY = "custom_id"
 
 
+class BatchSubmissionRejectedError(Exception):
+    """A provider refused the submission for a reason the caller can act on.
+
+    Its message is written to the run's user-visible error, so it has to name the
+    problem and the fix rather than read like an internal failure.
+    """
+
+
 class BatchProvider(ABC):
     """Abstract base class for LLM batch providers (OpenAI, Anthropic, etc.)."""
 

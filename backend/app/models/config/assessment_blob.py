@@ -33,7 +33,7 @@ PLACEHOLDER_RE = re.compile(r"\{(\w+)\}")
 
 # Default llm for a pre-filter call when the config does not override it.
 DEFAULT_PREFILTER_PROVIDER = Provider.OPENAI
-DEFAULT_PREFILTER_MODEL = "gpt-5.6-luna"
+DEFAULT_PREFILTER_MODEL = "gpt-6-luna"
 
 
 class InputColumn(SQLModel):

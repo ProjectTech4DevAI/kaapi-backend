@@ -108,3 +108,30 @@ def record_rate_threshold(
             )
     except Exception:
         logger.exception("[record_rate_threshold] Failed to emit alert")
+
+
+def record_rate_limit_exceeded(
+    *,
+    organization_id: int,
+    project_id: int | None,
+    category: str,
+    limit_per_minute: int,
+) -> None:
+    """Emit a Sentry warning when an organization's request is rejected by the rate limiter."""
+
+    try:
+        if not sentry_sdk.get_client().is_active():
+            return
+        with sentry_sdk.new_scope() as scope:
+            scope.set_tag("alert.type", "rate_limit_exceeded")
+            scope.set_tag("tenant.organization_id", organization_id)
+            scope.set_tag("tenant.project_id", project_id)
+            scope.set_tag("route_category", category)
+            scope.set_extra("limit_per_minute", limit_per_minute)
+            sentry_sdk.capture_message(
+                f"[Rate-Limit] {category} request rejected for organization "
+                f"{organization_id} (limit {limit_per_minute}/min)",
+                level="warning",
+            )
+    except Exception:
+        logger.exception("[record_rate_limit_exceeded] Failed to emit alert")

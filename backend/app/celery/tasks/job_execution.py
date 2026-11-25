@@ -4,7 +4,8 @@
 per-task `priority`:
 
     9  LLM call + LLM chain (run_llm_job, run_llm_chain_job, run_response_job,
-       run_guardrails_job, run_chatbot_session_message)
+       run_guardrails_job, run_chatbot_session_message, run_duplicate_detection,
+       fail_duplicate_detection)
     6  Prompt improvement + iteration graph (run_prompt_improvement,
        run_evaluation_iteration_graph_step)
     2  Everything else (doctransform, collections, assessment)
@@ -35,6 +36,9 @@ from uuid import UUID
 from asgi_correlation_id import correlation_id
 from celery import Task, current_task
 from gevent import Timeout
+from opentelemetry import context as otel_context
+from opentelemetry import propagate, trace
+from opentelemetry.context import Context
 
 from app.celery.celery_app import EVALUATIONS_QUEUE, celery_app
 from app.celery.utils import gevent_timeout
@@ -47,6 +51,7 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 # Sentinel correlation id used when no trace id is propagated from the
 # enqueueing request. Matches the codebase-wide "N/A" default (see
@@ -346,6 +351,47 @@ def run_assessment_response(self, execution_id: int, trace_id: str, **kwargs):
 
     _set_trace(trace_id)
     return run_response_assessment(execution_id=execution_id)
+
+
+@celery_app.task(
+    bind=True,
+    queue="default",
+    priority=9,
+    # A lost worker fails the task, so its link_error handler runs instead of a silent requeue.
+    reject_on_worker_lost=False,
+)
+@gevent_timeout(settings.CELERY_TASK_SOFT_TIME_LIMIT, "run_duplicate_detection")
+def run_duplicate_detection(self, assessment_id: str, trace_id: str, **kwargs):
+    """Run a duplicate-detection job end to end and deliver its result by callback."""
+    from app.services.assessment.duplicate_detection import service
+
+    _set_trace(trace_id)
+    return service.run_duplicate_detection(assessment_id=UUID(assessment_id))
+
+
+@celery_app.task(queue="default", priority=9)
+def fail_duplicate_detection(
+    failed_task_id: str,
+    *,
+    assessment_id: str,
+    trace_id: str,
+    trace_headers: dict[str, str],
+) -> None:
+    """link_error handler of run_duplicate_detection: fail the job its task left unfinished."""
+    from app.services.assessment.duplicate_detection import service
+
+    _set_trace(trace_id)
+
+    # This task is sent outside any span, so it continues the request's trace from the
+    # headers. Attached rather than passed to the span: Sentry stamps a finished
+    # transaction with whichever span is current, which must not be this task's own.
+    token = otel_context.attach(propagate.extract(trace_headers, context=Context()))
+
+    try:
+        with tracer.start_as_current_span("duplicate_detection.fail_interrupted"):
+            service.fail_interrupted(assessment_id=UUID(assessment_id))
+    finally:
+        otel_context.detach(token)
 
 
 @celery_app.task(bind=True, queue=EVALUATIONS_QUEUE, priority=2)

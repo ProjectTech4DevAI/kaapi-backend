@@ -16,6 +16,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.assessment.examples import ASSESSMENT_CREATE_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.crud.assessment import api as api_crud
 from app.crud.assessment.core import get_assessment_by_id
@@ -33,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/assessments",
-    tags=["Assessment (API)"],
+    tags=["Assessment (Experimental)"],
 )
 
 
@@ -42,6 +44,7 @@ router = APIRouter(
     description=load_description("assessment/create.md"),
     response_model=APIResponse[AssessmentSubmitResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(ASSESSMENT_CREATE_EXAMPLES),
 )
 def create_assessment(
     request: AssessmentCreate,

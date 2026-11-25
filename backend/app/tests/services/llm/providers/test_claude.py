@@ -20,7 +20,7 @@ from app.models.llm import (
     QueryParams,
     TextContent,
 )
-from app.models.llm.constants import CompletionType
+from app.models.llm.constants import DEFAULT_TEXT_MODELS, CompletionType
 from app.services.llm.providers.base import MultiModalInput
 from app.services.llm.providers.claude import (
     FILES_API_BETA,
@@ -224,7 +224,7 @@ class TestExecuteText:
 
         assert err is None
         kwargs = mock_client.messages.create.call_args.kwargs
-        assert kwargs["model"] == "claude-sonnet-4-6"
+        assert kwargs["model"] == DEFAULT_TEXT_MODELS["anthropic"]
         assert kwargs["max_tokens"] == 4096
 
     def test_strips_conversation_key(self, provider, mock_client, query):

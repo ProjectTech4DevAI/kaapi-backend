@@ -7,6 +7,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.llm.examples import SPEECH_TO_SPEECH_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.models import Message
 from app.models.llm.constants import (
@@ -39,7 +41,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["LLM"])
 
 
-DEFAULT_RAG_TEMPERATURE = 0.1
+# Replaces temperature: the mapper suppresses sampling on a reasoning model.
+DEFAULT_RAG_EFFORT: Literal["none"] = "none"
 DEFAULT_TTS_FORMAT = "ogg"  # mappers translate to opus (WhatsApp compatible)
 
 BlockType = Literal["stt", "text", "tts"]
@@ -81,7 +84,6 @@ def _merge_rag(
 ) -> TextLLMParams:
     base = TextLLMParams(
         model=DEFAULT_RAG_MODEL,
-        temperature=DEFAULT_RAG_TEMPERATURE,
         instructions=DEFAULT_RAG_INSTRUCTIONS,
     )
     merged = (
@@ -89,6 +91,13 @@ def _merge_rag(
         if user is None
         else base.model_copy(update=user.model_dump(exclude_unset=True))
     )
+    # Only the default model is known to accept "none", and an explicit knob must win.
+    if (
+        merged.model == DEFAULT_RAG_MODEL
+        and merged.effort is None
+        and merged.reasoning is None
+    ):
+        merged = merged.model_copy(update={"effort": DEFAULT_RAG_EFFORT})
     return merged.model_copy(update={"knowledge_base_ids": knowledge_base_ids})
 
 
@@ -205,6 +214,7 @@ def _build_metadata(
     description=load_description("llm/speech_to_speech.md"),
     response_model=APIResponse[Message],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(SPEECH_TO_SPEECH_EXAMPLES),
 )
 def speech_to_speech(
     current_user: AuthContextDep,

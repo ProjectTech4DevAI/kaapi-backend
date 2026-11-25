@@ -67,6 +67,13 @@ class GuardrailsJobPublic(SQLModel):
     status: str
     guardrails_response: GuardrailsCallbackData | None = None
     error_message: str | None = None
+    guardrail_metadata: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Per-validator guardrail metadata; present only when the request set "
+            "`include_guardrail_metadata`. Mirrors `metadata.guardrail` of the callback."
+        ),
+    )
     warnings: list[str] = Field(
         default_factory=list,
         description=(

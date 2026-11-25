@@ -15,7 +15,11 @@ from app.core.telemetry.llm import (
     set_gen_ai_response_attributes,
     suppress_http_instrumentation,
 )
-from app.core.telemetry.metrics import record_rate_threshold, record_stale_pending_jobs
+from app.core.telemetry.metrics import (
+    record_rate_limit_exceeded,
+    record_rate_threshold,
+    record_stale_pending_jobs,
+)
 from app.core.telemetry.sentry import init_sentry
 from app.core.telemetry.tracing import flush_telemetry, instrument_app, setup_telemetry
 
@@ -30,6 +34,7 @@ __all__ = [
     "record_http_request",
     "record_llm_call_finished",
     "record_llm_call_started",
+    "record_rate_limit_exceeded",
     "record_rate_threshold",
     "record_stale_pending_jobs",
     "record_unmatched_request",
