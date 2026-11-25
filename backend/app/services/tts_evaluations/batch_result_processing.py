@@ -24,7 +24,7 @@ from app.crud.tts_evaluations.result import (
     save_processed_tts_results,
 )
 from app.models.job import JobStatus
-from app.models.tts_evaluation import TTSResult
+from app.models.tts_evaluation import TTSResult, TTSUsageUnitEnum
 from app.core.audio_utils import calculate_duration, pcm_to_wav, strip_wav_header
 from app.services.tts_evaluations.constants import TTS_AUDIO_SUBDIRECTORY
 
@@ -138,6 +138,10 @@ def execute_tts_result_processing(
 
             if batch_result.get("response"):
                 try:
+                    # Tokens are spent even if the audio later fails to process.
+                    result_record.usage = _extract_usage_from_response(
+                        batch_result["response"]
+                    )
                     audio_b64 = _extract_audio_from_response(batch_result["response"])
 
                     if not audio_b64:
@@ -272,6 +276,25 @@ def execute_tts_result_processing(
                 error_message=f"Result processing failed: {str(e)}",
             )
         return {"success": False, "error": str(e)}
+
+
+def _extract_usage_from_response(response: dict[str, Any]) -> dict[str, Any] | None:
+    """Read token usage from a Gemini response's usageMetadata (camelCase or snake_case)."""
+    usage_metadata = response.get("usageMetadata") or response.get("usage_metadata")
+    if not isinstance(usage_metadata, dict):
+        return None
+
+    def count(camel: str, snake: str) -> int | None:
+        # Not `or`: a real 0 count must not fall through to None.
+        value = usage_metadata.get(camel)
+        return usage_metadata.get(snake) if value is None else value
+
+    return {
+        "unit": TTSUsageUnitEnum.TOKENS.value,
+        "input_tokens": count("promptTokenCount", "prompt_token_count"),
+        "output_tokens": count("candidatesTokenCount", "candidates_token_count"),
+        "total_tokens": count("totalTokenCount", "total_token_count"),
+    }
 
 
 def _extract_audio_from_response(response: dict[str, Any]) -> str | None:

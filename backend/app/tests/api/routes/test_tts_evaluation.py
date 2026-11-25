@@ -1270,6 +1270,54 @@ class TestTTSEvaluationRun:
         assert data["results"] == []
         assert data["results_total"] == 0
 
+    @pytest.mark.parametrize("include_results", [True, False])
+    def test_get_run_reports_usage_by_model(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        user_api_key: TestAuthContext,
+        include_results: bool,
+    ) -> None:
+        run = create_test_tts_run_with_dataset(
+            db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            models=["bulbul:v3"],
+        )
+        row = create_test_tts_result_row(
+            db,
+            run=run,
+            provider="bulbul:v3",
+            status=JobStatus.SUCCESS,
+            usage={"unit": "characters", "characters": 12},
+        )
+        row.issues = ["robotic"]
+        db.add(row)
+        db.commit()
+
+        response = client.get(
+            f"/api/v1/evaluations/tts/runs/{run.id}",
+            params={"include_results": include_results},
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["usage_by_model"] == {
+            "bulbul:v3": {
+                "unit": "characters",
+                "characters": 12,
+                "results_with_usage": 1,
+            }
+        }
+        if include_results:
+            [result] = data["results"]
+            assert result["usage"] == {"unit": "characters", "characters": 12}
+            assert result["issues"] == ["robotic"]
+        else:
+            assert data["results"] == []
+
     def test_get_run_not_found(
         self,
         client: TestClient,
@@ -1700,6 +1748,133 @@ class TestTTSResultFeedback:
         data = response.json()["data"]
         assert data["is_correct"] is True  # unchanged
         assert data["comment"] == "Updated comment"
+
+    # The UI rates one metric per PATCH; a full replace used to erase the others.
+    @pytest.mark.parametrize(
+        ("first", "second", "expected"),
+        [
+            (
+                {"Speech Naturalness": "high"},
+                {"Pronunciation Accuracy": "low"},
+                {"Speech Naturalness": "high", "Pronunciation Accuracy": "low"},
+            ),
+            (
+                {"Speech Naturalness": "high", "Pronunciation Accuracy": "low"},
+                {"Pronunciation Accuracy": None},
+                {"Speech Naturalness": "high"},
+            ),
+            ({"Speech Naturalness": "high"}, {"Speech Naturalness": None}, None),
+        ],
+        ids=["merge", "null_deletes_key", "deleting_last_key_stores_null"],
+    )
+    def test_score_is_merged_per_key(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        test_result: TTSResult,
+        first: dict,
+        second: dict,
+        expected: dict | None,
+    ) -> None:
+        url = f"/api/v1/evaluations/tts/results/{test_result.id}"
+        assert (
+            client.patch(url, json={"score": first}, headers=user_api_key_header)
+        ).status_code == 200
+
+        response = client.patch(
+            url, json={"score": second}, headers=user_api_key_header
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["score"] == expected
+        db.refresh(test_result)
+        assert test_result.score == expected
+
+    @pytest.mark.parametrize(
+        ("issues", "expected"),
+        [
+            (["cut_off", "robotic", "cut_off"], ["cut_off", "robotic"]),
+            ([], None),
+            (None, None),
+        ],
+        ids=["dedupes_keeping_order_and_replaces", "empty_clears", "null_clears"],
+    )
+    def test_issues_replace_stored_list(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        test_result: TTSResult,
+        issues: list[str] | None,
+        expected: list[str] | None,
+    ) -> None:
+        url = f"/api/v1/evaluations/tts/results/{test_result.id}"
+        client.patch(
+            url,
+            json={"issues": ["mispronunciation", "long_pause"]},
+            headers=user_api_key_header,
+        )
+
+        response = client.patch(
+            url, json={"issues": issues}, headers=user_api_key_header
+        )
+
+        assert response.status_code == 200
+        assert response.json()["data"]["issues"] == expected
+        db.refresh(test_result)
+        assert test_result.issues == expected
+
+    @pytest.mark.parametrize(
+        "body",
+        [{"issues": ["robotic", "too_loud"]}, {"comment": "x" * 501}],
+        ids=["unknown_issue_tag", "comment_over_500_chars"],
+    )
+    def test_invalid_feedback_is_rejected(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        db: Session,
+        test_result: TTSResult,
+        body: dict,
+    ) -> None:
+        response = client.patch(
+            f"/api/v1/evaluations/tts/results/{test_result.id}",
+            json=body,
+            headers=user_api_key_header,
+        )
+
+        assert response.status_code == 422
+        db.refresh(test_result)
+        assert (test_result.issues, test_result.comment) == (None, None)
+
+    def test_omitted_score_and_issues_not_cleared(
+        self,
+        client: TestClient,
+        user_api_key_header: dict[str, str],
+        test_result: TTSResult,
+    ) -> None:
+        url = f"/api/v1/evaluations/tts/results/{test_result.id}"
+        client.patch(
+            url,
+            json={
+                "score": {"Speech Naturalness": "high"},
+                "issues": ["robotic"],
+                "comment": "x" * 500,
+            },
+            headers=user_api_key_header,
+        )
+
+        response = client.patch(
+            url, json={"is_correct": False}, headers=user_api_key_header
+        )
+
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["score"] == {"Speech Naturalness": "high"}
+        assert data["issues"] == ["robotic"]
+        assert data["comment"] == "x" * 500
+        assert data["is_correct"] is False
 
     def test_update_feedback_without_authentication(
         self,

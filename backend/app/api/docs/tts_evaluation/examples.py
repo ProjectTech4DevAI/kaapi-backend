@@ -53,6 +53,7 @@ TTS_FEEDBACK_UPDATE_EXAMPLES: Examples = {
                 "Speech Naturalness": "medium",
                 "Pronunciation Accuracy": "high",
             },
+            "issues": ["robotic"],
         },
     ),
 }

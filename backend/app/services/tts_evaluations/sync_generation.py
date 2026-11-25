@@ -13,9 +13,11 @@ import wave
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import Any, Required, TypedDict
 
+import httpx
 from celery import Task
 from celery.exceptions import SoftTimeLimitExceeded
 from elevenlabs import ElevenLabs
+from elevenlabs.core.api_error import ApiError as ElevenLabsApiError
 from gevent import Timeout
 from sarvamai import SarvamAI
 from sqlmodel import Session
@@ -33,6 +35,7 @@ from app.crud.tts_evaluations.result import (
 )
 from app.models.job import JobStatus
 from app.models.llm.constants import BCP47_TO_ELEVENLABS_LANG
+from app.models.tts_evaluation import TTSUsageUnitEnum
 from app.services.llm.mappers import voice_to_id
 from app.services.llm.providers.eleven_ai import ElevenlabsAIProvider
 from app.services.llm.providers.sarvam_ai import SarvamAIProvider
@@ -59,6 +62,7 @@ class TTSResultFields(TypedDict, total=False):
     object_store_url: str
     metadata: dict[str, float | int]
     error_message: str
+    usage: dict[str, Any]
 
 
 def synthesize_sarvam(
@@ -118,6 +122,28 @@ def synthesize_elevenlabs(
     if not pcm:
         raise ValueError("ElevenLabs returned no audio")
     return pcm
+
+
+def fetch_elevenlabs_credit_multiplier(client: ElevenLabs, model: str) -> float | None:
+    """Return the model's character_cost_multiplier from the ElevenLabs models list, or None."""
+    try:
+        models = client.models.list()
+    except (ElevenLabsApiError, httpx.HTTPError) as e:
+        logger.warning(
+            f"[fetch_elevenlabs_credit_multiplier] [ELEVENLABS] Models list failed; "
+            f"credits will be null | model={model}, error={str(e)}"
+        )
+        return None
+
+    for item in models:
+        if item.model_id == model and item.model_rates is not None:
+            return item.model_rates.character_cost_multiplier
+
+    logger.warning(
+        f"[fetch_elevenlabs_credit_multiplier] [ELEVENLABS] No rates for model; "
+        f"credits will be null | model={model}"
+    )
+    return None
 
 
 def execute_tts_sync_generation(
@@ -191,10 +217,12 @@ def execute_tts_sync_generation(
         if not isinstance(credentials, dict):
             raise ValueError(f"{provider.value} credentials are not configured")
 
+        credit_multiplier: float | None = None
         if model in SARVAM_TTS_MODELS:
             client = SarvamAIProvider.create_client(credentials)
         else:
             client = ElevenlabsAIProvider.create_client(credentials)
+            credit_multiplier = fetch_elevenlabs_credit_multiplier(client, model)
 
         # keep the function local to use it easily with
         # internal threadpool exuector
@@ -236,6 +264,26 @@ def execute_tts_sync_generation(
                     "status": JobStatus.FAILED.value,
                     "error_message": "Audio upload to object store failed",
                 }
+
+            # Neither API reports per-request usage: both bill per input character,
+            # and ElevenLabs credits are characters x the model's cost multiplier.
+            characters = len(text)
+            usage: dict[str, Any]
+            if model in SARVAM_TTS_MODELS:
+                usage = {
+                    "unit": TTSUsageUnitEnum.CHARACTERS.value,
+                    "characters": characters,
+                }
+            else:
+                credits = None
+                if credit_multiplier is not None:
+                    credits = characters * credit_multiplier
+                usage = {
+                    "unit": TTSUsageUnitEnum.CREDITS.value,
+                    "characters": characters,
+                    "credits": credits,
+                    "credit_multiplier": credit_multiplier,
+                }
             return {
                 "status": JobStatus.SUCCESS.value,
                 "object_store_url": audio_url,
@@ -243,6 +291,7 @@ def execute_tts_sync_generation(
                     "duration_seconds": round(calculate_duration(len(pcm)), 3),
                     "size_bytes": len(wav),
                 },
+                "usage": usage,
             }
 
         processed = 0

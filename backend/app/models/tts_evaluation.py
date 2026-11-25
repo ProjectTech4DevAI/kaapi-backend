@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import StrEnum
 from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import (
@@ -31,6 +32,25 @@ from app.services.tts_evaluations.voices import (
 
 if TYPE_CHECKING:
     from app.models import EvaluationDataset, EvaluationRun
+
+
+class TTSIssueEnum(StrEnum):
+    """Issue tags a reviewer can attach to a synthesized sample."""
+
+    MISPRONUNCIATION = "mispronunciation"
+    ROBOTIC = "robotic"
+    WRONG_LANGUAGE = "wrong_language"
+    CUT_OFF = "cut_off"
+    LONG_PAUSE = "long_pause"
+    BACKGROUND_NOISE = "background_noise"
+
+
+class TTSUsageUnitEnum(StrEnum):
+    """Provider-native billing unit stored in `tts_result.usage.unit`."""
+
+    TOKENS = "tokens"
+    CHARACTERS = "characters"
+    CREDITS = "credits"
 
 
 class TTSResult(SQLModel, table=True):
@@ -99,11 +119,37 @@ class TTSResult(SQLModel, table=True):
     score: dict[str, Any] | None = SQLField(
         default=None,
         sa_column=Column(
-            JSONB,
+            JSONB(none_as_null=True),
             nullable=True,
             comment="Extensible evaluation metrics (null in Phase 1)",
         ),
         description="Extensible evaluation metrics",
+    )
+
+    usage: dict[str, Any] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB(none_as_null=True),
+            nullable=True,
+            comment="Provider-native usage, always with a unit: "
+            '{unit: "tokens", input_tokens, output_tokens, total_tokens} (Gemini), '
+            '{unit: "characters", characters} (Sarvam), '
+            '{unit: "credits", characters, credits, credit_multiplier} (ElevenLabs; '
+            "credits computed, null if the multiplier was unavailable); "
+            "NULL when not reported",
+        ),
+        description="Provider-native usage of this synthesis",
+    )
+
+    issues: list[str] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB(none_as_null=True),
+            nullable=True,
+            comment="Human feedback issue tags: list of mispronunciation, robotic, "
+            "wrong_language, cut_off, long_pause, background_noise",
+        ),
+        description="Human feedback issue tags",
     )
 
     is_correct: bool | None = SQLField(
@@ -249,6 +295,8 @@ class TTSResultPublic(BaseModel):
     voice: str | None = None
     status: str
     score: dict[str, Any] | None
+    usage: dict[str, Any] | None = None
+    issues: list[str] | None = None
     is_correct: bool | None
     comment: str | None
     error_message: str | None
@@ -277,6 +325,8 @@ class TTSResultPublic(BaseModel):
             voice=result.voice,
             status=result.status,
             score=result.score,
+            usage=result.usage,
+            issues=result.issues,
             is_correct=result.is_correct,
             comment=result.comment,
             error_message=result.error_message,
@@ -294,10 +344,11 @@ class TTSFeedbackUpdate(BaseModel):
     is_correct: bool | None = Field(
         None, description="Is the synthesized audio correct?"
     )
-    comment: str | None = Field(None, description="Feedback comment")
+    comment: str | None = Field(None, max_length=500, description="Short optional note")
     score: dict[str, Any] | None = Field(
         None,
-        description="Evaluation metrics",
+        description="Evaluation metrics, merged per key into the stored ones; a "
+        "null value removes that metric",
         json_schema_extra={
             "example": {
                 "Speech Naturalness": "low | medium | high",
@@ -305,6 +356,19 @@ class TTSFeedbackUpdate(BaseModel):
             }
         },
     )
+    issues: list[TTSIssueEnum] | None = Field(
+        None,
+        description="Issue tags; replaces the stored list, [] or null clears it",
+    )
+
+    @field_validator("issues")
+    @classmethod
+    def dedupe_issues(
+        cls, issues: list[TTSIssueEnum] | None
+    ) -> list[TTSIssueEnum] | None:
+        if issues is None:
+            return None
+        return list(dict.fromkeys(issues))
 
 
 class TTSModelVoice(BaseModel):
@@ -448,6 +512,11 @@ class TTSEvaluationRunWithResults(TTSEvaluationRunPublic):
 
     results: list[TTSResultPublic]
     results_total: int = Field(0, description="Total number of results")
+    usage_by_model: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Per model: usage unit, summed usage fields over all the "
+        "run's results, and results_with_usage",
+    )
 
     @classmethod
     def from_model(
@@ -457,6 +526,7 @@ class TTSEvaluationRunWithResults(TTSEvaluationRunPublic):
         results: list[TTSResultPublic] | None = None,
         results_total: int = 0,
         run_metadata: dict[str, Any] | None = None,
+        usage_by_model: dict[str, dict[str, Any]] | None = None,
     ) -> TTSEvaluationRunWithResults:
         """Create from an EvaluationRun model instance with results."""
         base = TTSEvaluationRunPublic.from_model(run, run_metadata=run_metadata)
@@ -464,4 +534,5 @@ class TTSEvaluationRunWithResults(TTSEvaluationRunPublic):
             **base.model_dump(),
             results=results or [],
             results_total=results_total,
+            usage_by_model=usage_by_model or {},
         )

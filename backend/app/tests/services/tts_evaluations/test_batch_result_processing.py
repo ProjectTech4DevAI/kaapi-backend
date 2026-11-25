@@ -208,6 +208,106 @@ class TestExecuteTTSResultProcessing:
         for row in (errored, no_error_text, silent, bad_padding, not_base64, odd_shape):
             assert (row.status, row.object_store_url) == (JobStatus.FAILED.value, None)
 
+    @pytest.mark.parametrize(
+        ("usage_metadata", "expected"),
+        [
+            (
+                {
+                    "usageMetadata": {
+                        "promptTokenCount": 12,
+                        "candidatesTokenCount": 340,
+                        "totalTokenCount": 352,
+                    }
+                },
+                {
+                    "unit": "tokens",
+                    "input_tokens": 12,
+                    "output_tokens": 340,
+                    "total_tokens": 352,
+                },
+            ),
+            (
+                {
+                    "usage_metadata": {
+                        "prompt_token_count": 0,
+                        "candidates_token_count": 340,
+                        "total_token_count": 340,
+                    }
+                },
+                {
+                    "unit": "tokens",
+                    "input_tokens": 0,
+                    "output_tokens": 340,
+                    "total_tokens": 340,
+                },
+            ),
+            # A camelCase 0 must not fall through to the (absent) snake_case key.
+            (
+                {
+                    "usageMetadata": {
+                        "promptTokenCount": 0,
+                        "candidatesTokenCount": 340,
+                        "totalTokenCount": 340,
+                    }
+                },
+                {
+                    "unit": "tokens",
+                    "input_tokens": 0,
+                    "output_tokens": 340,
+                    "total_tokens": 340,
+                },
+            ),
+            ({}, None),
+        ],
+        ids=["camel_case", "snake_case", "camel_case_zero", "missing"],
+    )
+    def test_success_records_token_usage(
+        self,
+        db: Session,
+        run: EvaluationRun,
+        boundaries: Boundaries,
+        usage_metadata: dict[str, Any],
+        expected: dict[str, Any] | None,
+    ) -> None:
+        row = create_test_tts_result_row(db, run=run)
+        response = {**_audio_response(), **usage_metadata}
+        boundaries.download.return_value = [
+            {"custom_id": str(row.id), "response": response}
+        ]
+
+        _execute(run)
+
+        _refresh(db, row)
+        assert row.status == JobStatus.SUCCESS.value
+        assert row.usage == expected
+
+    def test_usage_kept_when_audio_processing_fails(
+        self, db: Session, run: EvaluationRun, boundaries: Boundaries
+    ) -> None:
+        row = create_test_tts_result_row(db, run=run)
+        response = {
+            **_audio_response(data="###"),
+            "usageMetadata": {
+                "promptTokenCount": 5,
+                "candidatesTokenCount": 7,
+                "totalTokenCount": 12,
+            },
+        }
+        boundaries.download.return_value = [
+            {"custom_id": str(row.id), "response": response}
+        ]
+
+        _execute(run)
+
+        _refresh(db, row)
+        assert row.status == JobStatus.FAILED.value
+        assert row.usage == {
+            "unit": "tokens",
+            "input_tokens": 5,
+            "output_tokens": 7,
+            "total_tokens": 12,
+        }
+
     def test_row_missing_from_batch_output_fails(
         self, db: Session, run: EvaluationRun, boundaries: Boundaries
     ) -> None:

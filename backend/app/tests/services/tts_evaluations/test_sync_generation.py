@@ -4,8 +4,10 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded
+from elevenlabs.core.api_error import ApiError as ElevenLabsApiError
 from gevent import Timeout
 from sqlmodel import Session
 
@@ -356,3 +358,89 @@ class TestExecuteTTSSyncGeneration:
             JobStatus.FAILED.value,
             "Synthesis timed out before this sample was processed",
         )
+
+
+def _eleven_model(model_id: str, multiplier: float | None) -> SimpleNamespace:
+    rates = (
+        None
+        if multiplier is None
+        else SimpleNamespace(character_cost_multiplier=multiplier)
+    )
+    return SimpleNamespace(model_id=model_id, model_rates=rates)
+
+
+@pytest.mark.usefixtures("boundaries")
+class TestSyncGenerationUsage:
+    def test_sarvam_success_records_characters_and_failure_records_none(
+        self, db: Session, run: EvaluationRun
+    ) -> None:
+        ok = _row(db, run, text="namaste duniya")
+        rejected = _row(db, run, text=FAIL_TEXT)
+
+        _execute(run)
+
+        _refresh(db, ok, rejected)
+        assert ok.usage == {"unit": "characters", "characters": 14}
+        assert (rejected.status, rejected.usage) == (JobStatus.FAILED.value, None)
+
+    def test_elevenlabs_credits_use_model_multiplier_fetched_once(
+        self, db: Session, run: EvaluationRun, boundaries: SimpleNamespace
+    ) -> None:
+        boundaries.eleven.models.list.return_value = [
+            _eleven_model("eleven_flash_v2_5", 0.5),
+            _eleven_model(ELEVEN, 2.0),
+        ]
+        rows = [_row(db, run, ELEVEN, text="hello"), _row(db, run, ELEVEN, text="hi")]
+
+        _execute(run, ELEVEN)
+
+        _refresh(db, *rows)
+        assert [row.usage for row in rows] == [
+            {
+                "unit": "credits",
+                "characters": 5,
+                "credits": 10.0,
+                "credit_multiplier": 2.0,
+            },
+            {
+                "unit": "credits",
+                "characters": 2,
+                "credits": 4.0,
+                "credit_multiplier": 2.0,
+            },
+        ]
+        # The models list is billing metadata, not per-sample: one call per task.
+        assert boundaries.eleven.models.list.call_count == 1
+
+    @pytest.mark.parametrize(
+        "configure_models_list",
+        [
+            lambda m: setattr(
+                m, "side_effect", ElevenLabsApiError(status_code=401, body="no")
+            ),
+            lambda m: setattr(m, "side_effect", httpx.ConnectError("down")),
+            lambda m: setattr(m, "return_value", [_eleven_model(ELEVEN, None)]),
+            lambda m: setattr(m, "return_value", [_eleven_model("other", 2.0)]),
+        ],
+        ids=["api_error", "http_error", "no_rates", "model_not_listed"],
+    )
+    def test_elevenlabs_credits_null_when_multiplier_unavailable(
+        self,
+        db: Session,
+        run: EvaluationRun,
+        boundaries: SimpleNamespace,
+        configure_models_list: Any,
+    ) -> None:
+        configure_models_list(boundaries.eleven.models.list)
+        row = _row(db, run, ELEVEN, text="hello")
+
+        _execute(run, ELEVEN)
+
+        _refresh(db, row)
+        assert row.status == JobStatus.SUCCESS.value
+        assert row.usage == {
+            "unit": "credits",
+            "characters": 5,
+            "credits": None,
+            "credit_multiplier": None,
+        }

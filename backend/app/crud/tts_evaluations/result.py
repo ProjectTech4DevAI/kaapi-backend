@@ -3,16 +3,24 @@
 import logging
 from typing import Any
 
-from sqlalchemy import update
+from sqlalchemy import BigInteger, Float, update
 from sqlmodel import Session, col, func, select
 
 from app.core.cloud.storage import CloudStorage
 from app.core.exception_handlers import HTTPException
 from app.core.util import now
 from app.models.job import JobStatus
-from app.models.tts_evaluation import TTSResult, TTSResultPublic
+from app.models.tts_evaluation import TTSResult, TTSResultPublic, TTSUsageUnitEnum
 
 logger = logging.getLogger(__name__)
+
+# Numeric usage fields summed per unit; credits are fractional, the rest are counts.
+USAGE_SUM_FIELDS_BY_UNIT: dict[str, tuple[str, ...]] = {
+    TTSUsageUnitEnum.TOKENS: ("input_tokens", "output_tokens", "total_tokens"),
+    TTSUsageUnitEnum.CHARACTERS: ("characters",),
+    TTSUsageUnitEnum.CREDITS: ("characters", "credits"),
+}
+FRACTIONAL_USAGE_FIELDS = {"credits"}
 
 
 def create_tts_results(
@@ -159,6 +167,7 @@ def update_tts_result(
     metadata: dict[str, Any] | None = None,
     status: str | None = None,
     error_message: str | None = None,
+    usage: dict[str, Any] | None = None,
 ) -> TTSResult | None:
     """Update a TTS result.
 
@@ -171,6 +180,7 @@ def update_tts_result(
         metadata: Audio metadata (duration_seconds, size_bytes)
         status: New status
         error_message: Error message if failed
+        usage: Provider-native usage ({unit, ...})
 
     Returns:
         TTSResult | None: Updated result
@@ -195,6 +205,8 @@ def update_tts_result(
         result.status = status
     if error_message is not None:
         result.error_message = error_message
+    if usage is not None:
+        result.usage = usage
 
     result.updated_at = now()
 
@@ -272,6 +284,7 @@ def save_processed_tts_results(
                     TTSResult.object_store_url: result.object_store_url,
                     TTSResult.metadata_: result.metadata_,
                     TTSResult.error_message: result.error_message,
+                    col(TTSResult.usage): result.usage,
                     TTSResult.updated_at: result.updated_at,
                 }
             )
@@ -300,14 +313,16 @@ def update_tts_human_feedback(
     """Update human feedback on a TTS result.
 
     Only fields passed in kwargs are updated. Passing is_correct=None clears
-    the value; omitting it leaves it unchanged.
+    the value; omitting it leaves it unchanged. `score` is merged per key into
+    the stored dict (a None value deletes that key) because the UI rates one
+    metric per request; `issues` replaces the stored list.
 
     Args:
         session: Database session
         result_id: Result ID
         org_id: Organization ID
         project_id: Project ID
-        **kwargs: Fields to update (is_correct, comment)
+        **kwargs: Fields to update (is_correct, comment, score, issues)
 
     Returns:
         TTSResult | None: Updated result
@@ -332,7 +347,16 @@ def update_tts_human_feedback(
         result.comment = kwargs["comment"]
 
     if "score" in kwargs:
-        result.score = kwargs["score"]
+        merged_score = dict(result.score or {})
+        for key, value in (kwargs["score"] or {}).items():
+            if value is None:
+                merged_score.pop(key, None)
+            else:
+                merged_score[key] = value
+        result.score = merged_score or None
+
+    if "issues" in kwargs:
+        result.issues = kwargs["issues"] or None
 
     result.updated_at = now()
 
@@ -346,6 +370,66 @@ def update_tts_human_feedback(
     )
 
     return result
+
+
+def get_tts_usage_by_model(
+    *,
+    session: Session,
+    run_id: int,
+    org_id: int,
+    project_id: int,
+) -> dict[str, dict[str, Any]]:
+    """Sum each model's usage over all of a run's results in one aggregate query.
+
+    Returns:
+        dict[str, dict[str, Any]]: Per model, `unit`, the summed fields of that
+            unit and `results_with_usage`; models with no usage are absent
+    """
+    all_fields: list[str] = []
+    for fields in USAGE_SUM_FIELDS_BY_UNIT.values():
+        for field in fields:
+            if field not in all_fields:
+                all_fields.append(field)
+
+    usage_column = col(TTSResult.usage)
+    sum_columns = []
+    for field in all_fields:
+        sql_type = Float if field in FRACTIONAL_USAGE_FIELDS else BigInteger
+        # SUM(bigint) yields numeric (Decimal), which JSON-serializes as a string.
+        sum_columns.append(
+            func.sum(usage_column[field].astext.cast(sql_type)).cast(sql_type)
+        )
+
+    # One shared expression: separately built `->>` keys bind as different
+    # parameters, which Postgres won't match between SELECT and GROUP BY.
+    unit_column = usage_column["unit"].astext
+    statement = (
+        select(
+            TTSResult.provider,
+            unit_column,
+            func.count(),
+            *sum_columns,
+        )
+        .where(
+            TTSResult.evaluation_run_id == run_id,
+            TTSResult.organization_id == org_id,
+            TTSResult.project_id == project_id,
+            unit_column.is_not(None),
+        )
+        .group_by(TTSResult.provider, unit_column)
+    )
+
+    usage_by_model: dict[str, dict[str, Any]] = {}
+    for row in session.exec(statement).all():
+        provider, unit, results_with_usage = row[0], row[1], row[2]
+        sums = dict(zip(all_fields, row[3:]))
+        model_usage: dict[str, Any] = {"unit": unit}
+        for field in USAGE_SUM_FIELDS_BY_UNIT.get(unit, ()):
+            model_usage[field] = sums[field]
+        model_usage["results_with_usage"] = results_with_usage
+        usage_by_model[provider] = model_usage
+
+    return usage_by_model
 
 
 def get_pending_results_for_run(
