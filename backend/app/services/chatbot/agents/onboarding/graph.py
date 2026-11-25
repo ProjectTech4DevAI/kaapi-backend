@@ -1,18 +1,15 @@
 """Onboarding turn: extract the flow's fields, then reply -- two LangGraph nodes over a LangChain chat model."""
 
-import asyncio
 import json
 from typing import Any
 
-import anthropic
-from langchain_core.exceptions import OutputParserException
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_core.runnables import Runnable
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from app.services.chatbot.agents.onboarding.prompts import (
     EXTRACTION_FLOW_PROMPT_TEMPLATE,
@@ -28,13 +25,18 @@ from app.services.chatbot.agents.onboarding.types import (
     FieldExtraction,
     OnboardingState,
 )
-from app.services.chatbot.exceptions import ChatbotInputError, ChatbotProviderError
 from app.services.chatbot.history import (
     extract_final_reply,
     has_user_turn,
     insert_after_leading_system,
     summarize_if_needed,
     to_langchain_messages,
+    validate_turn_input,
+)
+from app.services.chatbot.provider_errors import (
+    CHAT_MODEL_ERRORS,
+    invoke_structured,
+    to_provider_error,
 )
 from app.services.chatbot.types import ChatbotMessageDict, ChatbotTurnResult
 from app.services.chatbot.utils import ChatbotModelSettings, get_chat_model
@@ -84,28 +86,6 @@ def _build_progress_note(state: OnboardingState) -> SystemMessage | None:
     return SystemMessage(content=f"{PROGRESS_NOTE_PREFIX}{note.strip()}")
 
 
-def _invoke_extraction(
-    extraction_model: ExtractionModel,
-    messages: list[BaseMessage],
-) -> FieldExtraction:
-    try:
-        extraction = extraction_model.invoke(messages)
-    except (OutputParserException, ValidationError) as e:
-        error_message = (
-            "[ANTHROPIC] Field extraction returned malformed structured output — "
-            f"retry the turn. If persistent, contact Kaapi. (code: {type(e).__name__})"
-        )
-        raise ChatbotProviderError(error_message) from e
-
-    if not isinstance(extraction, FieldExtraction):
-        error_message = (
-            "[ANTHROPIC] Field extraction returned an unexpected output shape — retry "
-            "the turn. If persistent, contact Kaapi. (code: UnexpectedOutputType)"
-        )
-        raise ChatbotProviderError(error_message)
-    return extraction
-
-
 def build_onboarding_graph(
     chat_model: BaseChatModel,
     extraction_model: ExtractionModel,
@@ -123,13 +103,15 @@ def build_onboarding_graph(
             chat_model, state["messages"], history_token_limit=history_token_limit
         )
         prior_fields = state["collected_fields"]
-        extraction = _invoke_extraction(
+        extraction = invoke_structured(
             extraction_model,
             _build_extraction_messages(
                 flow_prompt=flow_prompt,
                 prior_fields=prior_fields,
                 conversation_view=conversation_view,
             ),
+            FieldExtraction,
+            call_name="Field extraction",
         )
         extracted = {field.name: field.value for field in extraction.collected_fields}
         merged_fields = {**prior_fields, **extracted}
@@ -166,29 +148,7 @@ def _get_extraction_model(chat_model: BaseChatModel) -> ExtractionModel:
     return chat_model.with_structured_output(FieldExtraction, method=EXTRACTION_METHOD)
 
 
-def _to_provider_error(error: Exception, *, model: str) -> ChatbotProviderError:
-    if isinstance(error, anthropic.APITimeoutError):
-        return ChatbotProviderError(
-            "[KAAPI] Request timed out — retry smaller. If persistent, contact Kaapi. "
-            "(code: APITimeoutError)"
-        )
-    if isinstance(error, anthropic.APIConnectionError):
-        return ChatbotProviderError(
-            "[KAAPI] Network/DNS issue reaching provider — check connectivity. "
-            "If persistent, contact Kaapi. (code: APIConnectionError)"
-        )
-    if isinstance(error, anthropic.APIStatusError):
-        return ChatbotProviderError(
-            f"[ANTHROPIC] Chat model call failed: {error.message} "
-            f"(code: {error.status_code}, request_id: {error.request_id})"
-        )
-    return ChatbotProviderError(
-        f"[KAAPI] Unsupported model configuration for '{model}': {error} "
-        "— update the config's model, thinking, or effort. (code: ValueError)"
-    )
-
-
-async def run_chatbot_turn(
+def run_chatbot_turn(
     *,
     system_prompt: str,
     history: list[ChatbotMessageDict],
@@ -197,11 +157,7 @@ async def run_chatbot_turn(
     collected_fields: dict[str, Any] | None = None,
 ) -> ChatbotTurnResult:
     """Run one stateless turn: update the collected fields, then reply."""
-    if user_message is None and history:
-        raise ChatbotInputError(
-            "[KAAPI] `message` is required once `history` is non-empty; omit it only "
-            "on the first call to get the opening greeting."
-        )
+    validate_turn_input(history=history, user_message=user_message)
 
     messages = to_langchain_messages(
         system_prompt=system_prompt, history=history, user_message=user_message
@@ -220,10 +176,9 @@ async def run_chatbot_turn(
             flow_prompt=system_prompt,
             history_token_limit=model_settings.history_token_limit,
         )
-        # ChatAnthropic.invoke is sync; keep it off the event loop.
-        result = await asyncio.to_thread(graph.invoke, initial_state)
-    except (anthropic.APIConnectionError, anthropic.APIStatusError, ValueError) as e:
-        raise _to_provider_error(e, model=model_settings.model) from e
+        result = graph.invoke(initial_state)
+    except CHAT_MODEL_ERRORS as e:
+        raise to_provider_error(e, model=model_settings.model) from e
 
     return ChatbotTurnResult(
         reply=extract_final_reply(result["messages"]),

@@ -5,6 +5,8 @@ import logging
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.tts_evaluation.examples import TTS_DATASET_CREATE_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.core.cloud import get_cloud_storage
 from app.crud.language import get_language_by_id
@@ -30,6 +32,7 @@ router = APIRouter()
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Create TTS dataset",
     description=load_description("tts_evaluation/create_dataset.md"),
+    openapi_extra=request_examples(TTS_DATASET_CREATE_EXAMPLES),
 )
 def create_dataset(
     session: SessionDep,

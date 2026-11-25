@@ -1,7 +1,7 @@
-"""v2 upload policy: promote what the client uploaded into a document row."""
+"""v2 upload policy: issue an upload ticket, then promote what the client uploaded into a document row."""
 
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
@@ -10,8 +10,12 @@ from sqlmodel import Session
 from app.core.cloud import get_cloud_storage
 from app.core.cloud.storage import PENDING_PREFIX, ObjectNotFoundError
 from app.crud import DocumentCrud
-from app.models import Document
+from app.models import Document, DocumentPublic, DocumentUploadInitiateResponse
 from app.services.doctransform.registry import get_file_format
+from app.services.documents.constants import (
+    MAX_UPLOAD_BYTES,
+    UPLOAD_URL_EXPIRY_SECONDS,
+)
 
 DUPLICATE_DOCUMENT_DETAIL = (
     "This document_id is already registered. Request a new upload URL."
@@ -30,12 +34,38 @@ def validate_filename_format(filename: str) -> str:
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def initiate_document_upload(
+    *,
+    session: Session,
+    project_id: int,
+    filename: str,
+) -> DocumentUploadInitiateResponse:
+    """Issue a pre-signed upload ticket for a new document id; nothing is persisted."""
+    validate_filename_format(filename)
+
+    storage = get_cloud_storage(session=session, project_id=project_id)
+    document_id = uuid4()
+    ticket = storage.create_upload_ticket(
+        Path(str(document_id)),
+        filename=filename,
+        max_bytes=MAX_UPLOAD_BYTES,
+        expires_in=UPLOAD_URL_EXPIRY_SECONDS,
+    )
+
+    return DocumentUploadInitiateResponse(
+        document_id=document_id,
+        upload_url=ticket.url,
+        upload_fields=ticket.fields,
+        expires_in=ticket.expires_in,
+    )
+
+
 def register_uploaded_document(
     *,
     session: Session,
     project_id: int,
     document_id: UUID,
-) -> Document:
+) -> DocumentPublic:
     """Promote an uploaded object into a document row, moving it to its final key.
 
     The filename comes from the object's own signed metadata, not the request, so
@@ -79,4 +109,7 @@ def register_uploaded_document(
     # Only once the row is committed: a failed insert leaves the upload retryable,
     # and an abandoned pending object expires on its own.
     storage.delete(pending_url)
-    return document
+
+    document_schema = DocumentPublic.model_validate(document, from_attributes=True)
+    document_schema.signed_url = storage.get_signed_url(document.object_store_url)
+    return document_schema

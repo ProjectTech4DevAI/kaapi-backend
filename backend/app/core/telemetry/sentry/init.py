@@ -1,4 +1,4 @@
-"""sentry_sdk.init() with shared sampling, profiling, PII and before_send filters."""
+"""sentry_sdk.init() with shared sampling, PII and before_send filters."""
 
 import logging
 
@@ -32,8 +32,6 @@ def init_sentry(
         instrumenter="otel",
         traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
         sample_rate=settings.SENTRY_ERROR_SAMPLE_RATE,
-        profile_session_sample_rate=settings.SENTRY_PROFILE_SESSION_SAMPLE_RATE,
-        profile_lifecycle=settings.SENTRY_PROFILE_LIFECYCLE,
         send_default_pii=settings.SENTRY_SEND_DEFAULT_PII,
         enable_logs=True,
         include_local_variables=False,

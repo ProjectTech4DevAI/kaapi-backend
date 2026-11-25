@@ -5,6 +5,8 @@ import logging
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.stt_evaluation.examples import STT_FEEDBACK_UPDATE_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.crud.stt_evaluations import (
     get_stt_result_by_id,
@@ -27,6 +29,7 @@ router = APIRouter()
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Update human feedback",
     description=load_description("stt_evaluation/update_feedback.md"),
+    openapi_extra=request_examples(STT_FEEDBACK_UPDATE_EXAMPLES),
 )
 def update_result_feedback(
     session: SessionDep,

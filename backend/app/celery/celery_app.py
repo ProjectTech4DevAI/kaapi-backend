@@ -46,9 +46,20 @@ def _initialize_worker_observability() -> None:
         )
 
         @task_prerun.connect(weak=False)
-        def _tag_sentry_task(task: "celery.Task", **_: object) -> None:  # type: ignore[name-defined]
-            """Tag the task's Sentry scope with its name so Issues can be filtered by task."""
+        def _tag_sentry_task(
+            task: "celery.Task",  # type: ignore[name-defined]
+            kwargs: dict[str, object] | None = None,
+            **_: object,
+        ) -> None:
+            """Tag the task's Sentry scope with its name and tenant so Issues can be filtered by both."""
             sentry_sdk.set_tag("celery.task_name", task.name)
+            task_kwargs = kwargs or {}
+            for tag, key in (
+                ("tenant.project_id", "project_id"),
+                ("tenant.org_id", "organization_id"),
+            ):
+                if task_kwargs.get(key) is not None:
+                    sentry_sdk.set_tag(tag, str(task_kwargs[key]))
 
         _sentry_initialized = True
 

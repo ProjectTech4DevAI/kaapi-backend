@@ -3,6 +3,8 @@ import logging
 from fastapi import APIRouter, Depends
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.llm.examples import LLM_CHAIN_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.models import LLMChainRequest, LLMChainResponse, Message
 from app.services.llm.jobs import start_chain_job
@@ -36,6 +38,7 @@ def llm_callback_notification(body: APIResponse[LLMChainResponse]):
     response_model=APIResponse[Message],
     callbacks=llm_callback_router.routes,
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(LLM_CHAIN_EXAMPLES),
 )
 def llm_chain(
     current_user: AuthContextDep,

@@ -1,4 +1,4 @@
-name: Deploy Kaapi to Staging EC2
+name: Deploy Kaapi to EC2 Staging
 
 on:
   workflow_run:

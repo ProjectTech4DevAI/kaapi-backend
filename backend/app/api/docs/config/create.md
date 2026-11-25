@@ -98,7 +98,7 @@ shape is documented here:
   own llm call, so it carries `provider` (default `openai`) + its own `params`
   (a `TextLLMParams` object: `model`, `temperature`, …). Its criteria live in
   `params.instructions` (a **mandatory** field, exactly like the assessment call);
-  `params.model` defaults to `gpt-5.6-luna` when omitted. `duplicate_detection` also takes
+  `params.model` defaults to `gpt-6-luna` when omitted. `duplicate_detection` also takes
   an optional `knowledge_base_id`. Each pre-filter carries `stop_on_fail` (`true` = a
   failing verdict stops the chain and skips the assessment for that row; `false` = the
   verdict is just recorded).

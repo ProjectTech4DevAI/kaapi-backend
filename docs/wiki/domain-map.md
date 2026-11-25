@@ -37,7 +37,7 @@ APIKey → Organization, Project, User  # programmatic access
 | TTSResult | tts_evaluation.py | Run, Org, Project | human annotation UI (logical) |
 | Assessment / AssessmentRun | assessment.py | Config, AssessmentSubmission, BatchJob, Job, Org, Project | console UI (logical); webhook consumers (logical) |
 | Document | document.py | Project, Document (parent) | DocumentCollection, DocTransformationJob, FineTuning, ModelEvaluation |
-| Collection | collection.py | Project | DocumentCollection, CollectionJob; provider vector stores (logical) |
+| Collection | collection.py | Project | DocumentCollection, CollectionJob; provider vector stores (logical); rag chatbot turns search OpenAI collections by `knowledge_base_id` from the config (logical) |
 | DocumentCollection | document_collection.py | Document, Collection | RAG lookups (logical) |
 | CollectionJob | collection_job.py | Collection, Project | async collection create/delete (logical) |
 | DocTransformationJob | doc_transformation_job.py | Document | doctransform service (logical) |
@@ -53,7 +53,7 @@ APIKey → Organization, Project, User  # programmatic access
 | Chatbot | chatbot.py | Org, Project | ChatbotFlowVersion, ChatbotSession; soft-deleted (`deleted_at`) because sessions reference it |
 | ChatbotFlowVersion | chatbot.py | Chatbot (CASCADE) | ChatbotSession (`flow_version_id`, RESTRICT); React Flow editor in kaapi-frontend (logical); Config/ConfigVersion via node `data` (logical) |
 | ChatbotSession | chatbot.py | Chatbot (RESTRICT), ChatbotFlowVersion (RESTRICT) | ChatbotSessionMessage; Celery turn worker; caller webhook (logical) |
-| ChatbotSessionMessage | chatbot.py | ChatbotSession (CASCADE) | turn history for the onboarding agent (logical) |
+| ChatbotSessionMessage | chatbot.py | ChatbotSession (CASCADE) | turn history for the coordinator, onboarding and rag agents (logical) |
 
 ## External consumers (always check in blast radius)
 

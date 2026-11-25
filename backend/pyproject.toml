@@ -30,7 +30,6 @@ dependencies = [
     "opentelemetry-instrumentation-requests>=0.51b0",
     "opentelemetry-instrumentation-logging>=0.51b0",
     "opentelemetry-instrumentation-sqlalchemy>=0.51b0",
-    "opentelemetry-instrumentation-redis>=0.51b0",
     "opentelemetry-instrumentation-botocore>=0.51b0",
     "pyjwt>=2.15.0,<3.0.0",
     "boto3>=1.37.20",
@@ -64,6 +63,7 @@ dependencies = [
     "langgraph>=1.2.10",
     "langgraph-checkpoint-postgres>=3.1.1",
     "langchain-anthropic>=1.7.5",
+    "limits[redis]>=5.8.0,<6.0.0",
 ]
 
 [tool.uv]

@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlmodel import Session
 
+from app.celery.tasks.job_execution import DEFAULT_TRACE_ID
 from app.crud.evaluations.core import (
     TERMINAL_EVAL_STATUSES,
     update_evaluation_run,
@@ -165,7 +166,9 @@ class TestCallbackUrlTrigger:
                 eval_run=eval_run,
                 update=EvaluationRunUpdate(status=status, **extra),
             )
-            callback_delay.assert_called_once_with(eval_run.id)
+            callback_delay.assert_called_once_with(
+                eval_run.id, trace_id=DEFAULT_TRACE_ID
+            )
 
 
 class TestLatencyUpdate:

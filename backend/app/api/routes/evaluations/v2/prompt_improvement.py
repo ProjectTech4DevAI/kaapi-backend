@@ -9,7 +9,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.evaluation.examples import EVALUATION_IMPROVE_PROMPT_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
+from app.core.rate_limit import enforce_rate_limit
 from app.models.evaluation import ImprovePromptRequest
 from app.models.llm.response import LLMJobImmediatePublic
 from app.services.evaluations import start_prompt_improvement_job
@@ -23,9 +26,13 @@ router = APIRouter(prefix="/evaluations", tags=["Evaluation v2"])
 @router.post(
     "/{evaluation_id}/improve-prompt",
     description=load_description("evaluation/v2/improve_prompt.md"),
+    openapi_extra=request_examples(EVALUATION_IMPROVE_PROMPT_EXAMPLES),
     response_model=APIResponse[LLMJobImmediatePublic],
     status_code=202,
-    dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    dependencies=[
+        Depends(require_permission(Permission.REQUIRE_PROJECT)),
+        Depends(enforce_rate_limit("prompt_improvement")),
+    ],
 )
 def improve_evaluation_prompt_v2(
     evaluation_id: int,

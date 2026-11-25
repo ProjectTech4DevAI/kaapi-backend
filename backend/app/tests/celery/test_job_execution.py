@@ -14,6 +14,44 @@ SENTINEL = object()
         ("run_llm_job", "app.services.llm.jobs.execute_job"),
         ("run_llm_chain_job", "app.services.llm.jobs.execute_chain_job"),
         ("run_response_job", "app.services.response.jobs.execute_job"),
+        ("run_guardrails_job", "app.services.guardrails.jobs.execute_job"),
+        ("run_doctransform_job", "app.services.doctransform.job.execute_job"),
+        (
+            "run_collection_setup_job",
+            "app.services.collections.create_collection.execute_setup_job",
+        ),
+        (
+            "run_collection_batch_job",
+            "app.services.collections.create_collection.execute_batch_job",
+        ),
+        (
+            "run_delete_collection_job",
+            "app.services.collections.delete_collection.execute_job",
+        ),
+        (
+            "run_evaluation_batch_submission",
+            "app.services.evaluations.batch_job.execute_evaluation_batch_submission",
+        ),
+        (
+            "run_prompt_improvement",
+            "app.services.evaluations.prompt_improvement.execute_prompt_improvement",
+        ),
+        (
+            "run_stt_batch_submission",
+            "app.services.stt_evaluations.batch_job.execute_batch_submission",
+        ),
+        (
+            "run_stt_metric_computation",
+            "app.services.stt_evaluations.metric_job.execute_metric_computation",
+        ),
+        (
+            "run_tts_batch_submission",
+            "app.services.tts_evaluations.batch_job.execute_batch_submission",
+        ),
+        (
+            "run_tts_result_processing",
+            "app.services.tts_evaluations.batch_result_processing.execute_tts_result_processing",
+        ),
     ],
 )
 class TestJobWrappers:
@@ -26,6 +64,57 @@ class TestJobWrappers:
             result = task(project_id=1, job_id="job-1", trace_id="trace-1")
 
         assert result is SENTINEL
+
+
+@pytest.mark.parametrize(
+    ("task_name", "service_target", "task_kwargs"),
+    [
+        (
+            "run_evaluation_fast_chunk",
+            "app.services.evaluations.fast.execute_fast_evaluation_chunk",
+            {"eval_run_id": 7, "chunk_index": 2},
+        ),
+        (
+            "run_evaluation_fast_aggregate",
+            "app.services.evaluations.fast.execute_fast_evaluation_aggregate",
+            {"eval_run_id": 7},
+        ),
+        (
+            "run_evaluation_iteration_graph_step",
+            "app.services.evaluations.iteration_graph.execute_evaluation_iteration_graph_step",
+            {
+                "iteration_run_id": 3,
+                "resume": True,
+                "organization_id": 1,
+                "project_id": 2,
+            },
+        ),
+    ],
+)
+def test_evaluation_task_sets_trace_and_returns_service_result(
+    task_name, service_target, task_kwargs
+):
+    task = getattr(job_execution, task_name)
+    with patch(service_target, return_value=SENTINEL):
+        result = task(trace_id="trace-1", **task_kwargs)
+
+    assert result is SENTINEL
+    assert job_execution.correlation_id.get() == "trace-1"
+
+
+def test_assessment_pipeline_returns_service_result():
+    with (
+        patch.object(job_execution, "_set_trace", lambda trace_id: None),
+        patch(
+            "app.services.assessment.tasks.execute_assessment_pipeline",
+            return_value=SENTINEL,
+        ),
+    ):
+        result = job_execution.run_assessment_pipeline(
+            run_id=1, organization_id=2, project_id=3, trace_id="trace-1"
+        )
+
+    assert result is SENTINEL
 
 
 class TestAssessmentApiBatchReenqueue:
@@ -101,3 +190,96 @@ class TestRunChatbotSessionMessage:
                 "webhook_url": "https://hooks.example.com/chatbot",
             }
         ]
+
+
+class TestRunDuplicateDetection:
+    def test_runs_the_service_for_the_job(self):
+        job_id = uuid4()
+        received: list = []
+        with (
+            patch.object(job_execution, "_set_trace", lambda trace_id: None),
+            patch(
+                "app.services.assessment.duplicate_detection.service.run_duplicate_detection",
+                lambda *, assessment_id: received.append(assessment_id),
+            ),
+        ):
+            job_execution.run_duplicate_detection(
+                assessment_id=str(job_id), trace_id="trace-1"
+            )
+
+        assert received == [job_id]
+
+
+class TestFailDuplicateDetection:
+    def _request_trace(self) -> tuple[int, dict[str, str]]:
+        from opentelemetry import propagate, trace
+        from opentelemetry.trace import (
+            NonRecordingSpan,
+            SpanContext,
+            TraceFlags,
+        )
+
+        trace_id = 0x4C53557F3479295AB5D96C9A6EC0F05D
+        request = trace.set_span_in_context(
+            NonRecordingSpan(
+                SpanContext(
+                    trace_id=trace_id,
+                    span_id=0x1234567890ABCDEF,
+                    is_remote=True,
+                    trace_flags=TraceFlags(TraceFlags.SAMPLED),
+                )
+            )
+        )
+        headers: dict[str, str] = {}
+        propagate.inject(headers, context=request)
+        return trace_id, headers
+
+    def test_fails_the_job_inside_the_requests_trace(self):
+        from opentelemetry import trace
+
+        job_id = uuid4()
+        trace_id, headers = self._request_trace()
+        received: list = []
+
+        def _fail(*, assessment_id):
+            received.append(
+                (assessment_id, trace.get_current_span().get_span_context().trace_id)
+            )
+
+        with (
+            patch.object(job_execution, "_set_trace", lambda trace_id: None),
+            patch(
+                "app.services.assessment.duplicate_detection.service.fail_interrupted",
+                _fail,
+            ),
+        ):
+            # Celery calls a link_error handler with the failed task's id first.
+            job_execution.fail_duplicate_detection(
+                "failed-task-id",
+                assessment_id=str(job_id),
+                trace_id="trace-1",
+                trace_headers=headers,
+            )
+
+        assert received == [(job_id, trace_id)]
+
+    def test_leaves_no_trace_context_behind(self):
+        from opentelemetry import trace
+
+        _, headers = self._request_trace()
+        with (
+            patch.object(job_execution, "_set_trace", lambda trace_id: None),
+            patch(
+                "app.services.assessment.duplicate_detection.service.fail_interrupted",
+                lambda *, assessment_id: None,
+            ),
+        ):
+            job_execution.fail_duplicate_detection(
+                "failed-task-id",
+                assessment_id=str(uuid4()),
+                trace_id="trace-1",
+                trace_headers=headers,
+            )
+
+        # A leaked context would put the worker's next task into this request's trace.
+        assert not trace.get_current_span().get_span_context().is_valid

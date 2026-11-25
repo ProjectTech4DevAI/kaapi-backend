@@ -3,6 +3,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.assistants.examples import (
+    ASSISTANT_CREATE_EXAMPLES,
+    ASSISTANT_UPDATE_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.crud import (
     fetch_assistant_from_openai,
     sync_assistant,
@@ -54,6 +59,7 @@ def ingest_assistant_route(
     response_model=APIResponse[Assistant],
     status_code=201,
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(ASSISTANT_CREATE_EXAMPLES),
 )
 def create_assistant_route(
     assistant_in: AssistantCreate,
@@ -80,6 +86,7 @@ def create_assistant_route(
     "/{assistant_id}",
     response_model=APIResponse[Assistant],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(ASSISTANT_UPDATE_EXAMPLES),
 )
 def update_assistant_route(
     assistant_id: Annotated[str, Path(description="Assistant ID to update")],

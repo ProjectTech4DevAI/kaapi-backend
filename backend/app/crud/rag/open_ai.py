@@ -6,7 +6,7 @@ from typing import Any, Iterator
 
 import openai
 from openai import OpenAI, OpenAIError
-from openai.types import VectorStore
+from openai.types import VectorStore, VectorStoreSearchResponse
 from openai.types.vector_stores import VectorStoreFile, VectorStoreFileBatch
 from pydantic import BaseModel
 from tenacity import (
@@ -125,10 +125,16 @@ class OpenAIVectorStoreCrud(OpenAICrud):
             f"[OpenAIVectorStoreCrud.create] Creating vector store | {{'action': 'create'}}"
         )
         vector_store = self.client.vector_stores.create()
-        logger.info(
-            f"[OpenAIVectorStoreCrud.create] Vector store created | {{'vector_store_id': '{vector_store.id}'}}"
-        )
         return vector_store
+
+    def search(
+        self, vector_store_id: str, *, query: str, max_num_results: int
+    ) -> list[VectorStoreSearchResponse]:
+        """Chunks of one vector store most relevant to `query`, best match first."""
+        page = self.client.vector_stores.search(
+            vector_store_id, query=query, max_num_results=max_num_results
+        )
+        return list(page.data)
 
     def read(self, vector_store_id: str) -> Iterator[VectorStoreFile]:
         logger.info(

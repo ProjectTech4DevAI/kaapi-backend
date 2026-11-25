@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Any
 
@@ -92,6 +93,125 @@ def _ensure_openai_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+# Anthropic compiles a structured-output schema into a decoding grammar and rejects
+# keywords it cannot express, so a schema authored against OpenAI strict mode has to be
+# reduced to the supported subset before it reaches the Messages API.
+ANTHROPIC_UNSUPPORTED_SCHEMA_KEYWORDS = (
+    "minLength",
+    "maxLength",
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "maxItems",
+    "uniqueItems",
+    "minContains",
+    "maxContains",
+    "minProperties",
+    "maxProperties",
+    "not",
+)
+ANTHROPIC_SUPPORTED_STRING_FORMATS = frozenset(
+    {
+        "date-time",
+        "time",
+        "date",
+        "duration",
+        "email",
+        "hostname",
+        "uri",
+        "ipv4",
+        "ipv6",
+        "uuid",
+    }
+)
+# Anthropic accepts minItems only as 0 or 1; any larger floor is dropped.
+ANTHROPIC_MAX_SUPPORTED_MIN_ITEMS = 1
+# Subschema containers that have to be walked so the rules apply at every level.
+SCHEMA_BRANCH_KEYWORDS = ("anyOf", "allOf")
+SCHEMA_DEFINITION_KEYWORDS = ("$defs", "definitions")
+
+
+def _ensure_anthropic_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a JSON schema to the subset Anthropic's grammar compiler accepts, strict-mode style.
+
+    Applies OpenAI strict normalisation (every property required, additionalProperties
+    false) and additionally drops constraints Anthropic rejects outright, so one stored
+    schema can serve both providers.
+    """
+    normalized = dict(schema)
+
+    # Anthropic's own SDK helper spells a dropped constraint out in the description,
+    # so the model still reads the bound it can no longer be held to.
+    dropped = {
+        keyword: normalized.pop(keyword)
+        for keyword in ANTHROPIC_UNSUPPORTED_SCHEMA_KEYWORDS
+        if keyword in normalized
+    }
+    if dropped:
+        note = ", ".join(
+            f"{keyword}: {json.dumps(value)}" for keyword, value in dropped.items()
+        )
+        description = normalized.get("description")
+        normalized["description"] = f"{description} ({note})" if description else note
+
+    # `oneOf` is not supported; `anyOf` is the nearest expressible equivalent.
+    if "oneOf" in normalized and "anyOf" not in normalized:
+        normalized["anyOf"] = normalized["oneOf"]
+    normalized.pop("oneOf", None)
+
+    if normalized.get("format") not in ANTHROPIC_SUPPORTED_STRING_FORMATS:
+        normalized.pop("format", None)
+
+    min_items = normalized.get("minItems")
+    if isinstance(min_items, int) and min_items > ANTHROPIC_MAX_SUPPORTED_MIN_ITEMS:
+        normalized["minItems"] = ANTHROPIC_MAX_SUPPORTED_MIN_ITEMS
+
+    if normalized.get("type") == "object":
+        normalized["additionalProperties"] = False
+
+    if "properties" in normalized:
+        normalized["properties"] = {
+            key: _ensure_anthropic_strict_schema(value)
+            if isinstance(value, dict)
+            else value
+            for key, value in normalized["properties"].items()
+        }
+        # Every property required: an optional one multiplies the compiled grammar.
+        required = list(normalized.get("required", []))
+        for key in normalized["properties"]:
+            if key not in required:
+                required.append(key)
+        normalized["required"] = required
+
+    items = normalized.get("items")
+    if isinstance(items, dict):
+        normalized["items"] = _ensure_anthropic_strict_schema(items)
+
+    for keyword in SCHEMA_BRANCH_KEYWORDS:
+        branches = normalized.get(keyword)
+        if isinstance(branches, list):
+            normalized[keyword] = [
+                _ensure_anthropic_strict_schema(branch)
+                if isinstance(branch, dict)
+                else branch
+                for branch in branches
+            ]
+
+    for keyword in SCHEMA_DEFINITION_KEYWORDS:
+        definitions = normalized.get(keyword)
+        if isinstance(definitions, dict):
+            normalized[keyword] = {
+                name: _ensure_anthropic_strict_schema(definition)
+                if isinstance(definition, dict)
+                else definition
+                for name, definition in definitions.items()
+            }
+
+    return normalized
+
+
 def _strip_additional_properties(schema: dict[str, Any]) -> dict[str, Any]:
     """Recursively strip additionalProperties — unsupported by Google GenAI."""
     normalized_schema = dict(schema)
@@ -172,7 +292,8 @@ def map_kaapi_to_openai_params(
     openai_params: dict[str, Any] = {}
     warnings = []
 
-    model = params.get("model")
+    # Resolved before the capability check: an omitted model still runs on the default.
+    model = params.get("model") or DEFAULT_TEXT_MODELS["openai"]
     reasoning = params.get("reasoning")
     effort = params.get("effort")
     summary = params.get("summary")
@@ -183,7 +304,7 @@ def map_kaapi_to_openai_params(
     max_num_results = params.get("max_num_results")
     output_schema = params.get("output_schema")
 
-    support_reasoning = bool(model) and is_reasoning_model(
+    support_reasoning = is_reasoning_model(
         session=session, provider="openai", model_name=model
     )
 
@@ -225,7 +346,7 @@ def map_kaapi_to_openai_params(
         if top_p is not None:
             openai_params["top_p"] = top_p
 
-    openai_params["model"] = model or DEFAULT_TEXT_MODELS["openai"]
+    openai_params["model"] = model
 
     if instructions:
         openai_params["instructions"] = instructions
@@ -604,7 +725,8 @@ def map_kaapi_to_anthropic_params(
         - temperature / top_p → always dropped; a non-default value also warns
         - max_output_tokens → max_tokens (Anthropic requires this;
           provider defaults if absent)
-        - output_schema → output_config.format, effort → output_config.effort
+        - output_schema → output_config.format, reduced to the keyword subset
+          Anthropic's grammar compiler accepts; effort → output_config.effort
         - thinking → thinking, forwarded as-is
 
     Unsupported Kaapi params:
@@ -648,7 +770,7 @@ def map_kaapi_to_anthropic_params(
     if output_schema:
         output_config["format"] = {
             "type": "json_schema",
-            "schema": _ensure_openai_strict_schema(output_schema),
+            "schema": _ensure_anthropic_strict_schema(output_schema),
         }
 
     effort = params.get("effort") or params.get("reasoning")

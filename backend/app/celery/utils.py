@@ -2,6 +2,7 @@
 Utility functions for easy Celery integration across the application.
 Business logic modules can use these functions without knowing Celery internals.
 """
+
 import logging
 import functools
 from typing import Any, Dict, TypeVar
@@ -9,7 +10,7 @@ from collections.abc import Callable
 
 from celery.result import AsyncResult
 from gevent import Timeout
-from opentelemetry.propagate import inject
+from opentelemetry import propagate
 
 from app.celery.celery_app import celery_app
 
@@ -18,24 +19,38 @@ logger = logging.getLogger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-def _enqueue_with_trace_context(task, **kwargs) -> str:
-    """Publish Celery task with explicit trace context headers."""
-    otel_headers: dict[str, str] = {}
-    inject(otel_headers)
-    celery_headers = dict(otel_headers)
-    celery_headers["otel"] = otel_headers
-    async_result = task.apply_async(kwargs=kwargs, headers=celery_headers)
-    return async_result.id
-
-
 def start_llm_job(project_id: int, job_id: str, trace_id: str = "N/A", **kwargs) -> str:
     from app.celery.tasks.job_execution import run_llm_job
 
-    task_id = _enqueue_with_trace_context(
-        run_llm_job, project_id=project_id, job_id=job_id, trace_id=trace_id, **kwargs
-    )
+    task_id = run_llm_job.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(f"[start_llm_job] Started job {job_id} with Celery task {task_id}")
     return task_id
+
+
+def start_duplicate_detection(assessment_id: str, trace_id: str = "N/A") -> str:
+    from app.celery.tasks.job_execution import (
+        fail_duplicate_detection,
+        run_duplicate_detection,
+    )
+
+    kwargs = {"assessment_id": assessment_id, "trace_id": trace_id}
+
+    # The worker's parent sends the failure task outside any span, so the request's
+    # trace context travels as an argument for that task to continue.
+    trace_headers: dict[str, str] = {}
+    propagate.inject(trace_headers)
+
+    return run_duplicate_detection.apply_async(
+        kwargs=kwargs,
+        link_error=fail_duplicate_detection.s(**kwargs, trace_headers=trace_headers),
+    ).id
 
 
 def start_llm_chain_job(
@@ -43,13 +58,14 @@ def start_llm_chain_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_llm_chain_job
 
-    task_id = _enqueue_with_trace_context(
-        run_llm_chain_job,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_llm_chain_job.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_llm_chain_job] Started job {job_id} with Celery task {task_id}"
     )
@@ -61,13 +77,14 @@ def start_guardrails_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_guardrails_job
 
-    task_id = _enqueue_with_trace_context(
-        run_guardrails_job,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_guardrails_job.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_guardrails_job] Started job {job_id} with Celery task {task_id}"
     )
@@ -79,13 +96,14 @@ def start_response_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_response_job
 
-    task_id = _enqueue_with_trace_context(
-        run_response_job,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_response_job.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(f"[start_response_job] Started job {job_id} with Celery task {task_id}")
     return task_id
 
@@ -95,13 +113,14 @@ def start_doctransform_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_doctransform_job
 
-    task_id = _enqueue_with_trace_context(
-        run_doctransform_job,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_doctransform_job.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_doctransform_job] Started job {job_id} with Celery task {task_id}"
     )
@@ -113,13 +132,14 @@ def start_collection_setup_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_collection_setup_job
 
-    task_id = _enqueue_with_trace_context(
-        run_collection_setup_job,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_collection_setup_job.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_collection_setup_job] Started job {job_id} with Celery task {task_id}"
     )
@@ -131,13 +151,14 @@ def start_collection_batch_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_collection_batch_job
 
-    task_id = _enqueue_with_trace_context(
-        run_collection_batch_job,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_collection_batch_job.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_collection_batch_job] Started job {job_id} with Celery task {task_id}"
     )
@@ -149,13 +170,14 @@ def start_delete_collection_job(
 ) -> str:
     from app.celery.tasks.job_execution import run_delete_collection_job
 
-    task_id = _enqueue_with_trace_context(
-        run_delete_collection_job,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_delete_collection_job.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_delete_collection_job] Started job {job_id} with Celery task {task_id}"
     )
@@ -167,13 +189,14 @@ def start_evaluation_batch_submission(
 ) -> str:
     from app.celery.tasks.job_execution import run_evaluation_batch_submission
 
-    task_id = _enqueue_with_trace_context(
-        run_evaluation_batch_submission,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_evaluation_batch_submission.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_evaluation_batch_submission] Started job {job_id} with Celery task {task_id}"
     )
@@ -185,13 +208,14 @@ def start_prompt_improvement(
 ) -> str:
     from app.celery.tasks.job_execution import run_prompt_improvement
 
-    task_id = _enqueue_with_trace_context(
-        run_prompt_improvement,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_prompt_improvement.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_prompt_improvement] Started job {job_id} with Celery task {task_id}"
     )
@@ -203,13 +227,14 @@ def start_stt_batch_submission(
 ) -> str:
     from app.celery.tasks.job_execution import run_stt_batch_submission
 
-    task_id = _enqueue_with_trace_context(
-        run_stt_batch_submission,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_stt_batch_submission.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_stt_batch_submission] Started job {job_id} with Celery task {task_id}"
     )
@@ -221,13 +246,14 @@ def start_stt_metric_computation(
 ) -> str:
     from app.celery.tasks.job_execution import run_stt_metric_computation
 
-    task_id = _enqueue_with_trace_context(
-        run_stt_metric_computation,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_stt_metric_computation.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_stt_metric_computation] Started job {job_id} with Celery task {task_id}"
     )
@@ -239,13 +265,14 @@ def start_tts_batch_submission(
 ) -> str:
     from app.celery.tasks.job_execution import run_tts_batch_submission
 
-    task_id = _enqueue_with_trace_context(
-        run_tts_batch_submission,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_tts_batch_submission.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_tts_batch_submission] Started job {job_id} with Celery task {task_id}"
     )
@@ -257,13 +284,14 @@ def start_tts_result_processing(
 ) -> str:
     from app.celery.tasks.job_execution import run_tts_result_processing
 
-    task_id = _enqueue_with_trace_context(
-        run_tts_result_processing,
-        project_id=project_id,
-        job_id=job_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_tts_result_processing.apply_async(
+        kwargs={
+            "project_id": project_id,
+            "job_id": job_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_tts_result_processing] Started job {job_id} with Celery task {task_id}"
     )
@@ -294,12 +322,13 @@ def start_fast_evaluation_chunk(
     """Enqueue one parallel responses-chunk task for a fast EvaluationRun."""
     from app.celery.tasks.job_execution import run_evaluation_fast_chunk
 
-    task_id = _enqueue_with_trace_context(
-        run_evaluation_fast_chunk,
-        eval_run_id=eval_run_id,
-        chunk_index=chunk_index,
-        trace_id=trace_id,
-    )
+    task_id = run_evaluation_fast_chunk.apply_async(
+        kwargs={
+            "eval_run_id": eval_run_id,
+            "chunk_index": chunk_index,
+            "trace_id": trace_id,
+        }
+    ).id
     logger.info(
         f"[start_fast_evaluation_chunk] Enqueued fast eval chunk | "
         f"eval_run_id={eval_run_id} | chunk_index={chunk_index} | task_id={task_id}"
@@ -311,11 +340,9 @@ def start_fast_evaluation_aggregate(eval_run_id: int, trace_id: str = "N/A") -> 
     """Enqueue the fan-in aggregate task once a fast run's chunks are all done."""
     from app.celery.tasks.job_execution import run_evaluation_fast_aggregate
 
-    task_id = _enqueue_with_trace_context(
-        run_evaluation_fast_aggregate,
-        eval_run_id=eval_run_id,
-        trace_id=trace_id,
-    )
+    task_id = run_evaluation_fast_aggregate.apply_async(
+        kwargs={"eval_run_id": eval_run_id, "trace_id": trace_id}
+    ).id
     logger.info(
         f"[start_fast_evaluation_aggregate] Enqueued fast eval aggregate | "
         f"eval_run_id={eval_run_id} | task_id={task_id}"
@@ -339,15 +366,16 @@ def start_evaluation_iteration_round(
     """
     from app.celery.tasks.job_execution import run_evaluation_iteration_graph_step
 
-    task_id = _enqueue_with_trace_context(
-        run_evaluation_iteration_graph_step,
-        iteration_run_id=iteration_run_id,
-        resume=resume,
-        organization_id=organization_id,
-        project_id=project_id,
-        trace_id=trace_id,
-        **kwargs,
-    )
+    task_id = run_evaluation_iteration_graph_step.apply_async(
+        kwargs={
+            "iteration_run_id": iteration_run_id,
+            "resume": resume,
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "trace_id": trace_id,
+            **kwargs,
+        }
+    ).id
     logger.info(
         f"[start_evaluation_iteration_round] Enqueued | "
         f"iteration_run_id={iteration_run_id} | resume={resume} | task_id={task_id}"
@@ -364,13 +392,17 @@ def start_chatbot_session_message(
 ) -> str:
     from app.celery.tasks.job_execution import run_chatbot_session_message
 
-    task_id = _enqueue_with_trace_context(
-        run_chatbot_session_message,
-        session_id=session_id,
-        organization_id=organization_id,
-        project_id=project_id,
-        webhook_url=webhook_url,
-        trace_id=trace_id,
+    task_id = run_chatbot_session_message.apply_async(
+        kwargs={
+            "session_id": session_id,
+            "organization_id": organization_id,
+            "project_id": project_id,
+            "webhook_url": webhook_url,
+            "trace_id": trace_id,
+        }
+    ).id
+    logger.info(
+        f"[start_chatbot_session_message] Started session {session_id} with Celery task {task_id}"
     )
     return task_id
 

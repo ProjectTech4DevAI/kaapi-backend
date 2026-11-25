@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
@@ -8,6 +9,8 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langchain_core.runnables import Runnable, RunnableLambda
+from openai.types import VectorStoreSearchResponse
+from openai.types.vector_store_search_response import Content
 from pydantic import Field
 from sqlmodel import Session, select
 
@@ -35,7 +38,9 @@ from app.models import (
     Project,
 )
 from app.models.provider_credentials import Provider
+from app.services.chatbot.agents.coordinator import graph as coordinator_graph
 from app.services.chatbot.agents.onboarding import graph as onboarding_graph
+from app.services.chatbot.agents.rag import graph as rag_graph
 from app.services.chatbot.agents.onboarding.types import (
     ExtractedField,
     FieldExtraction,
@@ -51,6 +56,9 @@ from app.tests.utils.utils import random_lower_string
 DEFAULT_SYSTEM_PROMPT = "Collect the user's name and city."
 ONBOARDING_NODE_ID = "onboarding-1"
 ONBOARDING_NODE_LABEL = "Beneficiary Info Extractor"
+INPUT_NODE_ID = "input-1"
+COORDINATOR_NODE_ID = "coordinator-1"
+COORDINATOR_PROMPT = "You greet users and route them to the right assistant."
 # A model other than build_anthropic_text_config_blob's default, so a newer
 # config version is distinguishable from version 1.
 NEWER_CONFIG_MODEL = "claude-opus-5-5"
@@ -98,7 +106,8 @@ NOTHING_EXTRACTED = FieldExtraction(
 class ScriptedChatModel(BaseChatModel):
     """Stands in for ChatAnthropic: replies from a script and records each call."""
 
-    replies: list[str] = Field(default_factory=list)
+    # A str becomes a plain AIMessage; pass an AIMessage to script tool calls.
+    replies: list[str | AIMessage] = Field(default_factory=list)
     token_count: int = 0
     error: Exception | None = None
     calls: list[list[BaseMessage]] = Field(default_factory=list)
@@ -107,6 +116,11 @@ class ScriptedChatModel(BaseChatModel):
     extractions: list[Any] = Field(default_factory=list)
     extraction_calls: list[list[BaseMessage]] = Field(default_factory=list)
     structured_output_methods: list[str | None] = Field(default_factory=list)
+    # Schema of each structured call actually invoked, in call order.
+    structured_output_schemas: list[Any] = Field(default_factory=list)
+    # tool_choice each call was bound with (None = unbound or default "auto").
+    call_tool_choices: list[Any] = Field(default_factory=list)
+    bound_tool_names: list[list[str]] = Field(default_factory=list)
 
     @property
     def _llm_type(self) -> str:
@@ -120,10 +134,18 @@ class ScriptedChatModel(BaseChatModel):
         **kwargs: Any,
     ) -> ChatResult:
         self.calls.append(list(messages))
+        self.call_tool_choices.append(kwargs.get("tool_choice"))
         if self.error is not None:
             raise self.error
-        reply = AIMessage(content=self.replies.pop(0))
+        scripted = self.replies.pop(0)
+        reply = scripted if isinstance(scripted, AIMessage) else AIMessage(scripted)
         return ChatResult(generations=[ChatGeneration(message=reply)])
+
+    def bind_tools(
+        self, tools: Sequence[Any], *, tool_choice: Any = None, **kwargs: Any
+    ) -> Runnable[Any, BaseMessage]:
+        self.bound_tool_names.append([tool.name for tool in tools])
+        return self.bind(tool_choice=tool_choice)
 
     def get_num_tokens_from_messages(
         self, messages: list[BaseMessage], tools: Sequence[Any] | None = None
@@ -137,6 +159,7 @@ class ScriptedChatModel(BaseChatModel):
 
         def _extract(messages: list[BaseMessage]) -> Any:
             self.extraction_calls.append(list(messages))
+            self.structured_output_schemas.append(schema)
             outcome = self.extractions.pop(0) if self.extractions else NOTHING_EXTRACTED
             if isinstance(outcome, BaseException):
                 raise outcome
@@ -149,10 +172,26 @@ def patch_chat_model(
     monkeypatch: pytest.MonkeyPatch, chat_model: ScriptedChatModel
 ) -> ScriptedChatModel:
     # The Anthropic SDK is the external boundary; everything above it runs for real.
-    monkeypatch.setattr(
-        onboarding_graph, "get_chat_model", lambda _settings: chat_model
-    )
+    for graph_module in (onboarding_graph, coordinator_graph, rag_graph):
+        monkeypatch.setattr(
+            graph_module, "get_chat_model", lambda _settings: chat_model
+        )
     return chat_model
+
+
+def tool_call_reply(*queries: str, text: str = "") -> AIMessage:
+    """An agent reply that calls the knowledge-base search once per query."""
+    return AIMessage(
+        content=text,
+        tool_calls=[
+            {
+                "name": "search_knowledge_base",
+                "args": {"query": query},
+                "id": f"toolu_{index}_{query.replace(' ', '_')}",
+            }
+            for index, query in enumerate(queries)
+        ],
+    )
 
 
 def create_test_anthropic_credential(
@@ -223,8 +262,19 @@ def build_flow_node(node_id: str, node_type: str, **data: Any) -> dict[str, Any]
     }
 
 
-def build_flow_edge(edge_id: str, source: str, target: str) -> dict[str, Any]:
-    return {"id": edge_id, "source": source, "target": target}
+def build_flow_edge(
+    edge_id: str, source: str, target: str, *, data: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    edge: dict[str, Any] = {"id": edge_id, "source": source, "target": target}
+    if data is not None:
+        edge["data"] = data
+    return edge
+
+
+def build_intent_edge(
+    edge_id: str, target: str, intent: str, *, source: str = COORDINATOR_NODE_ID
+) -> dict[str, Any]:
+    return build_flow_edge(edge_id, source, target, data={"intent": intent})
 
 
 def build_onboarding_node(
@@ -243,6 +293,59 @@ def build_onboarding_node(
     if prompt is not None:
         data["prompt"] = prompt
     return build_flow_node(node_id, node_type, **data)
+
+
+def build_coordinator_node(
+    *,
+    config_id: UUID | None,
+    config_version: int | None = 1,
+    prompt: str | None = COORDINATOR_PROMPT,
+    node_id: str = COORDINATOR_NODE_ID,
+) -> dict[str, Any]:
+    return build_onboarding_node(
+        config_id=config_id,
+        config_version=config_version,
+        prompt=prompt,
+        node_id=node_id,
+        node_type=ChatbotFlowNodeTypeEnum.COORDINATOR.value,
+    )
+
+
+def build_coordinator_flow(
+    *,
+    config_id: UUID,
+    routes: dict[str, str],
+    rag_routes: dict[str, tuple[str, UUID]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """input -> coordinator -> one onboarding node per `routes` entry (intent -> node id),
+    plus one rag node per `rag_routes` entry (intent -> (node id, rag config id))."""
+    nodes = [
+        build_flow_node(INPUT_NODE_ID, ChatbotFlowNodeTypeEnum.INPUT.value),
+        build_coordinator_node(config_id=config_id),
+    ]
+    edges = [build_flow_edge("e-input", INPUT_NODE_ID, COORDINATOR_NODE_ID)]
+    targets = [
+        (intent, node_id, config_id, ChatbotFlowNodeTypeEnum.ONBOARDING)
+        for intent, node_id in routes.items()
+    ] + [
+        (intent, node_id, rag_config_id, ChatbotFlowNodeTypeEnum.RAG)
+        for intent, (node_id, rag_config_id) in (rag_routes or {}).items()
+    ]
+    for intent, node_id, target_config_id, node_type in targets:
+        nodes.append(
+            build_onboarding_node(
+                config_id=target_config_id,
+                node_id=node_id,
+                prompt=route_prompt(node_id),
+                node_type=node_type.value,
+            )
+        )
+        edges.append(build_intent_edge(f"e-{node_id}", node_id, intent))
+    return nodes, edges
+
+
+def route_prompt(node_id: str) -> str:
+    return f"Collect the details needed by {node_id}."
 
 
 def create_test_chatbot(
@@ -307,6 +410,71 @@ def create_test_live_chatbot(
         is_live=True,
     )
     return chatbot, flow_version
+
+
+def create_test_live_coordinator_chatbot(
+    db: Session,
+    *,
+    config: Config,
+    routes: dict[str, str],
+    rag_routes: dict[str, tuple[str, UUID]] | None = None,
+) -> tuple[Chatbot, ChatbotFlowVersion]:
+    """A chatbot whose live flow is input -> coordinator -> one agent node per route."""
+    project = db.get(Project, config.project_id)
+    assert project is not None
+    chatbot = create_test_chatbot(db, project=project)
+    nodes, edges = build_coordinator_flow(
+        config_id=config.id, routes=routes, rag_routes=rag_routes
+    )
+    flow_version = create_test_flow_version(
+        db, chatbot=chatbot, nodes=nodes, edges=edges, is_live=True
+    )
+    return chatbot, flow_version
+
+
+def search_hit(
+    *, file_id: str, filename: str, score: float, texts: Sequence[str] = ("text",)
+) -> VectorStoreSearchResponse:
+    return VectorStoreSearchResponse(
+        attributes=None,
+        content=[Content(text=text, type="text") for text in texts],
+        file_id=file_id,
+        filename=filename,
+        score=score,
+    )
+
+
+@dataclass
+class _SearchPage:
+    data: list[VectorStoreSearchResponse]
+
+
+@dataclass
+class FakeVectorStores:
+    hits: dict[str, list[VectorStoreSearchResponse]] = field(default_factory=dict)
+    error: Exception | None = None
+    calls: list[dict[str, Any]] = field(default_factory=list)
+
+    def search(
+        self, vector_store_id: str, *, query: str, max_num_results: int
+    ) -> _SearchPage:
+        self.calls.append(
+            {
+                "vector_store_id": vector_store_id,
+                "query": query,
+                "max_num_results": max_num_results,
+            }
+        )
+        if self.error is not None:
+            raise self.error
+        return _SearchPage(data=list(self.hits.get(vector_store_id, [])))
+
+
+@dataclass
+class FakeOpenAIClient:
+    """Stands in for openai.OpenAI; only vector-store search is used by the rag agent."""
+
+    vector_stores: FakeVectorStores = field(default_factory=FakeVectorStores)
 
 
 def create_test_chatbot_session(

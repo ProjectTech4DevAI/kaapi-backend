@@ -2,6 +2,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
 
 from app.crud.config import ConfigCrud
@@ -14,7 +15,7 @@ from app.models import (
 from app.models.config.config import ConfigTag
 from app.models.llm.request import NativeCompletionConfig
 from app.tests.utils.test_data import create_test_config, create_test_project
-from app.tests.utils.utils import random_lower_string
+from app.tests.utils.utils import make_integrity_error, random_lower_string
 
 
 @pytest.fixture
@@ -569,3 +570,68 @@ def test_config_tag_is_immutable(db: Session) -> None:
 
     with pytest.raises(ValueError, match="tag is immutable"):
         config.tag = ConfigTag.ASSESSMENT
+
+
+def test_create_config_concurrent_duplicate_propagates(
+    db: Session, example_config_blob: ConfigBlob, monkeypatch
+) -> None:
+    """A commit-time unique violation reaches the central DB handler (409)."""
+    project = create_test_project(db)
+    config_crud = ConfigCrud(session=db, project_id=project.id)
+
+    def _fail_commit() -> None:
+        raise make_integrity_error("23505")
+
+    monkeypatch.setattr(db, "commit", _fail_commit)
+
+    with pytest.raises(IntegrityError):
+        config_crud.create_or_raise(
+            ConfigCreate(
+                name=f"test-config-{random_lower_string()}",
+                config_blob=example_config_blob,
+            )
+        )
+
+
+def test_create_config_http_exception_propagates(
+    db: Session, example_config_blob: ConfigBlob, monkeypatch
+) -> None:
+    """A typed HTTPException inside the write keeps its status, not a 500."""
+    project = create_test_project(db)
+    config_crud = ConfigCrud(session=db, project_id=project.id)
+
+    def _fail_add(*_: object, **__: object) -> None:
+        raise HTTPException(status_code=503, detail="unavailable")
+
+    monkeypatch.setattr(db, "add", _fail_add)
+
+    with pytest.raises(HTTPException) as exc:
+        config_crud.create_or_raise(
+            ConfigCreate(
+                name=f"test-config-{random_lower_string()}",
+                config_blob=example_config_blob,
+            )
+        )
+
+    assert exc.value.status_code == 503
+
+
+def test_create_config_foreign_key_violation_is_not_reported_as_duplicate(
+    db: Session, example_config_blob: ConfigBlob, monkeypatch
+) -> None:
+    """Only a unique violation is a name conflict; other IntegrityErrors propagate."""
+    project = create_test_project(db)
+    config_crud = ConfigCrud(session=db, project_id=project.id)
+
+    def _fail_commit() -> None:
+        raise make_integrity_error("23503")
+
+    monkeypatch.setattr(db, "commit", _fail_commit)
+
+    with pytest.raises(IntegrityError):
+        config_crud.create_or_raise(
+            ConfigCreate(
+                name=f"test-config-{random_lower_string()}",
+                config_blob=example_config_blob,
+            )
+        )

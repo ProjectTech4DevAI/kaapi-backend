@@ -320,7 +320,7 @@ class TestDocumentRouteUpload:
 
         try:
             response = uploader.put(route, unsupported_file, target_format="markdown")
-            assert response.status_code == 400
+            assert response.status_code == 422
             error_data = response.json()
             assert "Unsupported file extension: .xyz" in error_data["error"]
         finally:
@@ -365,7 +365,7 @@ class TestDocumentRouteUpload:
 
         # Mock calculate_file_size to return a value just under the 25 MB limit (in KB)
         with patch(
-            "app.api.routes.documents.calculate_file_size",
+            "app.api.routes.documents.document.calculate_file_size",
             return_value=25 * 1024 - 1,  # 25 MB - 1 KB
         ):
             response = uploader.put(route, scratch)
@@ -385,7 +385,7 @@ class TestDocumentRouteUpload:
 
         # Mock calculate_file_size to return a value over the 25 MB limit (in KB)
         with patch(
-            "app.api.routes.documents.calculate_file_size",
+            "app.api.routes.documents.document.calculate_file_size",
             return_value=25 * 1024 + 1,  # 25 MB + 1 KB
         ):
             response = uploader.put(route, scratch)

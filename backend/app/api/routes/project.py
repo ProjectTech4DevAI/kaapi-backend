@@ -5,6 +5,13 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.projects.examples import (
+    PROJECT_CREATE_EXAMPLES,
+    PROJECT_DELETE_EXAMPLES,
+    PROJECT_SETTINGS_UPDATE_EXAMPLES,
+    PROJECT_UPDATE_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.crud.organization import get_organization_by_id, validate_organization
 from app.crud.project import (
@@ -75,6 +82,7 @@ def read_projects(
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[ProjectPublic],
     description=load_description("projects/create.md"),
+    openapi_extra=request_examples(PROJECT_CREATE_EXAMPLES),
 )
 def create_new_project(
     *, session: SessionDep, project_in: ProjectCreate
@@ -88,6 +96,7 @@ def create_new_project(
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     response_model=APIResponse[ProjectPublic],
     description=load_description("projects/update_settings.md"),
+    openapi_extra=request_examples(PROJECT_SETTINGS_UPDATE_EXAMPLES),
 )
 def update_project_settings_route(
     *,
@@ -111,6 +120,7 @@ def update_project_settings_route(
     "/{project_id}/settings",
     response_model=APIResponse[ProjectPublic],
     description=load_description("projects/superuser_update_settings.md"),
+    openapi_extra=request_examples(PROJECT_SETTINGS_UPDATE_EXAMPLES),
 )
 def update_project_settings_by_id_route(
     *,
@@ -163,6 +173,7 @@ def read_project(*, session: SessionDep, project_id: int) -> APIResponse[Project
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[ProjectPublic],
     description=load_description("projects/update.md"),
+    openapi_extra=request_examples(PROJECT_UPDATE_EXAMPLES),
 )
 def update_project(
     *, session: SessionDep, project_id: int, project_in: ProjectUpdate
@@ -226,6 +237,7 @@ def update_project(
     dependencies=[Depends(require_permission(Permission.SUPERUSER))],
     response_model=APIResponse[None],
     description=load_description("projects/delete.md"),
+    openapi_extra=request_examples(PROJECT_DELETE_EXAMPLES),
 )
 def delete_project_endpoint(
     session: SessionDep,

@@ -5,14 +5,14 @@ import logging
 from enum import Enum
 from typing import Any
 
-from anthropic import Anthropic
+from anthropic import Anthropic, APIConnectionError, APIStatusError
 
 from app.models.llm.constants import (
     DEFAULT_ANTHROPIC_MAX_TOKENS,
     DEFAULT_TEXT_MODELS,
 )
 
-from .base import BATCH_KEY, BatchProvider
+from .base import BATCH_KEY, BatchProvider, BatchSubmissionRejectedError
 
 logger = logging.getLogger(__name__)
 
@@ -68,18 +68,31 @@ class AnthropicBatchProvider(BatchProvider):
             f"model={default_model}"
         )
 
-        try:
-            requests = []
-            needs_structured_outputs = False
-            for item in jsonl_data:
-                params = {**item.get("params", {})}
-                params["model"] = params.get("model") or default_model
-                params["max_tokens"] = params.get("max_tokens") or default_max_tokens
-                if "output_config" in params:
-                    needs_structured_outputs = True
-                requests.append({"custom_id": item[BATCH_KEY], "params": params})
+        requests = []
+        for item in jsonl_data:
+            params = {**item.get("params", {})}
+            params["model"] = params.get("model") or default_model
+            params["max_tokens"] = params.get("max_tokens") or default_max_tokens
+            requests.append({"custom_id": item[BATCH_KEY], "params": params})
 
-            betas = [STRUCTURED_OUTPUTS_BETA] if needs_structured_outputs else []
+        # Every row carries the config's one schema, so the first row that has one
+        # compiles the same grammar the whole batch would.
+        structured_params = next(
+            (
+                request["params"]
+                for request in requests
+                if "output_config" in request["params"]
+            ),
+            None,
+        )
+        if structured_params is not None:
+            self._preflight_output_config(
+                model=structured_params["model"],
+                output_config=structured_params["output_config"],
+            )
+
+        try:
+            betas = [STRUCTURED_OUTPUTS_BETA] if structured_params is not None else []
             batch = self.client.beta.messages.batches.create(
                 requests=requests, betas=betas
             )
@@ -101,6 +114,60 @@ class AnthropicBatchProvider(BatchProvider):
         except Exception as e:
             logger.error(f"[create_batch] Failed to create Anthropic batch | {e}")
             raise
+
+    def _preflight_output_config(
+        self, model: str, output_config: dict[str, Any]
+    ) -> None:
+        """Compile the batch's output schema on one throwaway request, so a schema Anthropic
+        cannot compile fails the submission instead of every row in the batch.
+        """
+        try:
+            self.client.beta.messages.create(
+                model=model,
+                max_tokens=16,
+                messages=[{"role": "user", "content": "x"}],
+                output_config=output_config,
+                betas=[STRUCTURED_OUTPUTS_BETA],
+                # The client carries the SDK's 600s default, twice
+                # CELERY_TASK_SOFT_TIME_LIMIT, so an unbounded preflight would spend
+                # the deadline it exists to protect.
+                timeout=30.0,
+            )
+        except APIConnectionError as e:
+            # The schema is unjudged, so a network failure here must not cost a submission
+            # the batch endpoint may well accept.
+            logger.error(
+                f"[_preflight_output_config] Schema preflight could not reach Anthropic, "
+                f"submitting anyway | model={model} | (code: {type(e).__name__})",
+                exc_info=True,
+            )
+        except APIStatusError as e:
+            if e.status_code != 400:
+                # Only a 400 is a verdict on the schema; anything else (429, 5xx) is a
+                # transient the batch itself can survive, so it must not block submission.
+                logger.warning(
+                    f"[_preflight_output_config] Schema preflight inconclusive, submitting "
+                    f"anyway | model={model} | (code: {e.status_code})",
+                    exc_info=True,
+                )
+                return
+
+            # e.message repeats the status line; the nested body carries the reason alone.
+            reason = e.message
+            if isinstance(e.body, dict):
+                reason = e.body.get("error", {}).get("message", e.message)
+
+            message = (
+                "[ANTHROPIC] The output schema was rejected and cannot be compiled into a "
+                "decoding grammar, so every row of this batch would fail. Simplify the "
+                "schema — fewer properties, fewer nullable/union-typed fields (limit 16), "
+                f"fewer optional fields (limit 24) — and resubmit. (code: {e.status_code}) "
+                f"| request_id={e.request_id} | {reason}"
+            )
+            logger.warning(
+                f"[_preflight_output_config] {message} | model={model}", exc_info=True
+            )
+            raise BatchSubmissionRejectedError(message) from e
 
     def get_batch_status(self, batch_id: str) -> dict[str, Any]:
         """

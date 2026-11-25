@@ -1,10 +1,10 @@
 import json
 import logging
+from fastapi import HTTPException
 from typing import Any
 from uuid import UUID, uuid4
 
 from asgi_correlation_id import correlation_id
-from fastapi import HTTPException
 from opentelemetry import trace
 from sqlmodel import Session
 
@@ -22,7 +22,11 @@ from app.models.guardrails import (
     GuardrailsRequest,
 )
 from app.models.llm.request import InlineValidator, Validator
-from app.services.llm.guardrails import GuardrailsOutcome, apply_guardrails
+from app.services.llm.guardrails import (
+    GuardrailsOutcome,
+    apply_guardrails,
+    summarize_validator_results,
+)
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
@@ -85,8 +89,8 @@ def start_job(
                 job_update=JobUpdate(status=JobStatus.FAILED, error_message=str(e)),
             )
             raise HTTPException(
-                status_code=500,
-                detail="Internal server error while scheduling guardrails job",
+                status_code=503,
+                detail="Could not queue the guardrails job. Retry shortly.",
             )
 
         logger.info(
@@ -353,6 +357,17 @@ def execute_job(
 
         warnings += _outcome_warnings(outcome, bool(validators))
         request_json = request.model_dump(mode="json")
+        # Same `applied` gate as /llm/call: a bypassed service has no validator results.
+        guardrail_block: dict[str, Any] | None = None
+        if request.include_guardrail_metadata and outcome.applied:
+            guardrail_block = {
+                "input_from_user": request.text,
+                "output_to_user": outcome.safe_text,
+                "validators": summarize_validator_results(outcome),
+            }
+        callback_metadata = dict(request.request_metadata or {})
+        if guardrail_block:
+            callback_metadata["guardrail"] = guardrail_block
 
         # 4. Hard block: guardrails service rejected the text.
         if outcome.error is not None:
@@ -361,10 +376,14 @@ def execute_job(
                 job_uuid=job_uuid,
                 error=outcome.error,
                 callback_url=callback_url,
-                request_metadata=request.request_metadata,
+                request_metadata=callback_metadata,
                 project_id=project_id,
                 organization_id=organization_id,
-                meta={"request": request_json, "response": outcome.raw},
+                meta={
+                    "request": request_json,
+                    "response": outcome.raw,
+                    "callback": {"guardrail": guardrail_block},
+                },
             )
 
         # 5. Success: persist sanitised result and dispatch the success callback.
@@ -375,7 +394,7 @@ def execute_job(
             response_id=response_id,
             safe_text=safe_text,
             raw=outcome.raw,
-            request_metadata=request.request_metadata,
+            request_metadata=callback_metadata,
             warnings=warnings,
         )
         _update_job(
@@ -388,6 +407,7 @@ def execute_job(
                     "response_id": response_id,
                     "delivered": callback_url is not None,
                     "warnings": warnings,
+                    "guardrail": guardrail_block,
                 },
             },
         )
