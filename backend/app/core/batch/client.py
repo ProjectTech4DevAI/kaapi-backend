@@ -8,8 +8,12 @@ from sqlmodel import Session
 
 from fastapi import HTTPException
 from app.crud.credentials import get_provider_credential
+from app.models.provider_credentials import Provider
 
 logger = logging.getLogger(__name__)
+
+# Lookup order: AI Studio first, matching resolve_default_audio_provider.
+GEMINI_BATCH_CREDENTIAL_PROVIDERS = (Provider.GOOGLE_AISTUDIO, Provider.GOOGLE)
 
 
 class GeminiClientError(Exception):
@@ -61,12 +65,18 @@ class GeminiClient:
             f"org_id: {org_id}, project_id: {project_id}"
         )
 
-        credentials = get_provider_credential(
-            session=session,
-            org_id=org_id,
-            project_id=project_id,
-            provider="google-aistudio",
-        )
+        # Both providers store a plain Gemini API key (the LLM flows build the same
+        # client from either), so a project with only `google` can run batches too.
+        credentials = None
+        for provider in GEMINI_BATCH_CREDENTIAL_PROVIDERS:
+            credentials = get_provider_credential(
+                session=session,
+                org_id=org_id,
+                project_id=project_id,
+                provider=provider.value,
+            )
+            if credentials:
+                break
 
         if not credentials:
             logger.warning(

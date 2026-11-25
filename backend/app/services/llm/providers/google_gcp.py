@@ -1,9 +1,7 @@
 import base64
-import io
 import json
 import logging
 import uuid
-import wave
 from typing import Any
 
 import httpx
@@ -17,6 +15,7 @@ from app.core.audio_utils import (
     convert_pcm_to_mp3,
     convert_pcm_to_ogg,
     pcm_to_wav,
+    strip_wav_header,
 )
 from app.core.cloud.storage import build_gcp_sa_credentials, upload_audio_to_gcs
 from app.core.config import settings
@@ -510,12 +509,7 @@ class GoogleGCPProvider(BaseProvider):
             f"model={model}, mime_type={audio_blob.mime_type}, response_id={response_id}"
         )
         # The SDK already base64-decodes inline_data, so this is raw audio bytes.
-        raw_pcm = audio_blob.data
-        # Preview TTS models return headerless 24 kHz PCM while 3.8+ return a
-        # full WAV; normalise to PCM for pcm_to_wav / convert_pcm_to_*.
-        if raw_pcm.startswith(b"RIFF"):
-            with wave.open(io.BytesIO(raw_pcm), "rb") as wav_file:
-                raw_pcm = wav_file.readframes(wav_file.getnframes())
+        raw_pcm = strip_wav_header(audio_blob.data)
 
         if not raw_pcm:
             error_message = (
