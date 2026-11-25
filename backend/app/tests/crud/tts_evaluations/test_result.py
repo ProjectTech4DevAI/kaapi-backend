@@ -5,6 +5,7 @@ from app.crud.tts_evaluations.result import (
     create_tts_results,
     fail_pending_tts_results,
     get_tts_usage_by_model,
+    update_tts_result,
 )
 from app.models.job import JobStatus
 from app.tests.utils.auth import TestAuthContext
@@ -215,3 +216,35 @@ def test_get_tts_usage_by_model_is_empty_without_usage(
         )
         == {}
     )
+
+
+def test_update_tts_result_skips_rows_no_longer_pending(
+    db: Session, user_api_key: TestAuthContext
+) -> None:
+    # Regression: a sync worker finishing after the cron failed the row and
+    # finalized the run used to overwrite FAILED with SUCCESS.
+    run = create_test_tts_run_with_dataset(
+        db,
+        organization_id=user_api_key.organization_id,
+        project_id=user_api_key.project_id,
+        models=[SARVAM],
+    )
+    stale = create_test_tts_result_row(
+        db, run=run, provider=SARVAM, status=JobStatus.FAILED
+    )
+    pending = create_test_tts_result_row(db, run=run, provider=SARVAM)
+
+    late = update_tts_result(
+        session=db,
+        result_id=stale.id,
+        status=JobStatus.SUCCESS.value,
+        object_store_url="s3://bucket/late.wav",
+    )
+    written = update_tts_result(
+        session=db, result_id=pending.id, status=JobStatus.SUCCESS.value
+    )
+
+    db.refresh(stale)
+    assert late is None
+    assert (stale.status, stale.object_store_url) == (JobStatus.FAILED.value, None)
+    assert written is not None and written.status == JobStatus.SUCCESS.value

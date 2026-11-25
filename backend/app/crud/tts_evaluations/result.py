@@ -169,7 +169,11 @@ def update_tts_result(
     error_message: str | None = None,
     usage: dict[str, Any] | None = None,
 ) -> TTSResult | None:
-    """Update a TTS result.
+    """Update a TTS result that is still PENDING.
+
+    The cron can mark a stale row FAILED and finalize the run while a sync worker
+    is still synthesizing it; the PENDING guard drops that worker's late write so
+    the row stays consistent with the finalized run.
 
     Args:
         session: Database session
@@ -183,9 +187,12 @@ def update_tts_result(
         usage: Provider-native usage ({unit, ...})
 
     Returns:
-        TTSResult | None: Updated result
+        TTSResult | None: Updated result, or None if missing or no longer PENDING
     """
-    where_clauses = [TTSResult.id == result_id]
+    where_clauses = [
+        TTSResult.id == result_id,
+        TTSResult.status == JobStatus.PENDING.value,
+    ]
     if org_id is not None:
         where_clauses.append(TTSResult.organization_id == org_id)
     if project_id is not None:

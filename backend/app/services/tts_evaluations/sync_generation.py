@@ -224,9 +224,6 @@ def execute_tts_sync_generation(
             client = ElevenlabsAIProvider.create_client(credentials)
             credit_multiplier = fetch_elevenlabs_credit_multiplier(client, model)
 
-        # keep the function local to use it easily with
-        # internal threadpool exuector
-
         def synthesize_and_upload(
             result_id: int, text: str, voice: str
         ) -> TTSResultFields:
@@ -307,12 +304,18 @@ def execute_tts_sync_generation(
             for future in as_completed(futures):
                 fields = future.result()
                 with Session(engine) as session:
-                    update_tts_result(
+                    updated = update_tts_result(
                         session=session, result_id=futures[future], **fields
                     )
                     session.commit()
 
-                if fields["status"] == JobStatus.SUCCESS.value:
+                if updated is None:
+                    logger.warning(
+                        f"[execute_tts_sync_generation] Result no longer pending, "
+                        f"write skipped | run_id={run_id}, model={model}, "
+                        f"result_id={futures[future]}"
+                    )
+                elif fields["status"] == JobStatus.SUCCESS.value:
                     processed += 1
                 else:
                     failed += 1
