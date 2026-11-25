@@ -1,5 +1,7 @@
+import asyncio
 import base64
 from collections.abc import Iterator
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -12,6 +14,8 @@ from gevent import Timeout
 from sqlmodel import Session
 
 from app.core.audio_utils import pcm_to_wav
+from app.core.config import settings
+from app.crud.tts_evaluations.cron import poll_tts_run
 from app.models import EvaluationRun
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
@@ -204,6 +208,55 @@ class TestExecuteTTSSyncGeneration:
         assert done.object_store_url == "s3://bucket/original.wav"
         assert pending.status == JobStatus.SUCCESS.value
         assert other_model.status == JobStatus.PENDING.value
+
+    def test_nothing_to_claim_exits_without_calling_provider(
+        self, db: Session, run: EvaluationRun, boundaries: SimpleNamespace
+    ) -> None:
+        # A duplicate or redelivered task arriving while another task holds the rows.
+        held = _row(db, run, status=JobStatus.PROCESSING)
+
+        outcome = _execute(run)
+
+        assert (outcome["success"], outcome["processed"], outcome["failed"]) == (
+            True,
+            0,
+            0,
+        )
+        boundaries.credentials.assert_not_called()
+        boundaries.sarvam.text_to_speech.convert.assert_not_called()
+        _refresh(db, held)
+        assert held.status == JobStatus.PROCESSING.value
+
+    def test_cron_tick_during_late_started_task_does_not_fail_its_rows(
+        self, db: Session, run: EvaluationRun, boundaries: SimpleNamespace
+    ) -> None:
+        # Regression: a task that sat queued past CELERY_TASK_TIME_LIMIT + grace had
+        # its rows failed by the next cron tick mid-synthesis, and its results dropped.
+        run.inserted_at -= timedelta(
+            seconds=settings.CELERY_TASK_TIME_LIMIT
+            + settings.TTS_SYNC_STALE_GRACE_SECONDS
+            + 60
+        )
+        db.add(run)
+        db.commit()
+        row = _row(db, run)
+        run_id, org_id = run.id, run.organization_id
+
+        def storage_while_cron_ticks(**_kwargs: Any) -> MagicMock:
+            asyncio.run(
+                poll_tts_run(
+                    session=db, run=db.get(EvaluationRun, run_id), org_id=org_id
+                )
+            )
+            return MagicMock()
+
+        boundaries.storage.side_effect = storage_while_cron_ticks
+
+        outcome = _execute(run)
+
+        assert (outcome["processed"], outcome["failed"]) == (1, 0)
+        _refresh(db, row)
+        assert (row.status, row.error_message) == (JobStatus.SUCCESS.value, None)
 
     def test_synthesis_failure_only_fails_that_row(
         self, db: Session, run: EvaluationRun

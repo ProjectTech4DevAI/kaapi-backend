@@ -1,7 +1,12 @@
+from datetime import timedelta
+
 import pytest
 from sqlmodel import Session
 
+from app.core.util import now
+
 from app.crud.tts_evaluations.result import (
+    claim_pending_tts_results,
     create_tts_results,
     fail_pending_tts_results,
     get_tts_usage_by_model,
@@ -218,8 +223,13 @@ def test_get_tts_usage_by_model_is_empty_without_usage(
     )
 
 
-def test_update_tts_result_skips_rows_no_longer_pending(
-    db: Session, user_api_key: TestAuthContext
+@pytest.mark.parametrize(
+    "unclaimed_status",
+    [JobStatus.FAILED, JobStatus.PENDING],
+    ids=["failed_by_cron", "never_claimed"],
+)
+def test_update_tts_result_only_writes_processing_rows(
+    db: Session, user_api_key: TestAuthContext, unclaimed_status: JobStatus
 ) -> None:
     # Regression: a sync worker finishing after the cron failed the row and
     # finalized the run used to overwrite FAILED with SUCCESS.
@@ -229,22 +239,69 @@ def test_update_tts_result_skips_rows_no_longer_pending(
         project_id=user_api_key.project_id,
         models=[SARVAM],
     )
-    stale = create_test_tts_result_row(
-        db, run=run, provider=SARVAM, status=JobStatus.FAILED
+    unclaimed = create_test_tts_result_row(
+        db, run=run, provider=SARVAM, status=unclaimed_status
     )
-    pending = create_test_tts_result_row(db, run=run, provider=SARVAM)
+    claimed = create_test_tts_result_row(
+        db, run=run, provider=SARVAM, status=JobStatus.PROCESSING
+    )
 
     late = update_tts_result(
         session=db,
-        result_id=stale.id,
+        result_id=unclaimed.id,
         status=JobStatus.SUCCESS.value,
         object_store_url="s3://bucket/late.wav",
     )
     written = update_tts_result(
-        session=db, result_id=pending.id, status=JobStatus.SUCCESS.value
+        session=db, result_id=claimed.id, status=JobStatus.SUCCESS.value
     )
 
-    db.refresh(stale)
+    db.refresh(unclaimed)
     assert late is None
-    assert (stale.status, stale.object_store_url) == (JobStatus.FAILED.value, None)
+    assert (unclaimed.status, unclaimed.object_store_url) == (
+        unclaimed_status.value,
+        None,
+    )
     assert written is not None and written.status == JobStatus.SUCCESS.value
+
+
+def test_claim_pending_tts_results_claims_only_pending_rows_of_run_and_provider(
+    db: Session, user_api_key: TestAuthContext
+) -> None:
+    run, other_run = (
+        create_test_tts_run_with_dataset(
+            db,
+            organization_id=user_api_key.organization_id,
+            project_id=user_api_key.project_id,
+            models=[GEMINI, SARVAM],
+        )
+        for _ in range(2)
+    )
+    pending = [
+        create_test_tts_result_row(db, run=run, provider=SARVAM) for _ in range(2)
+    ]
+    for row in pending:
+        row.updated_at = now() - timedelta(hours=1)
+        db.add(row)
+    db.commit()
+    untouched = [
+        create_test_tts_result_row(db, run=run, provider=SARVAM, status=status)
+        for status in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.PROCESSING)
+    ]
+    untouched.append(create_test_tts_result_row(db, run=run, provider=GEMINI))
+    untouched.append(create_test_tts_result_row(db, run=other_run, provider=SARVAM))
+    untouched_before = {row.id: (row.status, row.updated_at) for row in untouched}
+    claim_started = now()
+
+    claimed = claim_pending_tts_results(session=db, run_id=run.id, provider=SARVAM)
+
+    assert sorted(row.id for row in claimed) == sorted(row.id for row in pending)
+    for row in pending:
+        db.refresh(row)
+        assert row.status == JobStatus.PROCESSING.value
+        # The cron's dead-worker sweep times the claim from updated_at.
+        assert row.updated_at >= claim_started
+    for row in untouched:
+        db.refresh(row)
+        assert (row.status, row.updated_at) == untouched_before[row.id]
+    assert claim_pending_tts_results(session=db, run_id=run.id, provider=SARVAM) == []

@@ -19,8 +19,9 @@ from app.core.db import engine
 from app.core.storage_utils import upload_to_object_store
 from app.core.util import now
 from app.crud.tts_evaluations.result import (
+    UNFINISHED_TTS_STATUSES,
+    claim_pending_tts_results,
     fail_pending_tts_results,
-    get_pending_results_for_run,
     save_processed_tts_results,
 )
 from app.models.job import JobStatus
@@ -70,6 +71,25 @@ def execute_tts_result_processing(
 
     try:
         with Session(engine) as session:
+            # Claimed before any download: a task the cron re-dispatched for the same
+            # batch claims nothing and exits.
+            claimed = claim_pending_tts_results(
+                session=session, run_id=evaluation_run_id, provider=tts_provider
+            )
+            if not claimed:
+                logger.info(
+                    f"[execute_tts_result_processing] No pending rows to claim | "
+                    f"run_id={evaluation_run_id}, provider={tts_provider}"
+                )
+                return {
+                    "success": True,
+                    "run_id": evaluation_run_id,
+                    "processed": 0,
+                    "failed": 0,
+                }
+            for result in claimed:
+                result_map[result.id] = result
+
             gemini_client = GeminiClient.from_credentials(
                 session=session,
                 org_id=organization_id,
@@ -77,15 +97,8 @@ def execute_tts_result_processing(
             )
             storage = get_cloud_storage(session=session, project_id=project_id)
 
-            # Only PENDING rows, so reprocessing a batch skips rows already finished.
-            pending = get_pending_results_for_run(
-                session=session, run_id=evaluation_run_id, provider=tts_provider
-            )
-            for result in pending:
-                result_map[result.id] = result
-
         logger.info(
-            f"[execute_tts_result_processing] Pre-fetched result records | "
+            f"[execute_tts_result_processing] Claimed result records | "
             f"run_id={evaluation_run_id}, provider={tts_provider}, "
             f"count={len(result_map)}"
         )
@@ -131,7 +144,7 @@ def execute_tts_result_processing(
             if not result_record:
                 logger.warning(
                     f"[execute_tts_result_processing] Result record not found or "
-                    f"not pending | result_id={result_id}"
+                    f"not claimed | result_id={result_id}"
                 )
                 failed_count += 1
                 continue
@@ -210,14 +223,14 @@ def execute_tts_result_processing(
 
         missing_count = 0
         for result_record in result_map.values():
-            if result_record.status != JobStatus.PENDING.value:
+            if result_record.status != JobStatus.PROCESSING.value:
                 continue
             result_record.status = JobStatus.FAILED.value
             result_record.error_message = "No result in batch output"
             result_record.updated_at = now()
             missing_count += 1
         if missing_count:
-            # Left PENDING, the cron would re-dispatch this batch every tick forever.
+            # Left PROCESSING, these rows would wait for the cron's dead-worker sweep.
             logger.warning(
                 f"[execute_tts_result_processing] Rows missing from batch output | "
                 f"run_id={evaluation_run_id}, provider={tts_provider}, "
@@ -250,7 +263,7 @@ def execute_tts_result_processing(
         # Rows finished before the timeout already have audio uploaded; save them
         # so only the unprocessed rows are failed.
         finished = [
-            r for r in result_map.values() if r.status != JobStatus.PENDING.value
+            r for r in result_map.values() if r.status != JobStatus.PROCESSING.value
         ]
         with Session(engine) as session:
             save_processed_tts_results(session=session, results=finished)
@@ -259,6 +272,7 @@ def execute_tts_result_processing(
                 run_id=evaluation_run_id,
                 provider=tts_provider,
                 error_message="Result processing exceeded soft time limit",
+                statuses=UNFINISHED_TTS_STATUSES,
             )
         raise
 
@@ -274,6 +288,7 @@ def execute_tts_result_processing(
                 run_id=evaluation_run_id,
                 provider=tts_provider,
                 error_message=f"Result processing failed: {str(e)}",
+                statuses=UNFINISHED_TTS_STATUSES,
             )
         return {"success": False, "error": str(e)}
 

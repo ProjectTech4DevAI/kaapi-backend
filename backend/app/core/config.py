@@ -182,6 +182,16 @@ class Settings(BaseSettings):
     CELERY_ENABLE_UTC: bool = True
     CELERY_TIMEZONE: str = "UTC"
 
+    # Rows synthesized at once per TTS sync task; kept low because eleven_v3 and
+    # eleven_v4 share one ElevenLabs key and its concurrent-request limit.
+    TTS_SYNC_MAX_WORKERS: int = 2
+    # A TTS row claimed (PROCESSING) longer than CELERY_TASK_TIME_LIMIT plus this
+    # grace has no live worker, so the cron fails it.
+    TTS_SYNC_STALE_GRACE_SECONDS: int = 600
+    # A queued TTS sync task can wait behind other evaluations for hours; only a
+    # lost task leaves rows PENDING this long.
+    TTS_QUEUED_STALE_SECONDS: int = 86400
+
     # callback timeouts and limits
     CALLBACK_CONNECT_TIMEOUT: int = 3
     CALLBACK_READ_TIMEOUT: int = 10

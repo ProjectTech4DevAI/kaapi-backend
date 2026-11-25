@@ -125,12 +125,4 @@ LOCALE_TO_BCP47 = {
     "or": "od-IN",
 }
 
-# Rows synthesized at once per sync task; kept low because eleven_v3 and eleven_v4
-# share one ElevenLabs key and its concurrent-request limit.
-TTS_SYNC_MAX_WORKERS = 2
-
 TTS_AUDIO_SUBDIRECTORY = "evaluations/tts/audio"
-
-# Once a run is older than the Celery hard time limit plus this grace, no sync worker can
-# still be writing its rows, so the cron fails any that are left PENDING.
-TTS_SYNC_STALE_GRACE_SECONDS = 600

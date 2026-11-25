@@ -1,6 +1,7 @@
 """CRUD operations for TTS evaluation results."""
 
 import logging
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import BigInteger, Float, update
@@ -21,6 +22,9 @@ USAGE_SUM_FIELDS_BY_UNIT: dict[str, tuple[str, ...]] = {
     TTSUsageUnitEnum.CREDITS: ("characters", "credits"),
 }
 FRACTIONAL_USAGE_FIELDS = {"credits"}
+
+# Queued (PENDING) or claimed by a worker (PROCESSING).
+UNFINISHED_TTS_STATUSES = (JobStatus.PENDING.value, JobStatus.PROCESSING.value)
 
 
 def create_tts_results(
@@ -169,10 +173,10 @@ def update_tts_result(
     error_message: str | None = None,
     usage: dict[str, Any] | None = None,
 ) -> TTSResult | None:
-    """Update a TTS result that is still PENDING.
+    """Update a TTS result that is still PROCESSING (claimed by the calling worker).
 
-    The cron can mark a stale row FAILED and finalize the run while a sync worker
-    is still synthesizing it; the PENDING guard drops that worker's late write so
+    The cron can fail a stale claimed row and finalize the run while a sync worker
+    is still synthesizing it; the PROCESSING guard drops that worker's late write so
     the row stays consistent with the finalized run.
 
     Args:
@@ -187,11 +191,11 @@ def update_tts_result(
         usage: Provider-native usage ({unit, ...})
 
     Returns:
-        TTSResult | None: Updated result, or None if missing or no longer PENDING
+        TTSResult | None: Updated result, or None if missing or no longer PROCESSING
     """
     where_clauses = [
         TTSResult.id == result_id,
-        TTSResult.status == JobStatus.PENDING.value,
+        TTSResult.status == JobStatus.PROCESSING.value,
     ]
     if org_id is not None:
         where_clauses.append(TTSResult.organization_id == org_id)
@@ -229,22 +233,33 @@ def fail_pending_tts_results(
     run_id: int,
     provider: str,
     error_message: str,
+    statuses: tuple[str, ...] = (JobStatus.PENDING.value,),
+    updated_before: datetime | None = None,
 ) -> int:
-    """Mark one provider's PENDING rows of a run FAILED in a single UPDATE.
+    """Mark one provider's unfinished rows of a run FAILED in a single UPDATE.
 
-    The PENDING guard keeps a late stale/cleanup pass from overwriting a row a
+    The status guard keeps a late stale/cleanup pass from overwriting a row a
     worker has just finished.
+
+    Args:
+        statuses: Row statuses to fail (PENDING and/or PROCESSING)
+        updated_before: Only fail rows last updated before this naive-UTC time;
+            for PROCESSING rows that is the claim time
 
     Returns:
         int: Number of rows marked FAILED
     """
+    where_clauses = [
+        col(TTSResult.evaluation_run_id) == run_id,
+        col(TTSResult.provider) == provider,
+        col(TTSResult.status).in_(statuses),
+    ]
+    if updated_before is not None:
+        where_clauses.append(col(TTSResult.updated_at) < updated_before)
+
     statement = (
         update(TTSResult)
-        .where(
-            col(TTSResult.evaluation_run_id) == run_id,
-            col(TTSResult.provider) == provider,
-            col(TTSResult.status) == JobStatus.PENDING.value,
-        )
+        .where(*where_clauses)
         .values(
             status=JobStatus.FAILED.value,
             error_message=error_message,
@@ -256,11 +271,59 @@ def fail_pending_tts_results(
 
     if failed_count:
         logger.warning(
-            f"[fail_pending_tts_results] Failed pending results | run_id={run_id}, "
-            f"provider={provider}, count={failed_count}, error={error_message}"
+            f"[fail_pending_tts_results] Failed unfinished results | run_id={run_id}, "
+            f"provider={provider}, statuses={statuses}, count={failed_count}, "
+            f"error={error_message}"
         )
 
     return failed_count
+
+
+def claim_pending_tts_results(
+    *,
+    session: Session,
+    run_id: int,
+    provider: str,
+) -> list[TTSResult]:
+    """Atomically move one provider's PENDING rows of a run to PROCESSING and return them.
+
+    Concurrent tasks for the same rows race on this single UPDATE, so exactly one
+    claims each row and the others get nothing back. The claim also stamps
+    `updated_at`, which the cron uses to detect a worker that died mid-batch.
+
+    Returns:
+        list[TTSResult]: Claimed rows, with their attributes loaded
+    """
+    statement = (
+        update(TTSResult)
+        .where(
+            col(TTSResult.evaluation_run_id) == run_id,
+            col(TTSResult.provider) == provider,
+            col(TTSResult.status) == JobStatus.PENDING.value,
+        )
+        .values(status=JobStatus.PROCESSING.value, updated_at=now())
+        .returning(TTSResult.id)
+    )
+    claimed_ids = list(session.exec(statement).scalars().all())
+    session.commit()
+
+    claimed: list[TTSResult] = []
+    if claimed_ids:
+        # Reloaded after commit (which expires instances) so callers can read them
+        # once the session closes.
+        reload_statement = (
+            select(TTSResult)
+            .where(col(TTSResult.id).in_(claimed_ids))
+            .order_by(col(TTSResult.id))
+        )
+        claimed = list(session.exec(reload_statement).all())
+
+    logger.info(
+        f"[claim_pending_tts_results] Claimed results | run_id={run_id}, "
+        f"provider={provider}, count={len(claimed)}"
+    )
+
+    return claimed
 
 
 def save_processed_tts_results(
@@ -268,11 +331,10 @@ def save_processed_tts_results(
     session: Session,
     results: list[TTSResult],
 ) -> int:
-    """Write rows finished in memory back to the DB, skipping any no longer PENDING.
+    """Write rows finished in memory back to the DB, skipping any no longer PROCESSING.
 
-    The cron re-dispatches result processing while a batch still has PENDING rows,
-    so two tasks can process the same batch at once; the PENDING guard stops the
-    later writer from overwriting a row the other already finished.
+    The cron or a failure handler may already have failed a claimed row (e.g. the
+    dead-worker sweep); the PROCESSING guard keeps this late write from reviving it.
 
     Returns:
         int: Number of rows written
@@ -283,7 +345,7 @@ def save_processed_tts_results(
             update(TTSResult)
             .where(
                 col(TTSResult.id) == result.id,
-                col(TTSResult.status) == JobStatus.PENDING.value,
+                col(TTSResult.status) == JobStatus.PROCESSING.value,
             )
             .values(
                 {
@@ -302,8 +364,8 @@ def save_processed_tts_results(
     skipped = len(results) - written
     if skipped:
         logger.warning(
-            f"[save_processed_tts_results] Skipped rows already finished by another "
-            f"writer | count={skipped}"
+            f"[save_processed_tts_results] Skipped rows no longer PROCESSING | "
+            f"count={skipped}"
         )
 
     return written

@@ -1,8 +1,8 @@
 """Celery task function for synchronous TTS synthesis (Sarvam, ElevenLabs).
 
-One task synthesizes every PENDING row of one model, TTS_SYNC_MAX_WORKERS rows at a
-time. Provider calls and uploads run with no DB session open so a slow provider can't
-pin pooled connections. The task only writes result rows; the cron sets the run status.
+One task claims every PENDING row of one model (moving them to PROCESSING) and
+synthesizes them `settings.TTS_SYNC_MAX_WORKERS` rows at a time. Provider calls and
+uploads run with no DB session open so a slow provider can't pin pooled connections. The task only writes result rows; the cron sets the run status.
 """
 
 import base64
@@ -24,13 +24,15 @@ from sqlmodel import Session
 
 from app.core.audio_utils import calculate_duration, pcm_to_wav
 from app.core.cloud.storage import get_cloud_storage
+from app.core.config import settings
 from app.core.db import engine
 from app.core.providers import Provider
 from app.core.storage_utils import upload_to_object_store
 from app.crud.credentials import get_provider_credential
 from app.crud.tts_evaluations.result import (
+    UNFINISHED_TTS_STATUSES,
+    claim_pending_tts_results,
     fail_pending_tts_results,
-    get_pending_results_for_run,
     update_tts_result,
 )
 from app.models.job import JobStatus
@@ -45,7 +47,6 @@ from app.services.tts_evaluations.constants import (
     SARVAM_SPEAKER,
     SARVAM_TTS_MODELS,
     TTS_AUDIO_SUBDIRECTORY,
-    TTS_SYNC_MAX_WORKERS,
 )
 from app.services.tts_evaluations.voices import default_voice_for_model
 
@@ -156,9 +157,10 @@ def execute_tts_sync_generation(
     language_code: str,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Synthesize every PENDING Sarvam/ElevenLabs result of one model in a Celery worker.
+    """Claim and synthesize every PENDING Sarvam/ElevenLabs result of one model.
 
-    Only PENDING rows are picked up, so a redelivered task skips rows already finished.
+    Rows are claimed (PENDING -> PROCESSING) before any work, so a duplicate or
+    redelivered task claims nothing and exits.
 
     Args:
         project_id: Project ID
@@ -196,12 +198,18 @@ def execute_tts_sync_generation(
 
     try:
         with Session(engine) as session:
-            pending = get_pending_results_for_run(
+            claimed = claim_pending_tts_results(
                 session=session, run_id=run_id, provider=model
             )
-            # Plain tuples: the ORM rows detach when this session closes.
+            if not claimed:
+                logger.info(
+                    f"[execute_tts_sync_generation] No pending rows to claim | "
+                    f"run_id={run_id}, model={model}"
+                )
+                return {"success": True, "run_id": run_id, "processed": 0, "failed": 0}
+
             pending_rows: list[tuple[int, str, str]] = []
-            for result in pending:
+            for result in claimed:
                 # NULL voice: row predates per-model voices and used the default.
                 voice = result.voice or default_voice_for_model(model)
                 pending_rows.append((result.id, result.sample_text, voice))
@@ -294,7 +302,7 @@ def execute_tts_sync_generation(
         processed = 0
         failed = 0
         # Shut down by hand: a `with` block would wait for in-flight provider calls on timeout.
-        executor = ThreadPoolExecutor(max_workers=TTS_SYNC_MAX_WORKERS)
+        executor = ThreadPoolExecutor(max_workers=settings.TTS_SYNC_MAX_WORKERS)
         try:
             futures: dict[Future[TTSResultFields], int] = {}
             for result_id, text, voice in pending_rows:
@@ -311,7 +319,7 @@ def execute_tts_sync_generation(
 
                 if updated is None:
                     logger.warning(
-                        f"[execute_tts_sync_generation] Result no longer pending, "
+                        f"[execute_tts_sync_generation] Result no longer processing, "
                         f"write skipped | run_id={run_id}, model={model}, "
                         f"result_id={futures[future]}"
                     )
@@ -343,6 +351,7 @@ def execute_tts_sync_generation(
                 run_id=run_id,
                 provider=model,
                 error_message="Synthesis timed out before this sample was processed",
+                statuses=UNFINISHED_TTS_STATUSES,
             )
         raise
 
@@ -358,5 +367,6 @@ def execute_tts_sync_generation(
                 run_id=run_id,
                 provider=model,
                 error_message=f"{provider.value} synthesis failed: {str(e)}",
+                statuses=UNFINISHED_TTS_STATUSES,
             )
         return {"success": False, "run_id": run_id, "error": str(e)}

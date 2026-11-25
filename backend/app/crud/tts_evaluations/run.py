@@ -231,7 +231,7 @@ def finalize_tts_run_status(
 ) -> EvaluationRun | None:
     """Recompute a TTS run's status from its result rows and persist it.
 
-    `processing` while any row is PENDING, `failed` when no row succeeded (every
+    `processing` while any row is PENDING or PROCESSING, `failed` when no row succeeded (every
     model failed), otherwise `completed`. Only the cron calls this.
     """
     statement = (
@@ -245,10 +245,11 @@ def finalize_tts_run_status(
 
     status_counts = count_results_by_status(session=session, run_id=run_id)
     pending = status_counts.get(JobStatus.PENDING.value, 0)
+    claimed = status_counts.get(JobStatus.PROCESSING.value, 0)
     success = status_counts.get(JobStatus.SUCCESS.value, 0)
     failed = status_counts.get(JobStatus.FAILED.value, 0)
 
-    if pending > 0:
+    if pending > 0 or claimed > 0:
         run.status = "processing"
     elif success == 0:
         run.status = "failed"
@@ -268,7 +269,8 @@ def finalize_tts_run_status(
 
     logger.info(
         f"[finalize_tts_run_status] Run finalized | run_id: {run_id}, "
-        f"status: {run.status}, pending: {pending}, success: {success}, "
+        f"status: {run.status}, pending: {pending}, processing: {claimed}, "
+        f"success: {success}, "
         f"failed: {failed}"
     )
 

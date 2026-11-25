@@ -112,7 +112,8 @@ class TTSResult(SQLModel, table=True):
     status: str = SQLField(
         default=JobStatus.PENDING.value,
         max_length=20,
-        description="Result status: PENDING, SUCCESS, FAILED",
+        description="Result status: PENDING (queued), PROCESSING (claimed by a "
+        "worker), SUCCESS, FAILED",
         sa_column_kwargs={"comment": "Result status: PENDING, SUCCESS, FAILED"},
     )
 

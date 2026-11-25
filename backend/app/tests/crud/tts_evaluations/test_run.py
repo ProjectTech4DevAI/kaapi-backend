@@ -11,7 +11,12 @@ from app.tests.utils.tts_evaluation import (
 )
 from app.tests.utils.utils import get_non_existent_id
 
-S, P, F = JobStatus.SUCCESS, JobStatus.PENDING, JobStatus.FAILED
+S, P, F, PR = (
+    JobStatus.SUCCESS,
+    JobStatus.PENDING,
+    JobStatus.FAILED,
+    JobStatus.PROCESSING,
+)
 
 
 @pytest.fixture
@@ -29,11 +34,19 @@ class TestFinalizeTTSRunStatus:
         [
             ([S, S], "completed", None),
             ([S, P, F], "processing", "1 synthesis(es) failed"),
+            ([S, PR, F], "processing", "1 synthesis(es) failed"),
             ([S, F, F], "completed", "2 synthesis(es) failed"),
             ([F, F], "failed", "2 synthesis(es) failed"),
             ([], "failed", None),
         ],
-        ids=["all_success", "pending", "partial_failure", "all_failed", "no_rows"],
+        ids=[
+            "all_success",
+            "pending",
+            "claimed",
+            "partial_failure",
+            "all_failed",
+            "no_rows",
+        ],
     )
     def test_status_derived_from_rows(
         self,

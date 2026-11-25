@@ -16,10 +16,8 @@ from app.models.batch_job import BatchJob
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
 from app.core.config import settings
-from app.services.tts_evaluations.constants import (
-    DEPRECATED_GEMINI_TTS_MODELS,
-    TTS_SYNC_STALE_GRACE_SECONDS,
-)
+from app.core.util import now
+from app.services.tts_evaluations.constants import DEPRECATED_GEMINI_TTS_MODELS
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.tts_evaluation import (
     create_test_tts_batch_job,
@@ -31,10 +29,19 @@ MODULE = "app.crud.tts_evaluations.cron"
 GEMINI = "gemini-3.8-flash-tts"
 GEMINI_FLASH = "gemini-3.8-flash-lite-tts"
 SARVAM = "bulbul:v3"
+# Just past the window after which a claimed (PROCESSING) row has no live worker;
+# also the old rule's cutoff for failing PENDING sync rows by run age.
+PAST_CLAIM_WINDOW = timedelta(
+    seconds=settings.CELERY_TASK_TIME_LIMIT + settings.TTS_SYNC_STALE_GRACE_SECONDS + 60
+)
+PAST_QUEUED_WINDOW = timedelta(seconds=settings.TTS_QUEUED_STALE_SECONDS + 60)
 
 
 def _processing_run(
-    db: Session, auth: TestAuthContext, models: list[str], stale: bool = False
+    db: Session,
+    auth: TestAuthContext,
+    models: list[str],
+    age: timedelta | None = None,
 ) -> EvaluationRun:
     run = create_test_tts_run_with_dataset(
         db,
@@ -43,10 +50,8 @@ def _processing_run(
         models=models,
     )
     run.status = "processing"
-    if stale:
-        run.inserted_at -= timedelta(
-            seconds=settings.CELERY_TASK_TIME_LIMIT + TTS_SYNC_STALE_GRACE_SECONDS + 60
-        )
+    if age is not None:
+        run.inserted_at -= age
     db.add(run)
     db.commit()
     return run
@@ -89,6 +94,18 @@ async def _poll(db: Session, run: EvaluationRun) -> dict[str, Any]:
 def _refresh(db: Session, *rows: TTSResult | EvaluationRun) -> None:
     for row in rows:
         db.refresh(row)
+
+
+def _claimed_row(
+    db: Session, run: EvaluationRun, provider: str, claimed_ago: timedelta
+) -> TTSResult:
+    row = create_test_tts_result_row(
+        db, run=run, provider=provider, status=JobStatus.PROCESSING
+    )
+    row.updated_at = now() - claimed_ago
+    db.add(row)
+    db.commit()
+    return row
 
 
 @pytest.mark.asyncio
@@ -145,23 +162,36 @@ class TestPollTTSRunGeminiBatches:
         assert outcome["action"] == "dispatched"
         assert dispatch.call_args.kwargs["tts_provider"] == model
 
+    # PROCESSING: a result-processing task already claimed the rows; dispatching
+    # again would process the batch twice.
+    @pytest.mark.parametrize(
+        ("row_status", "expected"),
+        [
+            (JobStatus.SUCCESS, ("completed", "completed")),
+            (JobStatus.PROCESSING, ("no_change", "processing")),
+        ],
+        ids=["finished", "claimed"],
+    )
     async def test_succeeded_batch_with_no_pending_rows_is_not_reprocessed(
-        self, db: Session, user_api_key: TestAuthContext, dispatch: MagicMock
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        dispatch: MagicMock,
+        row_status: JobStatus,
+        expected: tuple[str, str],
     ) -> None:
         run = _processing_run(db, user_api_key, [GEMINI])
         create_test_tts_batch_job(
             db, run=run, provider_status=BatchJobState.SUCCEEDED.value
         )
-        create_test_tts_result_row(
-            db, run=run, provider=GEMINI, status=JobStatus.SUCCESS
-        )
+        for _ in range(2):
+            create_test_tts_result_row(db, run=run, provider=GEMINI, status=row_status)
 
         outcome = await _poll(db, run)
 
         dispatch.assert_not_called()
-        assert outcome["action"] == "completed"
         _refresh(db, run)
-        assert run.status == "completed"
+        assert (outcome["action"], run.status) == expected
 
     @pytest.mark.parametrize(
         ("state", "batch_error", "expected_error"),
@@ -270,41 +300,115 @@ class TestPollTTSRunGeminiBatches:
 
 @pytest.mark.asyncio
 class TestPollTTSRunStaleModels:
+    # The old rule failed queued rows once the run passed the claim window, killing
+    # sync tasks still waiting behind other evaluations.
+    @pytest.mark.parametrize(
+        ("age", "expected_row", "expected_run"),
+        [
+            (PAST_CLAIM_WINDOW, (JobStatus.PENDING.value, None), "processing"),
+            (
+                PAST_QUEUED_WINDOW,
+                (JobStatus.FAILED.value, "Synthesis never started"),
+                "failed",
+            ),
+        ],
+        ids=["queued_past_claim_window", "queued_past_queued_window"],
+    )
+    async def test_queued_sync_rows_fail_only_after_queued_window(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        age: timedelta,
+        expected_row: tuple[str, str | None],
+        expected_run: str,
+    ) -> None:
+        run = _processing_run(db, user_api_key, [SARVAM], age=age)
+        row = create_test_tts_result_row(db, run=run, provider=SARVAM)
+
+        await _poll(db, run)
+
+        _refresh(db, row, run)
+        assert (row.status, row.error_message) == expected_row
+        assert run.status == expected_run
+
     @pytest.mark.parametrize(
         ("model", "expected_error"),
-        [(SARVAM, "Synthesis did not complete"), (GEMINI, "No batch jobs found")],
+        [
+            (SARVAM, "Synthesis did not complete"),
+            (GEMINI, "Result processing did not complete"),
+        ],
     )
-    @pytest.mark.parametrize("stale", [False, True], ids=["fresh", "stale"])
-    async def test_pending_rows_fail_only_after_stale_window(
+    @pytest.mark.usefixtures("gemini_client", "dispatch")
+    async def test_dead_worker_sweep_fails_only_old_claims(
         self,
         db: Session,
         user_api_key: TestAuthContext,
         model: str,
         expected_error: str,
-        stale: bool,
     ) -> None:
-        run = _processing_run(db, user_api_key, [model], stale=stale)
-        row = create_test_tts_result_row(db, run=run, provider=model)
+        run = _processing_run(db, user_api_key, [model], age=PAST_CLAIM_WINDOW)
+        if model == GEMINI:
+            create_test_tts_batch_job(
+                db, run=run, provider_status=BatchJobState.SUCCEEDED.value
+            )
+        dead = _claimed_row(db, run, model, claimed_ago=PAST_CLAIM_WINDOW)
+        live = _claimed_row(db, run, model, claimed_ago=timedelta(minutes=1))
 
         await _poll(db, run)
 
+        _refresh(db, dead, live, run)
+        assert (dead.status, dead.error_message) == (
+            JobStatus.FAILED.value,
+            expected_error,
+        )
+        assert (live.status, live.error_message) == (JobStatus.PROCESSING.value, None)
+        assert run.status == "processing"
+
+    async def test_sync_task_claiming_after_old_window_is_not_failed(
+        self, db: Session, user_api_key: TestAuthContext
+    ) -> None:
+        # Regression: a task that sat queued past the old 20-min run-age window
+        # started work only for the next cron tick to fail its rows.
+        run = _processing_run(db, user_api_key, [SARVAM], age=PAST_CLAIM_WINDOW)
+        row = _claimed_row(db, run, SARVAM, claimed_ago=timedelta(seconds=5))
+
+        outcome = await _poll(db, run)
+
         _refresh(db, row, run)
-        if stale:
-            assert (row.status, row.error_message) == (
-                JobStatus.FAILED.value,
-                expected_error,
-            )
-            assert run.status == "failed"
-        else:
-            assert row.status == JobStatus.PENDING.value
-            assert run.status == "processing"
+        assert row.status == JobStatus.PROCESSING.value
+        assert run.status == outcome["current_status"] == "processing"
+
+    @pytest.mark.parametrize(
+        ("age", "expected"),
+        [
+            (None, (JobStatus.PENDING.value, None)),
+            (PAST_CLAIM_WINDOW, (JobStatus.FAILED.value, "No batch jobs found")),
+        ],
+        ids=["fresh", "stale"],
+    )
+    async def test_gemini_model_without_batch_job_fails_after_stale_window(
+        self,
+        db: Session,
+        user_api_key: TestAuthContext,
+        age: timedelta | None,
+        expected: tuple[str, str | None],
+    ) -> None:
+        run = _processing_run(db, user_api_key, [GEMINI], age=age)
+        row = create_test_tts_result_row(db, run=run, provider=GEMINI)
+
+        await _poll(db, run)
+
+        _refresh(db, row)
+        assert (row.status, row.error_message) == expected
 
     @pytest.mark.usefixtures("gemini_client", "dispatch")
     async def test_stale_run_fails_only_gemini_model_without_batch_job(
         self, db: Session, user_api_key: TestAuthContext
     ) -> None:
         # Regression: one model's batch job masked another model that never got one.
-        run = _processing_run(db, user_api_key, [GEMINI, GEMINI_FLASH], stale=True)
+        run = _processing_run(
+            db, user_api_key, [GEMINI, GEMINI_FLASH], age=PAST_CLAIM_WINDOW
+        )
         create_test_tts_batch_job(
             db, run=run, model=GEMINI, provider_status=BatchJobState.RUNNING.value
         )

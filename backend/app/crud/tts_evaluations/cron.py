@@ -2,7 +2,8 @@
 
 The cron is the only code that sets a TTS run's final status. Each tick it polls
 Gemini batches (dispatching result processing on success), fails the rows of
-batches that ended badly or of sync models whose worker is gone, then recomputes
+batches that ended badly, of claimed (PROCESSING) rows whose worker is gone and of
+sync tasks that never started, then recomputes
 the run status from its result rows via `finalize_tts_run_status`.
 """
 
@@ -27,6 +28,7 @@ from app.crud.tts_evaluations.result import (
     fail_pending_tts_results,
     get_pending_results_for_run,
 )
+from app.models.job import JobStatus
 from app.crud.tts_evaluations.run import finalize_tts_run_status
 from app.models import EvaluationRun
 from app.models.batch_job import BatchJob, BatchJobType
@@ -34,7 +36,6 @@ from app.models.stt_evaluation import EvaluationType
 from app.services.tts_evaluations.constants import (
     GEMINI_BATCH_TTS_MODELS,
     SYNC_TTS_MODELS,
-    TTS_SYNC_STALE_GRACE_SECONDS,
 )
 
 logger = logging.getLogger(__name__)
@@ -180,11 +181,17 @@ async def poll_tts_run(
     models = run.providers or []
     batch_models = [model for model in models if model in GEMINI_BATCH_TTS_MODELS]
     sync_models = [model for model in models if model in SYNC_TTS_MODELS]
-    # Both timestamps are naive UTC (`now()` strips tzinfo before storing).
+    # All timestamps are naive UTC (`now()` strips tzinfo before storing).
+    current_time = now()
     stale_after = timedelta(
-        seconds=settings.CELERY_TASK_TIME_LIMIT + TTS_SYNC_STALE_GRACE_SECONDS
+        seconds=settings.CELERY_TASK_TIME_LIMIT + settings.TTS_SYNC_STALE_GRACE_SECONDS
     )
-    is_stale = now() - run.inserted_at > stale_after
+    is_stale = current_time - run.inserted_at > stale_after
+    # A claim stamps `updated_at`, so a row claimed before this has outlived any worker.
+    claim_cutoff = current_time - stale_after
+    is_queued_stale = current_time - run.inserted_at > timedelta(
+        seconds=settings.TTS_QUEUED_STALE_SECONDS
+    )
     any_dispatched = False
 
     batch_jobs: list[BatchJob] = []
@@ -281,14 +288,33 @@ async def poll_tts_run(
                     ),
                 )
 
-    # Sync workers write rows as they go; past the stale window the worker is gone.
-    if is_stale:
+    for model in sync_models:
+        fail_pending_tts_results(
+            session=session,
+            run_id=run.id,
+            provider=model,
+            error_message="Synthesis did not complete",
+            statuses=(JobStatus.PROCESSING.value,),
+            updated_before=claim_cutoff,
+        )
+    for model in batch_models:
+        fail_pending_tts_results(
+            session=session,
+            run_id=run.id,
+            provider=model,
+            error_message="Result processing did not complete",
+            statuses=(JobStatus.PROCESSING.value,),
+            updated_before=claim_cutoff,
+        )
+
+    # PENDING sync rows mean the task is still queued; only a lost task leaves them this long.
+    if is_queued_stale:
         for model in sync_models:
             fail_pending_tts_results(
                 session=session,
                 run_id=run.id,
                 provider=model,
-                error_message="Synthesis did not complete",
+                error_message="Synthesis never started",
             )
 
     finalized_run = finalize_tts_run_status(session=session, run_id=run.id)

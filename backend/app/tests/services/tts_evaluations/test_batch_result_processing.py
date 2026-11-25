@@ -1,3 +1,4 @@
+import asyncio
 import base64
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from gevent import Timeout
 from sqlmodel import Session
 
 from app.core.audio_utils import pcm_to_wav
+from app.core.batch import BatchJobState
+from app.crud.tts_evaluations.cron import poll_tts_run
 from app.models import EvaluationRun
 from app.models.job import JobStatus
 from app.models.tts_evaluation import TTSResult
@@ -18,6 +21,7 @@ from app.services.tts_evaluations.batch_result_processing import (
 )
 from app.tests.utils.auth import TestAuthContext
 from app.tests.utils.tts_evaluation import (
+    create_test_tts_batch_job,
     create_test_tts_result_row,
     create_test_tts_run_with_dataset,
     use_test_session,
@@ -407,42 +411,91 @@ class TestExecuteTTSResultProcessing:
             "Result processing exceeded soft time limit",
         )
 
-    def test_overlapping_task_does_not_overwrite_finished_row(
+    def test_write_back_skips_row_failed_while_processing(
         self, db: Session, run: EvaluationRun, boundaries: Boundaries
     ) -> None:
-        # Regression: the cron re-dispatches while rows are PENDING, so a second
-        # task's write-back used to overwrite a row the first had already finished.
-        finished_elsewhere, still_pending = (
-            create_test_tts_result_row(db, run=run) for _ in range(2)
-        )
-        finished_id, pending_id = finished_elsewhere.id, still_pending.id
+        # The cron's dead-worker sweep can fail a claimed row mid-task; the late
+        # write must not revive it.
+        swept, claimed = (create_test_tts_result_row(db, run=run) for _ in range(2))
+        swept_id, claimed_id = swept.id, claimed.id
 
         def download(_batch_id: str) -> list[dict[str, Any]]:
             db.expunge_all()
-            other_writer_row = db.get(TTSResult, finished_id)
-            other_writer_row.status = JobStatus.SUCCESS.value
-            other_writer_row.object_store_url = "s3://bucket/other-task.wav"
-            db.add(other_writer_row)
+            swept_row = db.get(TTSResult, swept_id)
+            swept_row.status = JobStatus.FAILED.value
+            swept_row.error_message = "Result processing did not complete"
+            db.add(swept_row)
             db.commit()
             db.expunge_all()
-            return [
-                {"custom_id": str(finished_id), "error": "late failure"},
-                _ok(pending_id),
-            ]
+            return [_ok(swept_id), _ok(claimed_id)]
 
         boundaries.download.side_effect = download
 
         _execute(run)
 
         db.expunge_all()
-        kept = db.get(TTSResult, finished_id)
-        written = db.get(TTSResult, pending_id)
+        kept = db.get(TTSResult, swept_id)
+        written = db.get(TTSResult, claimed_id)
         assert (kept.status, kept.object_store_url, kept.error_message) == (
-            JobStatus.SUCCESS.value,
-            "s3://bucket/other-task.wav",
+            JobStatus.FAILED.value,
             None,
+            "Result processing did not complete",
         )
         assert written.status == JobStatus.SUCCESS.value
+
+    def test_nothing_to_claim_exits_without_touching_gemini(
+        self, db: Session, run: EvaluationRun, boundaries: Boundaries
+    ) -> None:
+        # A second task for a batch another task is already processing.
+        held = create_test_tts_result_row(db, run=run, status=JobStatus.PROCESSING)
+
+        outcome = _execute(run)
+
+        assert (outcome["success"], outcome["processed"], outcome["failed"]) == (
+            True,
+            0,
+            0,
+        )
+        boundaries.gemini_client.from_credentials.assert_not_called()
+        boundaries.download.assert_not_called()
+        _refresh(db, held)
+        assert held.status == JobStatus.PROCESSING.value
+
+    def test_cron_tick_during_processing_does_not_redispatch_batch(
+        self, db: Session, run: EvaluationRun, boundaries: Boundaries
+    ) -> None:
+        # Regression: rows stayed PENDING while a task processed them, so every cron
+        # tick re-dispatched the succeeded batch and it was processed twice.
+        create_test_tts_batch_job(
+            db, run=run, model=GEMINI, provider_status=BatchJobState.SUCCEEDED.value
+        )
+        row = create_test_tts_result_row(db, run=run)
+        run_id, org_id, row_id = run.id, run.organization_id, row.id
+
+        def download_while_cron_ticks(_batch_id: str) -> list[dict[str, Any]]:
+            db.expunge_all()
+            asyncio.run(
+                poll_tts_run(
+                    session=db, run=db.get(EvaluationRun, run_id), org_id=org_id
+                )
+            )
+            db.expunge_all()
+            return [_ok(row_id)]
+
+        boundaries.download.side_effect = download_while_cron_ticks
+
+        # Celery enqueue and the cron's Gemini client are the cron's external boundaries.
+        with (
+            patch("app.crud.tts_evaluations.cron.GeminiClient"),
+            patch(
+                "app.crud.tts_evaluations.cron.start_tts_result_processing"
+            ) as redispatch,
+        ):
+            _execute(run)
+
+        redispatch.assert_not_called()
+        db.expunge_all()
+        assert db.get(TTSResult, row_id).status == JobStatus.SUCCESS.value
 
     def test_unexpected_error_fails_only_this_models_pending_rows(
         self, db: Session, run: EvaluationRun, boundaries: Boundaries
