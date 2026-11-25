@@ -1,26 +1,42 @@
-"""add usage and issues to tts_result
+"""add voice, usage and issues to tts_result
 
-Revision ID: 093
-Revises: 092
-Create Date: 2026-11-25 00:00:00.000000
+Revision ID: 092
+Revises: 091
+Create Date: 2026-11-05 00:00:00.000000
 
-Usage is stored in each provider's own billing unit (Gemini tokens, Sarvam
-characters, ElevenLabs credits) with no normalisation, so rows are only summed
-within a model. Both columns are nullable with no backfill: past runs have no
-recorded usage and no issue tags.
+All columns are nullable with no backfill. Rows of runs created before per-model
+voices keep a NULL voice and the services fall back to the model's default voice,
+which is what those rows were synthesized with. Past runs have no recorded usage
+and no issue tags. Usage is stored in each provider's own billing unit (Gemini
+tokens, Sarvam characters, ElevenLabs credits) with no normalisation, so rows are
+only summed within a model.
 """
 
 import sqlalchemy as sa
+import sqlmodel.sql.sqltypes
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "093"
-down_revision = "092"
+revision = "092"
+down_revision = "091"
 branch_labels = None
 depends_on = None
 
 
 def upgrade():
+    op.add_column(
+        "tts_result",
+        sa.Column(
+            "voice",
+            sqlmodel.sql.sqltypes.AutoString(length=100),
+            nullable=True,
+            comment=(
+                "Voice used for synthesis (Gemini voice, Sarvam speaker or "
+                "ElevenLabs voice name); NULL for rows created before per-model "
+                "voices, which used the model's default voice"
+            ),
+        ),
+    )
     op.add_column(
         "tts_result",
         sa.Column(
@@ -54,3 +70,4 @@ def upgrade():
 def downgrade():
     op.drop_column("tts_result", "issues")
     op.drop_column("tts_result", "usage")
+    op.drop_column("tts_result", "voice")
