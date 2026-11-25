@@ -278,6 +278,7 @@ def handle_job_error(
     project_id: int | None = None,
     chain_id: UUID | None = None,
     request_metadata: dict[str, Any] | None = None,
+    resource_type: WebhookResourceTypeEnum = WebhookResourceTypeEnum.LLM_CALL,
 ) -> dict:
     """Handle job failure uniformly — send callback and update DB."""
     with Session(engine) as session:
@@ -319,11 +320,7 @@ def handle_job_error(
                 callback_url=callback_url,
                 data=callback_response.model_dump(),
                 webhook_secret=webhook_secret,
-                resource_type=(
-                    WebhookResourceTypeEnum.LLM_CHAIN
-                    if chain_id
-                    else WebhookResourceTypeEnum.LLM_CALL
-                ),
+                resource_type=resource_type,
                 resource_id=str(job_id),
                 project_id=project_id,
                 organization_id=organization_id,
@@ -1770,6 +1767,7 @@ def execute_chain_job(
                 organization_id=organization_id,
                 project_id=project_id,
                 chain_id=chain_uuid,
+                resource_type=WebhookResourceTypeEnum.LLM_CHAIN,
                 request_metadata=client_request_metadata,
             )
             raise
@@ -1791,6 +1789,7 @@ def execute_chain_job(
                 organization_id=organization_id,
                 project_id=project_id,
                 chain_id=chain_uuid,
+                resource_type=WebhookResourceTypeEnum.LLM_CHAIN,
                 request_metadata=client_request_metadata,
             )
         finally:

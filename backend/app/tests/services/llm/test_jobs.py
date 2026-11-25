@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from app.crud import JobCrud
 from app.crud.config import ConfigVersionCrud
 from app.utils import APIResponse
-from app.models import ConfigVersion, JobStatus, JobType
+from app.models import ConfigVersion, JobStatus, JobType, WebhookResourceTypeEnum
 from app.models.llm import (
     LLMCallRequest,
     NativeCompletionConfig,
@@ -188,6 +188,31 @@ class TestHandleJobError:
         assert mock_send_callback.call_args.kwargs["request_metadata"] == {
             "tracking_id": "track-1"
         }
+        assert (
+            mock_send_callback.call_args.kwargs["resource_type"]
+            == WebhookResourceTypeEnum.LLM_CALL
+        )
+
+    def test_handle_job_error_forwards_resource_type(self, db: Session):
+        job = JobCrud(session=db).create(job_type=JobType.LLM_CHAIN, trace_id="t")
+        db.commit()
+
+        with (
+            patch("app.services.llm.jobs.Session") as mock_session_class,
+            patch("app.services.llm.jobs.send_callback") as mock_send_callback,
+        ):
+            mock_session_class.return_value.__enter__.return_value = db
+            handle_job_error(
+                job_id=job.id,
+                callback_url="https://example.com/callback",
+                callback_response=APIResponse.failure_response(error="boom"),
+                resource_type=WebhookResourceTypeEnum.LLM_CHAIN,
+            )
+
+        assert (
+            mock_send_callback.call_args.kwargs["resource_type"]
+            == WebhookResourceTypeEnum.LLM_CHAIN
+        )
 
     def test_handle_job_error_without_callback_url(self, db: Session):
         """Test handle_job_error updates job when no callback URL provided."""
@@ -2678,6 +2703,11 @@ class TestExecuteChainJob:
             result = self._execute_chain_job(chain_request_data)
 
             assert result["success"] is False
+            assert mock_handle_error.call_args.kwargs["chain_id"] is None
+            assert (
+                mock_handle_error.call_args.kwargs["resource_type"]
+                == WebhookResourceTypeEnum.LLM_CHAIN
+            )
 
     def test_chain_status_updated_to_failed_on_error(self, chain_request_data):
         chain_id = uuid4()
