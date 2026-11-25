@@ -148,23 +148,3 @@ class WebhookLog(SQLModel, table=True):
         nullable=False,
         sa_column_kwargs={"comment": "Timestamp when the delivery finished"},
     )
-
-
-class WebhookLogPublic(SQLModel):
-    id: UUID
-    project_id: int | None
-    organization_id: int | None
-    resource_type: WebhookResourceTypeEnum | None
-    resource_id: str | None
-    url: str
-    status: WebhookDeliveryStatusEnum
-    status_code: int | None
-    attempt_count: int
-    latency: float | None
-    request_metadata: dict[str, Any] | None
-    request_bytes: int
-    response_body: str | None
-    error: str | None
-    signed: bool
-    trace_id: str | None
-    inserted_at: datetime

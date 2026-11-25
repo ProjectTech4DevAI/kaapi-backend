@@ -254,6 +254,5 @@ from .user_project import (
 from .webhook_log import (
     WebhookDeliveryStatusEnum,
     WebhookLog,
-    WebhookLogPublic,
     WebhookResourceTypeEnum,
 )
