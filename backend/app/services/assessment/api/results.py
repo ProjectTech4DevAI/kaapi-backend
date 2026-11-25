@@ -23,6 +23,7 @@ from app.models.assessment import (
     AssessmentResult,
     AssessmentResultRow,
     AssessmentRun,
+    AssessmentStatus,
     AssessmentSubmission,
     AssessmentSummary,
     BatchRunState,
@@ -121,6 +122,14 @@ def build_result(
                 error = row_errors[str(idx)]
             elif load_error:
                 error = load_error
+            # The batch never produced this row (rejected at submit, batch-level failure).
+            if (
+                error is None
+                and assessment_output is None
+                and execution is not None
+                and execution.status == AssessmentStatus.FAILED
+            ):
+                error = execution.error_message
 
         topic_relevance = _verdict_obj(tr_verdicts.get(str(idx)))
         pre_filter = (

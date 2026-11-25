@@ -275,11 +275,14 @@ class AnthropicBatchProvider(BatchProvider):
                         }
                     )
                 elif result_type == "errored":
+                    error = item.result.error.model_dump(mode="json")
                     results.append(
                         {
                             BATCH_KEY: item.custom_id,
                             "response": None,
-                            "error": str(item.result.error.model_dump(mode="json")),
+                            "error": str(error),
+                            # Structured copy for callers that format it themselves.
+                            "error_raw": error,
                         }
                     )
                 else:
@@ -288,6 +291,10 @@ class AnthropicBatchProvider(BatchProvider):
                             BATCH_KEY: item.custom_id,
                             "response": None,
                             "error": f"Request {result_type}",
+                            "error_raw": {
+                                "type": result_type,
+                                "message": f"request {result_type} before it was processed",
+                            },
                         }
                     )
 

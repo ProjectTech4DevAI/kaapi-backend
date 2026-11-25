@@ -502,6 +502,9 @@ class TestAnthropicBatchProvider:
         assert results[1]["custom_id"] == "req-2"
         assert results[1]["response"] is None
         assert "invalid_request_error" in results[1]["error"]
+        # The structured copy rides alongside the unchanged string.
+        assert results[1]["error_raw"] == error_dump
+        assert "error_raw" not in results[0]
 
     def test_download_batch_results_expired_and_canceled(
         self, provider, mock_anthropic_client
@@ -521,6 +524,10 @@ class TestAnthropicBatchProvider:
         assert results[0]["response"] is None
         assert results[0]["error"] == "Request expired"
         assert results[1]["error"] == "Request canceled"
+        assert results[0]["error_raw"] == {
+            "type": "expired",
+            "message": "request expired before it was processed",
+        }
 
     def test_download_batch_results_empty(self, provider, mock_anthropic_client):
         """Test downloading results from an empty batch."""

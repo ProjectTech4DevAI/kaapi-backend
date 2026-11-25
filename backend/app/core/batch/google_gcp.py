@@ -144,6 +144,11 @@ class GoogleGCPBatchProvider(BatchProvider):
             if state in _FAILED_STATES:
                 message = batch_job.error.message if batch_job.error else state
                 result["error_message"] = message
+                if batch_job.error and batch_job.error.message:
+                    result["provider_error"] = {
+                        "code": batch_job.error.code,
+                        "message": batch_job.error.message,
+                    }
             return result
         except Exception as e:
             logger.error(
@@ -188,6 +193,7 @@ class GoogleGCPBatchProvider(BatchProvider):
                             BATCH_KEY: custom_id,
                             "response": response_obj,
                             "error": str(error_obj) if error_obj else None,
+                            "error_raw": error_obj or None,
                         }
                     )
                     index += 1
