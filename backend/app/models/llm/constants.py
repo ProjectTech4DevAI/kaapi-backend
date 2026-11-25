@@ -32,7 +32,9 @@ TTSProvider = Literal[
     Provider.ELEVENLABS,
     Provider.GOOGLE_AISTUDIO,
 ]
-RAGProvider = Literal[Provider.OPENAI, Provider.GOOGLE_AISTUDIO]
+RAGProvider = Literal[
+    Provider.OPENAI, Provider.GOOGLE, Provider.GOOGLE_AISTUDIO, Provider.GOOGLE_GCP
+]
 
 TextProvider = Literal[
     Provider.OPENAI,
