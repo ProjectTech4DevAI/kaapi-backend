@@ -23,9 +23,11 @@ from app.models.assessment import (
     AssessmentResult,
     AssessmentResultRow,
     AssessmentRun,
+    AssessmentStatus,
     AssessmentSubmission,
     AssessmentSummary,
     BatchRunState,
+    StageStatus,
     ParsedResult,
     PreFilter,
     PreFilterVerdict,
@@ -101,7 +103,12 @@ def build_result(
     # Rows the provider rejected are absent from the output dump; the bag kept their error.
     # Errors of the last stage: the assessment, or the pre-filter when there is none.
     last_stage = (bag.get("pipeline") or [{}])[-1].get("stage")
-    row_errors = (bag.get("stage_errors") or {}).get(last_stage, {})
+    error_stage = (
+        bag.get("stage")
+        if bag.get("stage_status") == StageStatus.FAILED.value
+        else last_stage
+    )
+    row_errors = (bag.get("stage_errors") or {}).get(error_stage, {})
 
     tr_verdicts = verdicts.get(PipelineStage.TOPIC_RELEVANCE.value, {})
 
@@ -121,6 +128,14 @@ def build_result(
                 error = row_errors[str(idx)]
             elif load_error:
                 error = load_error
+            # The batch never produced this row (rejected at submit, batch-level failure).
+            if (
+                error is None
+                and assessment_output is None
+                and execution is not None
+                and execution.status == AssessmentStatus.FAILED
+            ):
+                error = execution.error_message
 
         topic_relevance = _verdict_obj(tr_verdicts.get(str(idx)))
         pre_filter = (

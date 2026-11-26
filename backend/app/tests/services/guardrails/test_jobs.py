@@ -505,3 +505,174 @@ def test_execute_job_no_safe_text_adds_fallback_warning_and_echoes_original(
         "did not return a sanitised text" in w
         for w in final.meta["callback"]["warnings"]
     )
+
+
+class TestIncludeGuardrailMetadata:
+    INPUT = "My email is alice@example.com"
+    SAFE = "My email is [REDACTED]"
+    RAW = {
+        "data": {
+            "safe_text": SAFE,
+            "validator_results": [
+                {
+                    "name": "pii_remover",
+                    "outcome": "FAIL",
+                    "error": None,
+                    "input_text": INPUT,
+                    "output_text": SAFE,
+                }
+            ],
+        }
+    }
+    EXPECTED_VALIDATORS = [
+        {
+            "name": "pii_remover",
+            "outcome": "FAIL",
+            "error": None,
+            "input_text": INPUT,
+            "output_text": SAFE,
+        }
+    ]
+
+    def _run(
+        self, auth: TestAuthContext, *, include: bool, outcome: GuardrailsOutcome
+    ) -> tuple[dict, dict]:
+        req = GuardrailsRequest.model_validate(
+            {
+                "text": self.INPUT,
+                "config": [{"validator_config_id": str(VALIDATOR_A)}],
+                "callback_url": "https://example.com/cb",
+                "request_metadata": {"client_id": "abc"},
+                "include_guardrail_metadata": include,
+            }
+        )
+        with _patched_worker_db() as mock_crud, patch(
+            "app.services.guardrails.jobs.apply_guardrails", return_value=outcome
+        ), patch("app.services.guardrails.jobs.send_callback") as mock_send, patch(
+            "app.services.guardrails.jobs.get_webhook_secret", return_value="s"
+        ):
+            execute_job(
+                project_id=auth.project_id,
+                job_id=str(uuid4()),
+                task_id="t",
+                task_instance=None,
+                request_data=req.model_dump(mode="json"),
+                organization_id=auth.organization_id,
+            )
+        return (
+            mock_send.call_args.kwargs["data"]["metadata"],
+            _update_calls(mock_crud)[-1].meta,
+        )
+
+    def test_success_includes_guardrail_block(
+        self, user_api_key: TestAuthContext
+    ) -> None:
+        outcome = GuardrailsOutcome(
+            safe_text=self.SAFE,
+            error=None,
+            bypassed=False,
+            rephrase_needed=False,
+            raw=self.RAW,
+        )
+        metadata, meta = self._run(user_api_key, include=True, outcome=outcome)
+
+        expected = {
+            "input_from_user": self.INPUT,
+            "output_to_user": self.SAFE,
+            "validators": self.EXPECTED_VALIDATORS,
+        }
+        assert metadata["guardrail"] == expected
+        assert metadata["client_id"] == "abc"
+        assert meta["callback"]["guardrail"] == expected
+
+    @pytest.mark.parametrize(
+        "include, bypassed",
+        [(False, False), (True, True)],
+        ids=["flag_off", "bypassed"],
+    )
+    def test_no_guardrail_block(
+        self, user_api_key: TestAuthContext, include: bool, bypassed: bool
+    ) -> None:
+        outcome = GuardrailsOutcome(
+            safe_text=self.SAFE,
+            error=None,
+            bypassed=bypassed,
+            rephrase_needed=False,
+            raw=self.RAW,
+        )
+        metadata, meta = self._run(user_api_key, include=include, outcome=outcome)
+
+        assert "guardrail" not in metadata
+        assert meta["callback"]["guardrail"] is None
+
+    def test_hard_block_includes_guardrail_block(
+        self, user_api_key: TestAuthContext
+    ) -> None:
+        outcome = GuardrailsOutcome(
+            safe_text=None,
+            error="text rejected",
+            bypassed=False,
+            rephrase_needed=False,
+            raw=self.RAW,
+        )
+        metadata, meta = self._run(user_api_key, include=True, outcome=outcome)
+
+        expected = {
+            "input_from_user": self.INPUT,
+            "output_to_user": None,
+            "validators": self.EXPECTED_VALIDATORS,
+        }
+        assert metadata["guardrail"] == expected
+        assert meta["callback"]["guardrail"] == expected
+
+    @pytest.mark.parametrize("error", [None, "text rejected"], ids=["ok", "hard_block"])
+    def test_webhook_log_gets_client_metadata_only(
+        self, user_api_key: TestAuthContext, error: str | None
+    ) -> None:
+        outcome = GuardrailsOutcome(
+            safe_text=None if error else self.SAFE,
+            error=error,
+            bypassed=False,
+            rephrase_needed=False,
+            raw=self.RAW,
+        )
+        # duplicate validator ids make the server add `warnings` to the callback metadata
+        req = GuardrailsRequest.model_validate(
+            {
+                "text": self.INPUT,
+                "config": [{"validator_config_id": str(VALIDATOR_A)}] * 2,
+                "callback_url": "https://example.com/cb",
+                "request_metadata": {"client_id": "abc"},
+                "include_guardrail_metadata": True,
+            }
+        )
+        with _patched_worker_db(), patch(
+            "app.services.guardrails.jobs.apply_guardrails", return_value=outcome
+        ), patch("app.services.guardrails.jobs.send_callback") as mock_send, patch(
+            "app.services.guardrails.jobs.get_webhook_secret", return_value="s"
+        ):
+            execute_job(
+                project_id=user_api_key.project_id,
+                job_id=str(uuid4()),
+                task_id="t",
+                task_instance=None,
+                request_data=req.model_dump(mode="json"),
+                organization_id=user_api_key.organization_id,
+            )
+
+        kwargs = mock_send.call_args.kwargs
+        assert "guardrail" in kwargs["data"]["metadata"]
+        assert kwargs["request_metadata"] == {"client_id": "abc"}
+
+
+class TestIncludeGuardrailMetadataRequestModel:
+    @pytest.mark.parametrize(
+        "payload,expected", [({}, False), ({"include_guardrail_metadata": True}, True)]
+    )
+    def test_flag_defaults_false_and_accepts_true(
+        self, payload: dict, expected: bool
+    ) -> None:
+        request = GuardrailsRequest.model_validate(
+            {"text": "hi", "config": [{"type": "pii_remover"}], **payload}
+        )
+        assert request.include_guardrail_metadata is expected

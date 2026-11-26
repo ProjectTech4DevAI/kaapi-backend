@@ -6,6 +6,8 @@ from asgi_correlation_id import correlation_id
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.tts_evaluation.examples import TTS_RUN_CREATE_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.celery.utils import start_tts_batch_submission
 from app.core.cloud import get_cloud_storage
@@ -14,6 +16,7 @@ from app.crud.tts_evaluations import (
     get_results_by_run_id,
     get_tts_dataset_by_id,
     get_tts_run_by_id,
+    get_tts_usage_by_model,
     list_tts_runs,
     update_tts_run,
 )
@@ -39,6 +42,7 @@ router = APIRouter()
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Start TTS evaluation",
     description=load_description("tts_evaluation/start_evaluation.md"),
+    openapi_extra=request_examples(TTS_RUN_CREATE_EXAMPLES),
 )
 def start_tts_evaluation(
     session: SessionDep,
@@ -49,7 +53,7 @@ def start_tts_evaluation(
     logger.info(
         f"[start_tts_evaluation] Starting TTS evaluation | "
         f"run_name: {run_create.run_name}, dataset_id: {run_create.dataset_id}, "
-        f"models: {run_create.models}"
+        f"voices: {run_create.voices}"
     )
 
     # Validate dataset exists
@@ -78,7 +82,7 @@ def start_tts_evaluation(
         dataset_name=dataset.name,
         org_id=auth_context.organization_.id,
         project_id=auth_context.project_.id,
-        models=run_create.models,
+        models=run_create.model_names,
         language_id=language_id,
         total_items=sample_count * len(run_create.models),
     )
@@ -92,7 +96,8 @@ def start_tts_evaluation(
             trace_id=trace_id,
             organization_id=auth_context.organization_.id,
             dataset_id=run_create.dataset_id,
-            models=run_create.models,
+            models=run_create.model_names,
+            voices=run_create.voices,
         )
         logger.info(
             f"[start_tts_evaluation] Batch submission queued | "
@@ -118,7 +123,9 @@ def start_tts_evaluation(
         data=TTSEvaluationRunPublic.from_model(
             run,
             run_metadata={
+                # Legacy key kept for existing clients; `voices` is per model.
                 "voice_name": DEFAULT_VOICE_NAME,
+                "voices": run_create.voices,
                 "style_prompt": DEFAULT_STYLE_PROMPT,
             },
         )
@@ -202,11 +209,19 @@ def get_tts_evaluation_run(
             storage=storage,
         )
 
+    usage_by_model = get_tts_usage_by_model(
+        session=session,
+        run_id=run_id,
+        org_id=auth_context.organization_.id,
+        project_id=auth_context.project_.id,
+    )
+
     return APIResponse.success_response(
         data=TTSEvaluationRunWithResults.from_model(
             run,
             results=results,
             results_total=results_total,
+            usage_by_model=usage_by_model,
         ),
         metadata={"results_total": results_total},
     )

@@ -8,13 +8,10 @@ from fastapi import HTTPException
 from app.crud import CollectionCrud
 from app.api.deps import SessionDep
 from app.models import Collection, CollectionPublic, Document, ProviderType
+from app.services.documents.constants import MAX_DOC_SIZE_MB
 
 
 logger = logging.getLogger(__name__)
-
-# Necessary Constants -
-# Maximum individual document size (must be less than batch size)
-MAX_DOC_SIZE_MB = 25  # 25 MB maximum per document
 
 # Maximum batch size for uploading documents to vector store
 MAX_BATCH_SIZE_KB = (MAX_DOC_SIZE_MB + 5) * 1024  # 30 MB in KB (25 + 5 MB buffer)

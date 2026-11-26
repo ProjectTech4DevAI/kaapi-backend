@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from enum import StrEnum
+from typing import TYPE_CHECKING, Annotated, Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy import Column, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field as SQLField
@@ -13,10 +21,36 @@ from sqlmodel import SQLModel
 
 from app.core.util import now
 from app.models.job import JobStatus
-from app.services.tts_evaluations.constants import SUPPORTED_TTS_MODELS
+from app.services.tts_evaluations.constants import (
+    DEFAULT_TTS_MODEL,
+    SUPPORTED_TTS_MODELS,
+)
+from app.services.tts_evaluations.voices import (
+    default_voice_for_model,
+    resolve_voice,
+)
 
 if TYPE_CHECKING:
     from app.models import EvaluationDataset, EvaluationRun
+
+
+class TTSIssueEnum(StrEnum):
+    """Issue tags a reviewer can attach to a synthesized sample."""
+
+    MISPRONUNCIATION = "mispronunciation"
+    ROBOTIC = "robotic"
+    WRONG_LANGUAGE = "wrong_language"
+    CUT_OFF = "cut_off"
+    LONG_PAUSE = "long_pause"
+    BACKGROUND_NOISE = "background_noise"
+
+
+class TTSUsageUnitEnum(StrEnum):
+    """Provider-native billing unit stored in `tts_result.usage.unit`."""
+
+    TOKENS = "tokens"
+    CHARACTERS = "characters"
+    CREDITS = "credits"
 
 
 class TTSResult(SQLModel, table=True):
@@ -57,27 +91,66 @@ class TTSResult(SQLModel, table=True):
 
     provider: str = SQLField(
         max_length=100,
-        description="TTS provider used (e.g., gemini-2.5-pro-preview-tts)",
+        description="TTS provider used (e.g., gemini-3.8-flash-tts)",
         sa_column_kwargs={
             "comment": "TTS provider used (e.g., gemini-2.5-pro-preview-tts)"
+        },
+    )
+
+    voice: str | None = SQLField(
+        default=None,
+        max_length=100,
+        nullable=True,
+        description="Voice the sample was synthesized with",
+        sa_column_kwargs={
+            "comment": "Voice used for synthesis (Gemini voice, Sarvam speaker or "
+            "ElevenLabs voice name); NULL for rows created before per-model voices, "
+            "which used the model's default voice"
         },
     )
 
     status: str = SQLField(
         default=JobStatus.PENDING.value,
         max_length=20,
-        description="Result status: PENDING, SUCCESS, FAILED",
+        description="Result status: PENDING (queued), PROCESSING (claimed by a "
+        "worker), SUCCESS, FAILED",
         sa_column_kwargs={"comment": "Result status: PENDING, SUCCESS, FAILED"},
     )
 
     score: dict[str, Any] | None = SQLField(
         default=None,
         sa_column=Column(
-            JSONB,
+            JSONB(none_as_null=True),
             nullable=True,
             comment="Extensible evaluation metrics (null in Phase 1)",
         ),
         description="Extensible evaluation metrics",
+    )
+
+    usage: dict[str, Any] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB(none_as_null=True),
+            nullable=True,
+            comment="Provider-native usage, always with a unit: "
+            '{unit: "tokens", input_tokens, output_tokens, total_tokens} (Gemini), '
+            '{unit: "characters", characters} (Sarvam), '
+            '{unit: "credits", characters, credits, credit_multiplier} (ElevenLabs; '
+            "credits computed, null if the multiplier was unavailable); "
+            "NULL when not reported",
+        ),
+        description="Provider-native usage of this synthesis",
+    )
+
+    issues: list[str] | None = SQLField(
+        default=None,
+        sa_column=Column(
+            JSONB(none_as_null=True),
+            nullable=True,
+            comment="Human feedback issue tags: list of mispronunciation, robotic, "
+            "wrong_language, cut_off, long_pause, background_noise",
+        ),
+        description="Human feedback issue tags",
     )
 
     is_correct: bool | None = SQLField(
@@ -220,8 +293,11 @@ class TTSResultPublic(BaseModel):
     duration_seconds: float | None = None
     size_bytes: int | None = None
     provider: str
+    voice: str | None = None
     status: str
     score: dict[str, Any] | None
+    usage: dict[str, Any] | None = None
+    issues: list[str] | None = None
     is_correct: bool | None
     comment: str | None
     error_message: str | None
@@ -247,8 +323,11 @@ class TTSResultPublic(BaseModel):
             duration_seconds=(result.metadata_ or {}).get("duration_seconds"),
             size_bytes=(result.metadata_ or {}).get("size_bytes"),
             provider=result.provider,
+            voice=result.voice,
             status=result.status,
             score=result.score,
+            usage=result.usage,
+            issues=result.issues,
             is_correct=result.is_correct,
             comment=result.comment,
             error_message=result.error_message,
@@ -266,10 +345,11 @@ class TTSFeedbackUpdate(BaseModel):
     is_correct: bool | None = Field(
         None, description="Is the synthesized audio correct?"
     )
-    comment: str | None = Field(None, description="Feedback comment")
+    comment: str | None = Field(None, max_length=500, description="Short optional note")
     score: dict[str, Any] | None = Field(
         None,
-        description="Evaluation metrics",
+        description="Evaluation metrics, merged per key into the stored ones; a "
+        "null value removes that metric",
         json_schema_extra={
             "example": {
                 "Speech Naturalness": "low | medium | high",
@@ -277,6 +357,59 @@ class TTSFeedbackUpdate(BaseModel):
             }
         },
     )
+    issues: list[TTSIssueEnum] | None = Field(
+        None,
+        description="Issue tags; replaces the stored list, [] or null clears it",
+    )
+
+    @field_validator("issues")
+    @classmethod
+    def dedupe_issues(
+        cls, issues: list[TTSIssueEnum] | None
+    ) -> list[TTSIssueEnum] | None:
+        if issues is None:
+            return None
+        return list(dict.fromkeys(issues))
+
+
+class TTSModelVoice(BaseModel):
+    """One model of a TTS evaluation run and the voice to synthesize it with."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(..., description="TTS model to evaluate")
+    voice: str | None = Field(
+        default=None,
+        description="Voice from the model's predefined set; omitted uses the "
+        "model's default voice",
+    )
+
+    @field_validator("model")
+    @classmethod
+    def validate_model(cls, model: str) -> str:
+        if model not in SUPPORTED_TTS_MODELS:
+            raise ValueError(
+                f"Unsupported model: {model}. "
+                f"Supported models are: {', '.join(SUPPORTED_TTS_MODELS)}"
+            )
+        return model
+
+    @model_validator(mode="after")
+    def validate_voice(self) -> TTSModelVoice:
+        self.voice = resolve_voice(self.model, self.voice)
+        return self
+
+
+def _model_item_from_name(item: object) -> object:
+    """Accept a plain model name (the original request shape) as `{model}`."""
+    return {"model": item} if isinstance(item, str) else item
+
+
+# The schema advertises both item shapes so plain-name clients stay valid in OpenAPI.
+TTSModelItem = Annotated[
+    TTSModelVoice,
+    BeforeValidator(_model_item_from_name, json_schema_input_type=str | TTSModelVoice),
+]
 
 
 class TTSEvaluationRunCreate(BaseModel):
@@ -284,25 +417,47 @@ class TTSEvaluationRunCreate(BaseModel):
 
     run_name: str = Field(..., description="Name for this evaluation run", min_length=1)
     dataset_id: int = Field(..., description="ID of the TTS dataset to evaluate")
-    models: list[str] = Field(
-        default_factory=lambda: ["gemini-2.5-pro-preview-tts"],
-        description="List of TTS models to use",
+    models: list[TTSModelItem] = Field(
+        default_factory=lambda: [TTSModelVoice(model=DEFAULT_TTS_MODEL)],
+        description="TTS models to use; each item is a model name or "
+        "{model, voice}. Voices are resolved to the model's default when omitted.",
         min_length=1,
+        json_schema_extra={
+            "example": [
+                {"model": "gemini-3.8-flash-tts", "voice": "Puck"},
+                {"model": "bulbul:v3", "voice": "priya"},
+                "eleven_v3",
+            ]
+        },
     )
 
     @field_validator("models")
     @classmethod
-    def validate_models(cls, models: list[str]) -> list[str]:
-        """Validate that all models are supported."""
-        if not models:
-            raise ValueError("At least one model must be specified")
-        unsupported = [m for m in models if m not in SUPPORTED_TTS_MODELS]
-        if unsupported:
+    def validate_unique_models(cls, models: list[TTSModelVoice]) -> list[TTSModelVoice]:
+        """Reject repeated models: result rows are keyed by model, not by voice."""
+        seen: set[str] = set()
+        duplicates: list[str] = []
+        for item in models:
+            if item.model in seen and item.model not in duplicates:
+                duplicates.append(item.model)
+            seen.add(item.model)
+        if duplicates:
             raise ValueError(
-                f"Unsupported model(s): {', '.join(unsupported)}. "
-                f"Supported models are: {', '.join(SUPPORTED_TTS_MODELS)}"
+                f"Duplicate model(s): {', '.join(duplicates)}. "
+                f"Each model can appear only once per run"
             )
         return models
+
+    @property
+    def model_names(self) -> list[str]:
+        return [item.model for item in self.models]
+
+    @property
+    def voices(self) -> dict[str, str]:
+        resolved: dict[str, str] = {}
+        for item in self.models:
+            resolved[item.model] = item.voice or default_voice_for_model(item.model)
+        return resolved
 
 
 class TTSEvaluationRunPublic(BaseModel):
@@ -358,6 +513,11 @@ class TTSEvaluationRunWithResults(TTSEvaluationRunPublic):
 
     results: list[TTSResultPublic]
     results_total: int = Field(0, description="Total number of results")
+    usage_by_model: dict[str, dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Per model: usage unit, summed usage fields over all the "
+        "run's results, and results_with_usage",
+    )
 
     @classmethod
     def from_model(
@@ -367,6 +527,7 @@ class TTSEvaluationRunWithResults(TTSEvaluationRunPublic):
         results: list[TTSResultPublic] | None = None,
         results_total: int = 0,
         run_metadata: dict[str, Any] | None = None,
+        usage_by_model: dict[str, dict[str, Any]] | None = None,
     ) -> TTSEvaluationRunWithResults:
         """Create from an EvaluationRun model instance with results."""
         base = TTSEvaluationRunPublic.from_model(run, run_metadata=run_metadata)
@@ -374,4 +535,5 @@ class TTSEvaluationRunWithResults(TTSEvaluationRunPublic):
             **base.model_dump(),
             results=results or [],
             results_total=results_total,
+            usage_by_model=usage_by_model or {},
         )

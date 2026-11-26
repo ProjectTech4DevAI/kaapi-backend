@@ -5,6 +5,11 @@ from asgi_correlation_id import correlation_id
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.chatbot.examples import (
+    CHATBOT_SESSION_CREATE_EXAMPLES,
+    CHATBOT_SESSION_MESSAGE_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.api.routes.chatbot.errors import CHATBOT_SERVICE_ERRORS, to_http_exception
 from app.celery.utils import start_chatbot_session_message
@@ -83,6 +88,7 @@ def read_latest_chatbot_session(
     description=load_description("chatbot/send_session_message.md"),
     response_model=APIResponse[SendChatbotSessionMessageResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(CHATBOT_SESSION_MESSAGE_EXAMPLES),
 )
 def send_chatbot_session_message(
     session_id: Annotated[UUID, Path(description="Chatbot session identifier")],
@@ -149,6 +155,7 @@ def send_chatbot_session_message(
     description=load_description("chatbot/create_session.md"),
     response_model=APIResponse[CreateChatbotSessionResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(CHATBOT_SESSION_CREATE_EXAMPLES),
 )
 def create_chatbot_session_route(
     chatbot_id: Annotated[UUID, Path(description="Chatbot identifier")],

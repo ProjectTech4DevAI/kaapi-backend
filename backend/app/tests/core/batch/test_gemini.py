@@ -9,6 +9,7 @@ from app.core.batch.gemini import (
     BatchJobState,
     GeminiBatchProvider,
     create_stt_batch_requests,
+    create_tts_batch_requests,
 )
 
 
@@ -204,6 +205,23 @@ class TestGeminiBatchProvider:
         assert result["provider_status"] == "JOB_STATE_FAILED"
         assert "error_message" in result
         assert "Batch JOB_STATE_FAILED" in result["error_message"]
+
+    def test_get_batch_status_failed_adds_the_job_error(
+        self, provider, mock_genai_client
+    ):
+        mock_batch_job = MagicMock()
+        mock_batch_job.state.name = "JOB_STATE_FAILED"
+        mock_batch_job.error.code = 3
+        mock_batch_job.error.message = "Request contains an invalid argument."
+        mock_genai_client.batches.get.return_value = mock_batch_job
+
+        result = provider.get_batch_status("batches/batch-xyz789")
+
+        assert result["error_message"] == "Batch JOB_STATE_FAILED"
+        assert result["provider_error"] == {
+            "code": 3,
+            "message": "Request contains an invalid argument.",
+        }
 
     def test_get_batch_status_cancelled(self, provider, mock_genai_client):
         """Test getting status of a cancelled batch."""
@@ -750,3 +768,41 @@ class TestExtractTextFromResponse:
 
         text = GeminiBatchProvider._extract_text_from_response(response)
         assert text == ""
+
+
+class TestCreateTTSBatchRequests:
+    def test_style_goes_in_speech_metadata_and_pcm_is_requested(self):
+        [request] = create_tts_batch_requests(
+            texts=["Hello"], voice_name="Kore", style_prompt="warm", keys=["7"]
+        )
+
+        body = request["request"]
+        assert request["key"] == "7"
+        # 3.8+ speaks `text` verbatim, so a style prefix would be read aloud.
+        assert body["contents"][0]["parts"] == [
+            {"text": "Hello", "speechMetadata": {"style": "warm"}}
+        ]
+        assert body["generationConfig"]["responseFormat"] == {
+            "audio": {"mimeType": "AUDIO_L16"}
+        }
+        assert body["generationConfig"]["speechConfig"]["voiceConfig"] == {
+            "prebuiltVoiceConfig": {"voiceName": "Kore"}
+        }
+
+    def test_no_style_omits_speech_metadata(self):
+        [request] = create_tts_batch_requests(texts=["Hello"], voice_name="Kore")
+
+        assert request["request"]["contents"][0]["parts"] == [{"text": "Hello"}]
+
+    def test_legacy_prompting_prefixes_style_and_keeps_default_output(self):
+        [request] = create_tts_batch_requests(
+            texts=["Hello"],
+            voice_name="Kore",
+            style_prompt="warm",
+            legacy_prompting=True,
+        )
+
+        body = request["request"]
+        assert body["contents"][0]["parts"] == [{"text": "warm: Hello"}]
+        # Preview models reject audio/l16 and already return raw PCM.
+        assert "responseFormat" not in body["generationConfig"]

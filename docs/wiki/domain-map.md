@@ -50,10 +50,11 @@ APIKey → Organization, Project, User  # programmatic access
 | Language | language.py (`global.languages`) | — | EvaluationDataset, EvaluationRun, STT |
 | FeatureFlag | feature_flag.py | Org, Project | route gating (logical) |
 | Notification | notification.py | Project, User | notification service |
+| WebhookLog | webhook_log.py | Org, Project (both nullable, CASCADE) | written by `send_callback`; `resource_type` + `resource_id` point logically at any callback-emitting resource (llm_call, jobs, evaluations, assessments, chatbot sessions) |
 | Chatbot | chatbot.py | Org, Project | ChatbotFlowVersion, ChatbotSession; soft-deleted (`deleted_at`) because sessions reference it |
 | ChatbotFlowVersion | chatbot.py | Chatbot (CASCADE) | ChatbotSession (`flow_version_id`, RESTRICT); React Flow editor in kaapi-frontend (logical); Config/ConfigVersion via node `data` (logical) |
 | ChatbotSession | chatbot.py | Chatbot (RESTRICT), ChatbotFlowVersion (RESTRICT) | ChatbotSessionMessage; Celery turn worker; caller webhook (logical) |
-| ChatbotSessionMessage | chatbot.py | ChatbotSession (CASCADE) | turn history for the onboarding agent (logical) |
+| ChatbotSessionMessage | chatbot.py | ChatbotSession (CASCADE) | turn history for the coordinator, onboarding and rag agents (logical) |
 
 ## External consumers (always check in blast radius)
 

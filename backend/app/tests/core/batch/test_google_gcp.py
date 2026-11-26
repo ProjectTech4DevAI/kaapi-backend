@@ -90,6 +90,7 @@ class TestGetBatchStatus:
         result = provider.get_batch_status("batches/123")
         assert result["provider_status"] == "JOB_STATE_FAILED"
         assert result["error_message"] == "boom"
+        assert result["provider_error"]["message"] == "boom"
         assert result["provider_output_file_id"] == "batches/123"
 
     def test_poll_failure_propagates(self, provider, mock_genai):
@@ -142,6 +143,7 @@ class TestDownloadBatchResults:
         results = provider.download_batch_results("batches/123")
         assert results[0]["custom_id"] == "row_5"
         assert results[0]["error"] == "quota"
+        assert results[0]["error_raw"] == "quota"
         assert results[0]["response"] is None
 
     def test_incomplete_job_raises(self, provider, mock_genai):

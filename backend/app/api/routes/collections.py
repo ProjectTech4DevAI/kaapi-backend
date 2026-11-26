@@ -6,6 +6,12 @@ from fastapi import APIRouter, HTTPException, Query, Body, Depends
 from fastapi import Path as FastPath
 
 from app.api.deps import SessionDep, AuthContextDep
+from app.api.docs.collections.examples import (
+    COLLECTION_CREATE_EXAMPLES,
+    COLLECTION_DELETE_EXAMPLES,
+    COLLECTION_UPDATE_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.crud.collection.collection import CollectionNameConflictError
 from app.api.permissions import Permission, require_permission
 from app.core.telemetry import log_context
@@ -91,6 +97,7 @@ def list_collections(
         Depends(require_permission(Permission.REQUIRE_PROJECT)),
         Depends(monitor_rate("collections")),
     ],
+    openapi_extra=request_examples(COLLECTION_CREATE_EXAMPLES),
 )
 def create_collection(
     session: SessionDep,
@@ -156,6 +163,7 @@ def create_collection(
     response_model=APIResponse[CollectionJobImmediatePublic],
     callbacks=collection_callback_router.routes,
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(COLLECTION_DELETE_EXAMPLES),
 )
 def delete_collection(
     session: SessionDep,
@@ -212,6 +220,7 @@ def delete_collection(
     description=load_description("collections/update.md"),
     response_model=APIResponse[CollectionPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(COLLECTION_UPDATE_EXAMPLES),
 )
 def update_collection(
     session: SessionDep,

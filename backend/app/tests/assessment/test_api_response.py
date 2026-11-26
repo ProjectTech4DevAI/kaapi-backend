@@ -160,7 +160,7 @@ class TestRunStage:
                 project_id=auth.project_id,
             )
         assert out["output"] is None
-        assert out["error"] == "rate limited"
+        assert out["error"] == "[OPENAI] rate limited"
 
 
 class TestRunResponseAssessment:

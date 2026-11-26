@@ -23,7 +23,7 @@ from app.core.telemetry.constants import (
     HTTP_ROUTE,
     HTTP_STATUS_CODE,
 )
-from app.utils import APIResponse
+from app.utils import APIResponse, InvalidCallbackURLError
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +180,18 @@ def register_exception_handlers(app: FastAPI) -> None:
             status_code=exc.status_code,
             content=APIResponse.failure_response(detail).model_dump(),
             headers=exc.headers,
+        )
+
+    @app.exception_handler(InvalidCallbackURLError)
+    async def invalid_callback_url_handler(
+        request: Request, exc: InvalidCallbackURLError
+    ) -> JSONResponse:
+        _tag_error_scope(request, HTTP_422_UNPROCESSABLE_CONTENT)
+        return JSONResponse(
+            status_code=HTTP_422_UNPROCESSABLE_CONTENT,
+            content=APIResponse.failure_response(
+                f"invalid_callback_url: {exc}"
+            ).model_dump(),
         )
 
     @app.exception_handler(SQLAlchemyError)

@@ -6,11 +6,14 @@ os.environ["ENVIRONMENT"] = "testing"
 
 from fastapi.testclient import TestClient
 from filelock import FileLock
+from limits.storage import MemoryStorage
+from limits.strategies import MovingWindowRateLimiter
 from sqlmodel import Session
 from sqlalchemy import event
 from typing import Any, Generator
 
 # Now import after setting environment
+from app.core import rate_limit
 from app.core.config import settings
 from app.core.db import engine
 from app.api.deps import get_db
@@ -78,6 +81,14 @@ def seed_baseline(
     yield
 
 
+@pytest.fixture(autouse=True)
+def isolated_rate_limiter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fresh in-memory limiter per test, so route tests sharing one org never trip 429 or touch real Redis."""
+    monkeypatch.setattr(
+        rate_limit, "_limiter", MovingWindowRateLimiter(MemoryStorage())
+    )
+
+
 @pytest.fixture
 def aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     """Dummy AWS creds for moto. setenv (not os.environ) so they unwind after the test."""
@@ -92,6 +103,13 @@ def aws_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
 def no_retry_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     """Tenacity binds nap.sleep at import (incl. nested decorators), so patch time.sleep."""
     monkeypatch.setattr("tenacity.nap.time.sleep", lambda _seconds: None)
+
+
+@pytest.fixture(autouse=True)
+def no_webhook_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    """send_callback writes webhook_log via its own Session(engine), outside the
+    db fixture's rollback. test_send_callback_webhook_log.py overrides this."""
+    monkeypatch.setattr("app.utils._save_webhook_log", lambda **_kwargs: None)
 
 
 @pytest.fixture(scope="function")

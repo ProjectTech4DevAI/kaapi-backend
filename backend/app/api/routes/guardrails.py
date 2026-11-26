@@ -13,6 +13,7 @@ from app.core.telemetry.constants import (
     TENANT_PROJECT_ID,
 )
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.guardrails.examples import GUARDRAILS_APPLY_EXAMPLES
 from app.api.docs.guardrails_schemas import (
     BAN_LIST_CREATE_EXAMPLE,
     BAN_LIST_LIST_OK,
@@ -36,7 +37,7 @@ from app.api.docs.guardrails_schemas import (
     VALIDATOR_TYPE_LIST_OK,
     render_validator_reference,
 )
-from app.api.openapi_docs import doc, ref
+from app.api.openapi_docs import doc, ref, request_examples
 from app.api.permissions import Permission, require_permission
 from app.core.rate_monitor import monitor_rate
 from app.core.telemetry import log_context
@@ -105,6 +106,7 @@ def guardrails_callback_notification(
         Depends(require_permission(Permission.REQUIRE_PROJECT)),
         Depends(monitor_rate("llm_call")),
     ],
+    openapi_extra=request_examples(GUARDRAILS_APPLY_EXAMPLES),
     **doc(responses=JOB_RESPONSES),
 )
 def apply_guardrails_endpoint(
@@ -617,6 +619,10 @@ def get_guardrails_job_status(
             if isinstance(raw_warnings, list):
                 warnings = [w for w in raw_warnings if isinstance(w, str)]
 
+        guardrail_metadata = (
+            callback_blob.get("guardrail") if isinstance(callback_blob, dict) else None
+        )
+
         guardrails_response: GuardrailsCallbackData | None = None
         if job.status == JobStatus.SUCCESS:
             response_blob = meta.get("response") or {}
@@ -663,6 +669,7 @@ def get_guardrails_job_status(
                 status=job.status.value,
                 guardrails_response=guardrails_response,
                 error_message=job.error_message,
+                guardrail_metadata=guardrail_metadata,
                 warnings=warnings,
             )
         )

@@ -25,7 +25,7 @@ FastAPI (backend/app/main.py, api/routes/*)
 | Process | Entry | Notes |
 |---|---|---|
 | API server | `fastapi run app/main.py` | routes in `app/api/routes/` |
-| Celery worker | `app/celery/` config | `default` queue (most tasks) + dedicated `evaluations` queue/pool (fast-eval chunk/aggregate, isolated so eval bursts can't delay LLM jobs), priority bands within each |
+| Celery worker | `app/celery/` config | `default` queue (most tasks) + dedicated `evaluations` queue/pool (fast-eval chunk/aggregate and STT/TTS evaluation tasks, isolated so eval bursts can't delay LLM jobs), priority bands within each |
 | Celery beat / cron | `app/api/routes/cron.py` + `crud/evaluations/cron.py` | batch polling for eval/assessment runs |
 
 ## Environment

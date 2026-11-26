@@ -1,10 +1,13 @@
 """TTS result feedback API routes."""
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.tts_evaluation.examples import TTS_FEEDBACK_UPDATE_EXAMPLES
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.core.cloud import get_cloud_storage
 from app.crud.tts_evaluations import (
@@ -29,6 +32,7 @@ router = APIRouter()
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
     summary="Update human feedback",
     description=load_description("tts_evaluation/update_feedback.md"),
+    openapi_extra=request_examples(TTS_FEEDBACK_UPDATE_EXAMPLES),
 )
 def update_result_feedback(
     session: SessionDep,
@@ -65,13 +69,15 @@ def update_result_feedback(
     # Build kwargs only for explicitly provided fields so that
     # sending {"is_correct": null} clears the value, while omitting
     # the field leaves it unchanged.
-    update_kwargs: dict = {}
+    update_kwargs: dict[str, Any] = {}
     if "is_correct" in feedback.model_fields_set:
         update_kwargs["is_correct"] = feedback.is_correct
     if "comment" in feedback.model_fields_set:
         update_kwargs["comment"] = feedback.comment
     if "score" in feedback.model_fields_set:
         update_kwargs["score"] = feedback.score
+    if "issues" in feedback.model_fields_set:
+        update_kwargs["issues"] = feedback.issues
 
     result = update_tts_human_feedback(
         session=session,

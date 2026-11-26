@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Any, Literal, Self, Union
+from typing import Annotated, Any, Literal, Self, TypeVar, Union
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -18,15 +18,16 @@ from sqlmodel import Field, Index, SQLModel, text
 
 from app.core.util import now
 from app.models.llm.constants import (
+    DEFAULT_ELEVENLABS_STT_MODEL,
+    DEFAULT_ELEVENLABS_TTS_MODEL,
+    DEFAULT_SARVAM_STT_MODEL,
+    DEFAULT_SARVAM_TTS_MODEL,
     DEFAULT_STT_MODEL,
     DEFAULT_TTS_MODEL,
-    DEFAULT_TTS_VOICE,
     CompletionType,
     KaapiProvider,
     NativeProvider,
     Provider,
-    RAGProvider,
-    SUPPORTED_STS_LANGUAGE_CODES,
     STTProvider,
     TextProvider,
     TTSProvider,
@@ -156,7 +157,8 @@ class TTSLLMParams(ParamSerialization, SQLModel):
     model_config = {"extra": "forbid"}
 
     model: str = DEFAULT_TTS_MODEL
-    voice: str = DEFAULT_TTS_VOICE
+    # None lets each provider pick its own default speaker; Gemini falls back to DEFAULT_TTS_VOICE.
+    voice: str | None = None
     language: str | None = None
     response_format: Literal["mp3", "wav", "ogg"] | None = "wav"
     instructions: str | None = Field(default=None, exclude=True)
@@ -369,6 +371,29 @@ class KaapiTextCompletionConfig(SQLModel):
     )
 
 
+# The params' default `model` is a Gemini model; other providers need their own.
+_NON_GEMINI_DEFAULT_MODELS: dict[tuple[str, CompletionType], str] = {
+    (Provider.SARVAMAI, CompletionType.STT): DEFAULT_SARVAM_STT_MODEL,
+    (Provider.SARVAMAI, CompletionType.TTS): DEFAULT_SARVAM_TTS_MODEL,
+    (Provider.ELEVENLABS, CompletionType.STT): DEFAULT_ELEVENLABS_STT_MODEL,
+    (Provider.ELEVENLABS, CompletionType.TTS): DEFAULT_ELEVENLABS_TTS_MODEL,
+}
+
+
+_AudioParamsT = TypeVar("_AudioParamsT", STTLLMParams, TTSLLMParams)
+
+
+def _with_provider_default_model(
+    provider: str | None,
+    completion_type: CompletionType,
+    params: _AudioParamsT,
+) -> _AudioParamsT:
+    default_model = _NON_GEMINI_DEFAULT_MODELS.get((provider, completion_type))
+    if default_model is None or "model" in params.model_fields_set:
+        return params
+    return params.model_copy(update={"model": default_model})
+
+
 class KaapiSTTCompletionConfig(SQLModel):
     """Kaapi-standardized STT completion config (Google/Sarvam/ElevenLabs)."""
 
@@ -385,6 +410,13 @@ class KaapiSTTCompletionConfig(SQLModel):
     params: STTLLMParams = Field(
         ..., description="Kaapi-standardized parameters mapped to provider-specific API"
     )
+
+    @model_validator(mode="after")
+    def _default_model_for_provider(self) -> Self:
+        self.params = _with_provider_default_model(
+            self.provider, CompletionType.STT, self.params
+        )
+        return self
 
 
 class KaapiTTSCompletionConfig(SQLModel):
@@ -403,6 +435,13 @@ class KaapiTTSCompletionConfig(SQLModel):
     params: TTSLLMParams = Field(
         ..., description="Kaapi-standardized parameters mapped to provider-specific API"
     )
+
+    @model_validator(mode="after")
+    def _default_model_for_provider(self) -> Self:
+        self.params = _with_provider_default_model(
+            self.provider, CompletionType.TTS, self.params
+        )
+        return self
 
 
 KaapiCompletionConfig = Annotated[
@@ -880,6 +919,15 @@ class ChainBlock(SQLModel):
         description="Whether to send intermediate callback after this block completes",
     )
 
+    conversation: ConversationConfig | None = Field(
+        default=None,
+        description=(
+            "Conversation for this block's LLM call. Blocks after the first get "
+            "a fresh query built from the previous output, so this is how a later "
+            "block continues a conversation."
+        ),
+    )
+
 
 class LLMChainRequest(SQLModel):
     """
@@ -1059,159 +1107,3 @@ class LlmChain(SQLModel, table=True):
             "comment": "Timestamp when the chain record was last updated"
         },
     )
-
-
-class _BlockSpecBase(SQLModel):
-    """Common xor logic for per-block specs: provide *either* (config_id +
-    config_version) for a stored config, *or* inline `params`. Not both.
-    """
-
-    config_id: UUID | None = Field(
-        default=None,
-        description="ID of a stored LLM config to use for this block.",
-    )
-    config_version: int | None = Field(
-        default=None,
-        ge=1,
-        description="Version of the stored config (required when config_id is set).",
-    )
-
-    @model_validator(mode="after")
-    def _validate_xor(self):
-        has_ref = self.config_id is not None or self.config_version is not None
-        has_params = getattr(self, "params", None) is not None
-
-        if has_ref and has_params:
-            raise ValueError(
-                "Provide either (config_id + config_version) OR inline 'params', not both."
-            )
-        if has_ref and (self.config_id is None or self.config_version is None):
-            raise ValueError(
-                "Both 'config_id' and 'config_version' must be set together."
-            )
-        return self
-
-    @property
-    def is_stored_ref(self) -> bool:
-        return self.config_id is not None and self.config_version is not None
-
-
-class STTBlockSpec(_BlockSpecBase):
-    params: STTLLMParams | None = Field(
-        default=None,
-        description="Inline STT parameters. Omit to use endpoint defaults.",
-    )
-
-
-class RAGBlockSpec(_BlockSpecBase):
-    params: TextLLMParams | None = Field(
-        default=None,
-        description="Inline RAG (text) parameters. Omit to use endpoint defaults.",
-    )
-
-
-class TTSBlockSpec(_BlockSpecBase):
-    params: TTSLLMParams | None = Field(
-        default=None,
-        description="Inline TTS parameters. Omit to use endpoint defaults.",
-    )
-
-
-class SpeechToSpeechRequest(SQLModel):
-    """
-    API request for speech-to-speech (STS) with RAG.
-
-    Convenience endpoint that orchestrates a 3-block chain:
-    STT → RAG → TTS
-
-    Input: Audio
-    Output: Audio + Text (via callback)
-    """
-
-    query: AudioInput = Field(
-        ..., description="Voice note input (WhatsApp compatible format)"
-    )
-    knowledge_base_ids: list[str] = Field(
-        ..., min_length=1, description="Knowledge base IDs for RAG retrieval"
-    )
-
-    # Optional language config (BCP-47 codes)
-    input_language: SUPPORTED_STS_LANGUAGE_CODES = Field(
-        "auto",
-        description=(
-            "BCP-47 language code for STT input (auto-detect by default). "
-            "Supported codes: 'auto', 'en-IN', 'hi-IN', 'bn-IN', 'kn-IN', 'ml-IN', 'mr-IN', 'od-IN', "
-            "'pa-IN', 'ta-IN', 'te-IN', 'gu-IN', 'as-IN', 'ur-IN', 'ne-IN', 'kok-IN', 'ks-IN', "
-            "'sd-IN', 'sa-IN', 'sat-IN', 'mni-IN', 'brx-IN', 'mai-IN', 'doi-IN'"
-        ),
-    )
-    output_language: SUPPORTED_STS_LANGUAGE_CODES | None = Field(
-        None,
-        description=(
-            "BCP-47 language code for TTS output (defaults to input_language if not specified). "
-            "Supported codes: same as input_language (except 'auto'/'unknown')."
-        ),
-    )
-
-    # Per-block specs. Each spec accepts EITHER (config_id + config_version)
-    # to reference a stored config, OR inline `params` to override the
-    # endpoint defaults. Omit entirely to use defaults only.
-    stt: STTBlockSpec | None = Field(
-        None,
-        description=(
-            "STT block spec. Use 'params' for inline overrides or "
-            "'config_id' + 'config_version' to reference a stored config."
-        ),
-    )
-    rag: RAGBlockSpec | None = Field(
-        None,
-        description=(
-            "RAG block spec. Use 'params' for inline overrides or "
-            "'config_id' + 'config_version' to reference a stored config."
-        ),
-    )
-    tts: TTSBlockSpec | None = Field(
-        None,
-        description=(
-            "TTS block spec. Use 'params' for inline overrides or "
-            "'config_id' + 'config_version' to reference a stored config."
-        ),
-    )
-
-    # Provider hints. Optional — KaapiCompletionConfig auto-defaults to
-    # "google" for stt/tts when omitted.
-    stt_provider: STTProvider | None = None
-    tts_provider: TTSProvider | None = None
-    rag_provider: RAGProvider | None = None
-
-    # Callback and metadata
-    callback_url: HttpUrl | None = Field(
-        None, description="Webhook URL for async response delivery"
-    )
-    request_metadata: dict[str, Any] | None = Field(
-        None, description="Client-provided metadata"
-    )
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_language_casing(cls, data: object) -> object:
-        """Normalize language input (name, bare ISO code, or BCP-47 tag, any
-        casing — e.g. 'hindi' / 'hi' / 'hi-in' -> 'hi-IN') before the
-        SUPPORTED_STS_LANGUAGE_CODES Literal check runs, so it validates against the
-        supported-code allowlist."""
-        if not isinstance(data, dict):
-            return data
-        for field in ("input_language", "output_language"):
-            value = data.get(field)
-            if isinstance(value, str):
-                data[field] = normalize_bcp47_language(value)
-        return data
-
-    @model_validator(mode="after")
-    def validate_output_language(self) -> Self:
-        """'auto'/'unknown' are STT-only detection modes, not valid TTS targets."""
-        if self.output_language in ("auto", "unknown"):
-            raise ValueError(
-                f"output_language must be a concrete language code, not '{self.output_language}'"
-            )
-        return self

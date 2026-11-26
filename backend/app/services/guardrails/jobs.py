@@ -19,7 +19,7 @@ from app.celery.utils import start_guardrails_job
 from app.core.db import engine
 from app.core.telemetry import log_context
 from app.crud.jobs import JobCrud
-from app.models import Job, JobStatus, JobType, JobUpdate
+from app.models import Job, JobStatus, JobType, JobUpdate, WebhookResourceTypeEnum
 from app.models.guardrails import (
     GuardrailsCallbackData,
     GuardrailsCallbackResponse,
@@ -29,7 +29,11 @@ from app.models.guardrails import (
     GuardrailsRequest,
 )
 from app.models.llm.request import InlineValidator, Validator
-from app.services.llm.guardrails import GuardrailsOutcome, apply_guardrails
+from app.services.llm.guardrails import (
+    GuardrailsOutcome,
+    apply_guardrails,
+    summarize_validator_results,
+)
 from app.utils import APIResponse, get_webhook_secret, send_callback
 
 logger = logging.getLogger(__name__)
@@ -161,9 +165,11 @@ def _build_callback_payload(
 
 def _send_failure_callback(
     *,
+    job_id: UUID,
     callback_url: str | None,
     error: str,
     request_metadata: dict[str, Any] | None,
+    client_request_metadata: dict[str, Any] | None,
     project_id: int,
     organization_id: int,
 ) -> None:
@@ -180,13 +186,20 @@ def _send_failure_callback(
             callback_url=callback_url,
             data=payload,
             webhook_secret=webhook_secret,
+            resource_type=WebhookResourceTypeEnum.GUARDRAILS,
+            resource_id=str(job_id),
+            project_id=project_id,
+            organization_id=organization_id,
+            request_metadata=client_request_metadata,
         )
 
 
 def _dispatch_success_callback(
     *,
+    job_id: UUID,
     callback_url: str | None,
     payload: dict[str, Any],
+    client_request_metadata: dict[str, Any] | None,
     project_id: int,
     organization_id: int,
 ) -> None:
@@ -200,6 +213,11 @@ def _dispatch_success_callback(
             callback_url=callback_url,
             data=payload,
             webhook_secret=webhook_secret,
+            resource_type=WebhookResourceTypeEnum.GUARDRAILS,
+            resource_id=str(job_id),
+            project_id=project_id,
+            organization_id=organization_id,
+            request_metadata=client_request_metadata,
         )
 
 
@@ -275,6 +293,7 @@ def _fail_job(
     error: str,
     callback_url: str | None,
     request_metadata: dict[str, Any] | None,
+    client_request_metadata: dict[str, Any] | None,
     project_id: int,
     organization_id: int,
     meta: dict[str, Any] | None = None,
@@ -288,9 +307,11 @@ def _fail_job(
         fields["meta"] = meta
     _update_job(job_uuid, **fields)
     _send_failure_callback(
+        job_id=job_uuid,
         callback_url=callback_url,
         error=error,
         request_metadata=request_metadata,
+        client_request_metadata=client_request_metadata,
         project_id=project_id,
         organization_id=organization_id,
     )
@@ -354,12 +375,24 @@ def execute_job(
                 error=str(e),
                 callback_url=callback_url,
                 request_metadata=request.request_metadata,
+                client_request_metadata=request.request_metadata,
                 project_id=project_id,
                 organization_id=organization_id,
             )
 
         warnings += _outcome_warnings(outcome, bool(validators))
         request_json = request.model_dump(mode="json")
+        # Same `applied` gate as /llm/call: a bypassed service has no validator results.
+        guardrail_block: dict[str, Any] | None = None
+        if request.include_guardrail_metadata and outcome.applied:
+            guardrail_block = {
+                "input_from_user": request.text,
+                "output_to_user": outcome.safe_text,
+                "validators": summarize_validator_results(outcome),
+            }
+        callback_metadata = dict(request.request_metadata or {})
+        if guardrail_block:
+            callback_metadata["guardrail"] = guardrail_block
 
         # 4. Hard block: guardrails service rejected the text.
         if outcome.error is not None:
@@ -368,10 +401,15 @@ def execute_job(
                 job_uuid=job_uuid,
                 error=outcome.error,
                 callback_url=callback_url,
-                request_metadata=request.request_metadata,
+                request_metadata=callback_metadata,
+                client_request_metadata=request.request_metadata,
                 project_id=project_id,
                 organization_id=organization_id,
-                meta={"request": request_json, "response": outcome.raw},
+                meta={
+                    "request": request_json,
+                    "response": outcome.raw,
+                    "callback": {"guardrail": guardrail_block},
+                },
             )
 
         # 5. Success: persist sanitised result and dispatch the success callback.
@@ -382,7 +420,7 @@ def execute_job(
             response_id=response_id,
             safe_text=safe_text,
             raw=outcome.raw,
-            request_metadata=request.request_metadata,
+            request_metadata=callback_metadata,
             warnings=warnings,
         )
         _update_job(
@@ -395,12 +433,15 @@ def execute_job(
                     "response_id": response_id,
                     "delivered": callback_url is not None,
                     "warnings": warnings,
+                    "guardrail": guardrail_block,
                 },
             },
         )
         _dispatch_success_callback(
+            job_id=job_uuid,
             callback_url=callback_url,
             payload=callback_payload,
+            client_request_metadata=request.request_metadata,
             project_id=project_id,
             organization_id=organization_id,
         )

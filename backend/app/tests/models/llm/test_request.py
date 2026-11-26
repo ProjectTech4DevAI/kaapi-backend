@@ -3,6 +3,14 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from app.models.llm.constants import (
+    DEFAULT_ELEVENLABS_STT_MODEL,
+    DEFAULT_ELEVENLABS_TTS_MODEL,
+    DEFAULT_SARVAM_STT_MODEL,
+    DEFAULT_SARVAM_TTS_MODEL,
+    DEFAULT_STT_MODEL,
+    DEFAULT_TTS_MODEL,
+)
 from app.models.llm.request import (
     ConfigBlob,
     InlineValidator,
@@ -79,6 +87,46 @@ class TestKaapiCompletionConfigTemperature:
         assert "temperature" not in kaapi_params_as_dict(
             round_tripped.completion.params
         )
+
+
+class TestAudioCompletionProviderDefaults:
+    """The params' default model and voice are Gemini's; non-Gemini providers must not receive them."""
+
+    @pytest.mark.parametrize(
+        "provider,type_,expected_model",
+        [
+            ("sarvamai", "stt", DEFAULT_SARVAM_STT_MODEL),
+            ("sarvamai", "tts", DEFAULT_SARVAM_TTS_MODEL),
+            ("elevenlabs", "stt", DEFAULT_ELEVENLABS_STT_MODEL),
+            ("elevenlabs", "tts", DEFAULT_ELEVENLABS_TTS_MODEL),
+            ("google", "stt", DEFAULT_STT_MODEL),
+            ("google", "tts", DEFAULT_TTS_MODEL),
+        ],
+    )
+    def test_unset_model_uses_provider_default(
+        self, provider: str, type_: str, expected_model: str
+    ) -> None:
+        config = build_kaapi_completion_config(provider=provider, type=type_, params={})
+        assert config.params.model == expected_model
+
+    def test_explicit_model_is_kept(self) -> None:
+        config = build_kaapi_completion_config(
+            provider="sarvamai", type="stt", params={"model": "saarika:v2.5"}
+        )
+        assert config.params.model == "saarika:v2.5"
+
+    def test_provider_default_survives_blob_round_trip(self) -> None:
+        blob = ConfigBlob(
+            completion={"provider": "sarvamai", "type": "tts", "params": {}}
+        )
+        reloaded = ConfigBlob.model_validate(blob.model_dump())
+        assert reloaded.completion.params.model == DEFAULT_SARVAM_TTS_MODEL
+
+    def test_unset_voice_is_not_sent(self) -> None:
+        config = build_kaapi_completion_config(
+            provider="sarvamai", type="tts", params={}
+        )
+        assert "voice" not in kaapi_params_as_dict(config.params)
 
 
 class TestTextLLMParamsThinkingLevel:

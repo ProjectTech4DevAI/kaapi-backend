@@ -1,17 +1,30 @@
 """CRUD operations for TTS evaluation results."""
 
 import logging
+from datetime import datetime
 from typing import Any
 
-from sqlmodel import Session, func, select
+from sqlalchemy import BigInteger, Float, update
+from sqlmodel import Session, col, func, select
 
 from app.core.cloud.storage import CloudStorage
 from app.core.exception_handlers import HTTPException
 from app.core.util import now
 from app.models.job import JobStatus
-from app.models.tts_evaluation import TTSResult, TTSResultPublic
+from app.models.tts_evaluation import TTSResult, TTSResultPublic, TTSUsageUnitEnum
 
 logger = logging.getLogger(__name__)
+
+# Numeric usage fields summed per unit; credits are fractional, the rest are counts.
+USAGE_SUM_FIELDS_BY_UNIT: dict[str, tuple[str, ...]] = {
+    TTSUsageUnitEnum.TOKENS: ("input_tokens", "output_tokens", "total_tokens"),
+    TTSUsageUnitEnum.CHARACTERS: ("characters",),
+    TTSUsageUnitEnum.CREDITS: ("characters", "credits"),
+}
+FRACTIONAL_USAGE_FIELDS = {"credits"}
+
+# Queued (PENDING) or claimed by a worker (PROCESSING).
+UNFINISHED_TTS_STATUSES = (JobStatus.PENDING.value, JobStatus.PROCESSING.value)
 
 
 def create_tts_results(
@@ -22,6 +35,7 @@ def create_tts_results(
     org_id: int,
     project_id: int,
     models: list[str],
+    voices: dict[str, str] | None = None,
 ) -> list[TTSResult]:
     """Create TTS result records for all sample texts and models.
 
@@ -34,6 +48,8 @@ def create_tts_results(
         org_id: Organization ID
         project_id: Project ID
         models: List of TTS models
+        voices: Voice per model; a model missing here gets a NULL voice, which
+            readers treat as the model's default
 
     Returns:
         list[TTSResult]: Created results
@@ -44,21 +60,24 @@ def create_tts_results(
         f"model_count: {len(models)}"
     )
 
+    model_voices = voices or {}
     timestamp = now()
-    results = [
-        TTSResult(
-            sample_text=text,
-            evaluation_run_id=evaluation_run_id,
-            organization_id=org_id,
-            project_id=project_id,
-            provider=model,
-            status=JobStatus.PENDING.value,
-            inserted_at=timestamp,
-            updated_at=timestamp,
-        )
-        for text in sample_texts
-        for model in models
-    ]
+    results: list[TTSResult] = []
+    for text in sample_texts:
+        for model in models:
+            results.append(
+                TTSResult(
+                    sample_text=text,
+                    evaluation_run_id=evaluation_run_id,
+                    organization_id=org_id,
+                    project_id=project_id,
+                    provider=model,
+                    voice=model_voices.get(model),
+                    status=JobStatus.PENDING.value,
+                    inserted_at=timestamp,
+                    updated_at=timestamp,
+                )
+            )
 
     session.add_all(results)
     session.flush()
@@ -152,8 +171,13 @@ def update_tts_result(
     metadata: dict[str, Any] | None = None,
     status: str | None = None,
     error_message: str | None = None,
+    usage: dict[str, Any] | None = None,
 ) -> TTSResult | None:
-    """Update a TTS result.
+    """Update a TTS result that is still PROCESSING (claimed by the calling worker).
+
+    The cron can fail a stale claimed row and finalize the run while a sync worker
+    is still synthesizing it; the PROCESSING guard drops that worker's late write so
+    the row stays consistent with the finalized run.
 
     Args:
         session: Database session
@@ -164,11 +188,15 @@ def update_tts_result(
         metadata: Audio metadata (duration_seconds, size_bytes)
         status: New status
         error_message: Error message if failed
+        usage: Provider-native usage ({unit, ...})
 
     Returns:
-        TTSResult | None: Updated result
+        TTSResult | None: Updated result, or None if missing or no longer PROCESSING
     """
-    where_clauses = [TTSResult.id == result_id]
+    where_clauses = [
+        TTSResult.id == result_id,
+        TTSResult.status == JobStatus.PROCESSING.value,
+    ]
     if org_id is not None:
         where_clauses.append(TTSResult.organization_id == org_id)
     if project_id is not None:
@@ -188,6 +216,8 @@ def update_tts_result(
         result.status = status
     if error_message is not None:
         result.error_message = error_message
+    if usage is not None:
+        result.usage = usage
 
     result.updated_at = now()
 
@@ -195,6 +225,150 @@ def update_tts_result(
     session.flush()
 
     return result
+
+
+def fail_pending_tts_results(
+    *,
+    session: Session,
+    run_id: int,
+    provider: str,
+    error_message: str,
+    statuses: tuple[str, ...] = (JobStatus.PENDING.value,),
+    updated_before: datetime | None = None,
+) -> int:
+    """Mark one provider's unfinished rows of a run FAILED in a single UPDATE.
+
+    The status guard keeps a late stale/cleanup pass from overwriting a row a
+    worker has just finished.
+
+    Args:
+        statuses: Row statuses to fail (PENDING and/or PROCESSING)
+        updated_before: Only fail rows last updated before this naive-UTC time;
+            for PROCESSING rows that is the claim time
+
+    Returns:
+        int: Number of rows marked FAILED
+    """
+    where_clauses = [
+        col(TTSResult.evaluation_run_id) == run_id,
+        col(TTSResult.provider) == provider,
+        col(TTSResult.status).in_(statuses),
+    ]
+    if updated_before is not None:
+        where_clauses.append(col(TTSResult.updated_at) < updated_before)
+
+    statement = (
+        update(TTSResult)
+        .where(*where_clauses)
+        .values(
+            status=JobStatus.FAILED.value,
+            error_message=error_message,
+            updated_at=now(),
+        )
+    )
+    failed_count = session.exec(statement).rowcount
+    session.commit()
+
+    if failed_count:
+        logger.warning(
+            f"[fail_pending_tts_results] Failed unfinished results | run_id={run_id}, "
+            f"provider={provider}, statuses={statuses}, count={failed_count}, "
+            f"error={error_message}"
+        )
+
+    return failed_count
+
+
+def claim_pending_tts_results(
+    *,
+    session: Session,
+    run_id: int,
+    provider: str,
+) -> list[TTSResult]:
+    """Atomically move one provider's PENDING rows of a run to PROCESSING and return them.
+
+    Concurrent tasks for the same rows race on this single UPDATE, so exactly one
+    claims each row and the others get nothing back. The claim also stamps
+    `updated_at`, which the cron uses to detect a worker that died mid-batch.
+
+    Returns:
+        list[TTSResult]: Claimed rows, with their attributes loaded
+    """
+    statement = (
+        update(TTSResult)
+        .where(
+            col(TTSResult.evaluation_run_id) == run_id,
+            col(TTSResult.provider) == provider,
+            col(TTSResult.status) == JobStatus.PENDING.value,
+        )
+        .values(status=JobStatus.PROCESSING.value, updated_at=now())
+        .returning(TTSResult.id)
+    )
+    claimed_ids = list(session.exec(statement).scalars().all())
+    session.commit()
+
+    claimed: list[TTSResult] = []
+    if claimed_ids:
+        # Reloaded after commit (which expires instances) so callers can read them
+        # once the session closes.
+        reload_statement = (
+            select(TTSResult)
+            .where(col(TTSResult.id).in_(claimed_ids))
+            .order_by(col(TTSResult.id))
+        )
+        claimed = list(session.exec(reload_statement).all())
+
+    logger.info(
+        f"[claim_pending_tts_results] Claimed results | run_id={run_id}, "
+        f"provider={provider}, count={len(claimed)}"
+    )
+
+    return claimed
+
+
+def save_processed_tts_results(
+    *,
+    session: Session,
+    results: list[TTSResult],
+) -> int:
+    """Write rows finished in memory back to the DB, skipping any no longer PROCESSING.
+
+    The cron or a failure handler may already have failed a claimed row (e.g. the
+    dead-worker sweep); the PROCESSING guard keeps this late write from reviving it.
+
+    Returns:
+        int: Number of rows written
+    """
+    written = 0
+    for result in results:
+        statement = (
+            update(TTSResult)
+            .where(
+                col(TTSResult.id) == result.id,
+                col(TTSResult.status) == JobStatus.PROCESSING.value,
+            )
+            .values(
+                {
+                    TTSResult.status: result.status,
+                    TTSResult.object_store_url: result.object_store_url,
+                    TTSResult.metadata_: result.metadata_,
+                    TTSResult.error_message: result.error_message,
+                    col(TTSResult.usage): result.usage,
+                    TTSResult.updated_at: result.updated_at,
+                }
+            )
+        )
+        written += session.exec(statement).rowcount
+    session.commit()
+
+    skipped = len(results) - written
+    if skipped:
+        logger.warning(
+            f"[save_processed_tts_results] Skipped rows no longer PROCESSING | "
+            f"count={skipped}"
+        )
+
+    return written
 
 
 def update_tts_human_feedback(
@@ -208,14 +382,16 @@ def update_tts_human_feedback(
     """Update human feedback on a TTS result.
 
     Only fields passed in kwargs are updated. Passing is_correct=None clears
-    the value; omitting it leaves it unchanged.
+    the value; omitting it leaves it unchanged. `score` is merged per key into
+    the stored dict (a None value deletes that key) because the UI rates one
+    metric per request; `issues` replaces the stored list.
 
     Args:
         session: Database session
         result_id: Result ID
         org_id: Organization ID
         project_id: Project ID
-        **kwargs: Fields to update (is_correct, comment)
+        **kwargs: Fields to update (is_correct, comment, score, issues)
 
     Returns:
         TTSResult | None: Updated result
@@ -240,7 +416,16 @@ def update_tts_human_feedback(
         result.comment = kwargs["comment"]
 
     if "score" in kwargs:
-        result.score = kwargs["score"]
+        merged_score = dict(result.score or {})
+        for key, value in (kwargs["score"] or {}).items():
+            if value is None:
+                merged_score.pop(key, None)
+            else:
+                merged_score[key] = value
+        result.score = merged_score or None
+
+    if "issues" in kwargs:
+        result.issues = kwargs["issues"] or None
 
     result.updated_at = now()
 
@@ -254,6 +439,66 @@ def update_tts_human_feedback(
     )
 
     return result
+
+
+def get_tts_usage_by_model(
+    *,
+    session: Session,
+    run_id: int,
+    org_id: int,
+    project_id: int,
+) -> dict[str, dict[str, Any]]:
+    """Sum each model's usage over all of a run's results in one aggregate query.
+
+    Returns:
+        dict[str, dict[str, Any]]: Per model, `unit`, the summed fields of that
+            unit and `results_with_usage`; models with no usage are absent
+    """
+    all_fields: list[str] = []
+    for fields in USAGE_SUM_FIELDS_BY_UNIT.values():
+        for field in fields:
+            if field not in all_fields:
+                all_fields.append(field)
+
+    usage_column = col(TTSResult.usage)
+    sum_columns = []
+    for field in all_fields:
+        sql_type = Float if field in FRACTIONAL_USAGE_FIELDS else BigInteger
+        # SUM(bigint) yields numeric (Decimal), which JSON-serializes as a string.
+        sum_columns.append(
+            func.sum(usage_column[field].astext.cast(sql_type)).cast(sql_type)
+        )
+
+    # One shared expression: separately built `->>` keys bind as different
+    # parameters, which Postgres won't match between SELECT and GROUP BY.
+    unit_column = usage_column["unit"].astext
+    statement = (
+        select(
+            TTSResult.provider,
+            unit_column,
+            func.count(),
+            *sum_columns,
+        )
+        .where(
+            TTSResult.evaluation_run_id == run_id,
+            TTSResult.organization_id == org_id,
+            TTSResult.project_id == project_id,
+            unit_column.is_not(None),
+        )
+        .group_by(TTSResult.provider, unit_column)
+    )
+
+    usage_by_model: dict[str, dict[str, Any]] = {}
+    for row in session.exec(statement).all():
+        provider, unit, results_with_usage = row[0], row[1], row[2]
+        sums = dict(zip(all_fields, row[3:]))
+        model_usage: dict[str, Any] = {"unit": unit}
+        for field in USAGE_SUM_FIELDS_BY_UNIT.get(unit, ()):
+            model_usage[field] = sums[field]
+        model_usage["results_with_usage"] = results_with_usage
+        usage_by_model[provider] = model_usage
+
+    return usage_by_model
 
 
 def get_pending_results_for_run(

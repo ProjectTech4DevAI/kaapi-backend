@@ -42,6 +42,37 @@ def inject_component_schemas(openapi_schema: dict[str, Any]) -> dict[str, Any]:
     return openapi_schema
 
 
+Examples = dict[str, tuple[str, Any]]
+"""Named request examples: `{name: (summary, body)}`.
+
+Each module keeps its constants in `app/api/docs/<module>/examples.py`.
+"""
+
+
+def _named_examples(examples: Examples) -> dict[str, dict[str, Any]]:
+    return {
+        name: {"summary": summary, "value": body}
+        for name, (summary, body) in examples.items()
+    }
+
+
+def request_examples(examples: Examples) -> dict[str, Any]:
+    """`openapi_extra` that documents a route's JSON body examples.
+
+    `@router.post("/x", openapi_extra=request_examples(X_EXAMPLES))`
+
+    FastAPI deep-merges `openapi_extra` into the generated operation, so the
+    body's schema (Pydantic model, dict, list, optional body) and `required`
+    flag are kept; only the examples are added. Swagger shows them as a
+    dropdown and the Postman converter uses the first one as the request body.
+    """
+    return {
+        "requestBody": {
+            "content": {JSON_MEDIA_TYPE: {"examples": _named_examples(examples)}}
+        }
+    }
+
+
 def ref(name: str) -> dict[str, str]:
     """A `$ref` to a component schema, registered or FastAPI-generated."""
     return {"$ref": f"#/components/schemas/{name}"}
@@ -73,7 +104,7 @@ def doc(
     *,
     request_schema: dict[str, Any] | None = None,
     request: Any = None,
-    request_examples: dict[str, tuple[str, Any]] | None = None,
+    request_examples: Examples | None = None,
     required: bool = True,
     responses: dict[int, ResponseDoc] | None = None,
 ) -> dict[str, Any]:
@@ -96,10 +127,7 @@ def doc(
             "schema": request_schema or infer_schema(inferred_from)
         }
         if request_examples:
-            content["examples"] = {
-                name: {"summary": summary, "value": body}
-                for name, (summary, body) in request_examples.items()
-            }
+            content["examples"] = _named_examples(request_examples)
         elif request is not None:
             content["example"] = request
         kwargs["openapi_extra"] = {

@@ -13,6 +13,7 @@ All paths relative to `backend/app/`.
 | Credentials | `api/routes/credentials.py` | `credential` (`models/credentials.py`) | `crud/credentials.py`; provider keys per org/project; envelope encryption (KMS-wrapped data key + AES-GCM), prefix-versioned ciphertexts |
 | Model config | `api/routes/model_config.py` | `model_config` (`models/model_config.py`) | `crud/model_config.py`; cost: `estimate_model_cost` (single lookup) vs `list_active_model_pricing` + `compute_cost_from_pricing` (one batched lookup — use in loops/aggregations, e.g. `services/analytics/aggregation.py`) |
 | Bucket providers | — | reuses `credential` (`google-gcp`) | `services/buckets/` — global registry + resolver (`providers/`), GCS V4 signed + bulk-signed URLs with a 24h expiry cap (`providers/gcs.py`, cap in `providers/base.py`), attachment path selection + URL resolution (`attachments.py`) |
+| Webhook log | — (write-only, no reader yet) | `webhook_log` (`models/webhook_log.py`) | `crud/webhook_log.py`; one row per `send_callback` (`utils.py`) call: DELIVERED / FAILED / REJECTED (SSRF-validation failure, no request), attempt count, last status code, `latency` (ms, all attempts incl. backoff), `request_bytes`, client `request_metadata` (payload itself not stored), truncated response, `trace_id` = correlation id. Attribution via `send_callback` kw-only `resource_type` / `resource_id` / `project_id` / `organization_id` / `request_metadata`; write failures are logged and swallowed |
 | Cron | `api/routes/cron.py` | — | triggers batch polling (`crud/evaluations/cron.py`, `crud/assessment/cron.py` — the latter polls `method == RUN` assessments only; API-client BATCH runs are driven by their own Celery self-re-enqueue); `llm_call` retention redaction (`services/llm/retention.py`, see [llm-call.md](llm-call.md)) |
 | Jobs | — | `job` (`models/job.py`), `batch_job` (`models/batch_job.py`) | `crud/jobs.py`, `crud/job/`, `services/job_monitoring.py` |
 
@@ -50,9 +51,11 @@ entry; nothing else needs to know.
 ## Model config catalog
 
 `global.model_config` rows are seeded by migrations (052 OpenAI, 063 STT/TTS,
-066 `google-aistudio` copies, 086 Anthropic `claude-sonnet-4-6` /
-`claude-opus-5-5`). `GET /models/providers` lists only providers that have an
-active row, so a provider with no rows is invisible to the config UI.
+066 `google-aistudio` copies, 090 current-generation OpenAI + Anthropic).
+`GET /models/providers` lists only providers that have an active row, so a
+provider with no rows is invisible to the config UI.
+
+090 upserts its rows, so an existing row is repaired rather than skipped.
 
 A `config.effort` key marks a reasoning model (`is_reasoning_model`): the OpenAI
 mapper routes `effort` into `reasoning`, and config-version updates strip

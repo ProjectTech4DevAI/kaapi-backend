@@ -31,7 +31,6 @@ from app.services.assessment.api.batch import (
     PipelineStage,
     StageKind,
     _build_batch_provider,
-    _err_str,
     _fail,
     _finalize,
     _openai_output_text,
@@ -46,6 +45,7 @@ from app.services.assessment.api.batch import (
     stage_params,
     stage_prompt,
     stage_provider_model,
+    _submit_failed,
     _submit_provider_batch,
     _submit_stage,
     build_pipeline,
@@ -54,6 +54,7 @@ from app.services.assessment.api.batch import (
     next_stage,
     parse_batch_results,
     run_batch_stage,
+    summarize_row_errors,
 )
 from app.services.assessment.api.results import build_result
 from app.tests.utils.auth import get_user_test_auth_context
@@ -310,17 +311,6 @@ class TestRowIndex:
         assert _row_index(None) is None
 
 
-class TestErrStr:
-    def test_dict_with_message(self) -> None:
-        assert _err_str({"message": "boom"}) == "boom"
-
-    def test_dict_without_message_stringifies(self) -> None:
-        assert _err_str({"code": 500}) == "{'code': 500}"
-
-    def test_plain_value(self) -> None:
-        assert _err_str("oops") == "oops"
-
-
 class TestOpenAIOutputText:
     def test_plain_string(self) -> None:
         assert _openai_output_text("hello") == "hello"
@@ -346,7 +336,50 @@ class TestParseOne:
     def test_top_level_error(self) -> None:
         result = parse_one({"error": {"message": "bad"}}, "openai")
         assert result["output"] is None
-        assert result["error"] == "bad"
+        assert result["error"] == "[OPENAI] bad"
+
+    def test_openai_error_file_line(self) -> None:
+        # Shape of a real OpenAI error-file line for an unreachable image URL.
+        line = {
+            "custom_id": "row_0",
+            "error": None,
+            "response": {
+                "status_code": 400,
+                "request_id": "req_abc",
+                "body": {
+                    "error": {
+                        "message": "Error while downloading file. Upstream status code: 403.",
+                        "type": "invalid_request_error",
+                        "param": "url",
+                        "code": "invalid_value",
+                    }
+                },
+            },
+        }
+        assert parse_one(line, "openai")["error"] == (
+            "[OPENAI] invalid_value: Error while downloading file. Upstream status "
+            "code: 403. (param=url) (request_id=req_abc)"
+        )
+
+    def test_structured_error_raw_wins_over_the_plain_string(self) -> None:
+        # Anthropic adapter: unchanged repr string plus the structured copy.
+        raw = {
+            "type": "error",
+            "error": {
+                "type": "invalid_request_error",
+                "message": "Unable to download the file. Please verify the URL and try again.",
+            },
+            "request_id": "req_1",
+        }
+        result = parse_one({"error": str(raw), "error_raw": raw}, "anthropic")
+        assert result["error"] == (
+            "[ANTHROPIC] invalid_request_error: Unable to download the file. Please "
+            "verify the URL and try again. (request_id=req_1)"
+        )
+
+    def test_already_formatted_error_is_kept(self) -> None:
+        error = "[ANTHROPIC] not_found_error: model: claude-does-not-exist"
+        assert parse_one({"error": error}, "anthropic")["error"] == error
 
     def test_openai_success(self) -> None:
         result = parse_one(
@@ -377,13 +410,44 @@ class TestParseOne:
             "openai",
         )
         assert result["output"] is None
-        assert result["error"] == "server error"
+        assert result["error"] == "[OPENAI] server error"
         assert result["response_id"] == "resp_2"
 
     def test_openai_empty_output(self) -> None:
         result = parse_one({"response": {"status_code": 200, "body": {}}}, "openai")
         assert result["output"] is None
-        assert result["error"] == "Empty response output"
+        assert result["error"] == (
+            "[OPENAI] empty_output: the model returned no text (stop reason: not given)"
+        )
+
+    def test_openai_failed_response_with_status_200_uses_body_error(self) -> None:
+        body = {
+            "status": "failed",
+            "error": {
+                "code": "server_error",
+                "message": "The model failed to respond.",
+            },
+            "output": [],
+        }
+        result = parse_one(
+            {"response": {"status_code": 200, "request_id": "req_9", "body": body}},
+            "openai",
+        )
+        assert result["error"] == (
+            "[OPENAI] server_error: The model failed to respond. (request_id=req_9)"
+        )
+
+    def test_openai_incomplete_output_names_the_reason(self) -> None:
+        body = {
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            "output": [],
+        }
+        result = parse_one({"response": {"status_code": 200, "body": body}}, "openai")
+        assert result["error"] == (
+            "[OPENAI] empty_output: the model returned no text "
+            "(stop reason: max_output_tokens)"
+        )
 
     def test_anthropic_success(self) -> None:
         result = parse_one(
@@ -406,7 +470,17 @@ class TestParseOne:
     def test_anthropic_empty(self) -> None:
         result = parse_one({"response": {"content": []}}, "anthropic")
         assert result["output"] is None
-        assert result["error"] == "Empty response"
+        assert result["error"] == (
+            "[ANTHROPIC] empty_output: the model returned no text (stop reason: not given)"
+        )
+
+    def test_anthropic_refusal_names_the_stop_reason(self) -> None:
+        result = parse_one(
+            {"response": {"content": [], "stop_reason": "refusal"}}, "anthropic"
+        )
+        assert result["error"] == (
+            "[ANTHROPIC] empty_output: the model returned no text (stop reason: refusal)"
+        )
 
     def test_google_success(self) -> None:
         with patch(
@@ -419,7 +493,26 @@ class TestParseOne:
     def test_google_empty_response(self) -> None:
         result = parse_one({"response": None}, "google")
         assert result["output"] is None
-        assert result["error"] == "Empty response"
+        assert result["error"] == (
+            "[GEMINI] empty_output: the model returned no text (stop reason: not given)"
+        )
+
+    def test_google_blocked_prompt_names_the_block_reason(self) -> None:
+        response = {"promptFeedback": {"blockReason": "SAFETY"}, "candidates": []}
+        result = parse_one({"response": response}, "google-aistudio")
+        assert result["error"] == (
+            "[GEMINI] empty_output: the model returned no text (stop reason: SAFETY)"
+        )
+
+    def test_gemini_row_error_is_formatted(self) -> None:
+        # Shape of a real Gemini batch line for an unreachable attachment.
+        result = parse_one(
+            {"error": {"code": 3, "message": "Request contains an invalid argument."}},
+            "google-aistudio",
+        )
+        assert result["error"] == (
+            "[GEMINI] INVALID_ARGUMENT: Request contains an invalid argument."
+        )
 
     def test_google_gcp_parses_like_google(self) -> None:
         with patch(
@@ -874,12 +967,129 @@ class TestPollOutcome:
             provider_status="completed",
             provider_output_file_id="f",
         )
+        provider = self._provider()
+        rows = [{"custom_id": "row_0", "error": "[ANTHROPIC] boom"}]
+        provider.download_batch_results.return_value = rows
         with patch(
             "app.services.assessment.api.batch.poll_batch_status",
             return_value={"request_counts": {"completed": 0, "failed": 3}},
         ):
-            outcome, _ = _poll_outcome(db, self._provider(), job, uuid4())
+            outcome, results = _poll_outcome(db, provider, job, uuid4())
         assert outcome == "failed"
+        # Nothing succeeded, yet the per-row reasons are still fetched.
+        provider.download_batch_results.assert_called_once_with("f")
+        assert results == rows
+
+    def test_all_failed_reads_the_openai_error_file(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        job = _make_batch_job(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            provider_status="completed",
+            provider_error_file_id="file-err",
+        )
+        provider = self._provider()
+        provider.download_file.return_value = '{"custom_id": "row_0"}\n'
+        with patch(
+            "app.services.assessment.api.batch.poll_batch_status",
+            return_value={"request_counts": {"completed": 0, "failed": 1}},
+        ):
+            outcome, results = _poll_outcome(db, provider, job, uuid4())
+        assert outcome == "failed"
+        assert results == [{"custom_id": "row_0"}]
+
+    def test_all_failed_with_unreadable_results_returns_none(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        job = _make_batch_job(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            provider_status="ended",
+            provider_output_file_id="msgbatch_1",
+        )
+        provider = self._provider()
+        provider.download_batch_results.side_effect = RuntimeError("network")
+        with patch(
+            "app.services.assessment.api.batch.poll_batch_status",
+            return_value={"request_counts": {"completed": 0, "failed": 1}},
+        ):
+            outcome, results = _poll_outcome(db, provider, job, uuid4())
+        assert outcome == "failed"
+        assert results is None
+
+    def test_failed_batch_records_the_provider_reason(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        job = _make_batch_job(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            provider_status="failed",
+            error_message="Batch failed",
+        )
+        status_result = {
+            "error_message": "Batch failed",
+            "provider_errors": [
+                {
+                    "code": "model_not_found",
+                    "message": "unknown model",
+                    "param": None,
+                    "line": 1,
+                }
+            ],
+        }
+        with patch(
+            "app.services.assessment.api.batch.poll_batch_status",
+            return_value=status_result,
+        ):
+            outcome, _ = _poll_outcome(db, self._provider(), job, uuid4())
+        db.refresh(job)
+        assert outcome == "failed"
+        assert job.error_message == "[OPENAI] model_not_found: unknown model (line=1)"
+
+    def test_unreadable_output_file_still_reads_the_error_file(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        job = _make_batch_job(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            provider_status="completed",
+            provider_output_file_id="file-out",
+            provider_error_file_id="file-err",
+        )
+        provider = self._provider()
+        provider.download_batch_results.side_effect = RuntimeError("network")
+        provider.download_file.return_value = '{"custom_id": "row_0"}\n'
+        with patch(
+            "app.services.assessment.api.batch.poll_batch_status",
+            return_value={"request_counts": {"completed": 0, "failed": 1}},
+        ):
+            outcome, results = _poll_outcome(db, provider, job, uuid4())
+        assert outcome == "failed"
+        assert results == [{"custom_id": "row_0"}]
+
+    def test_expired_batch_reads_the_error_file(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        job = _make_batch_job(
+            db,
+            org_id=auth.organization_id,
+            project_id=auth.project_id,
+            provider_status="expired",
+            provider_error_file_id="file-err",
+        )
+        provider = self._provider()
+        provider.download_file.return_value = (
+            '{"custom_id": "row_0", "error": {"code": "batch_expired", '
+            '"message": "This request could not be executed before the completion '
+            'window expired."}}\n'
+        )
+        with patch(
+            "app.services.assessment.api.batch.poll_batch_status",
+            return_value={"error_message": "Batch expired"},
+        ):
+            outcome, results = _poll_outcome(db, provider, job, uuid4())
+        assert outcome == "failed"
+        assert results[0]["error"]["code"] == "batch_expired"
 
     def test_success_output_not_ready(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -1487,6 +1697,99 @@ class TestFinalizeAndFail:
         assert assessment.status == AssessmentStatus.FAILED
         assert len(delivered) == 1
 
+    def test_finalize_all_errors_records_the_row_reason(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        assessment, execution = self._setup(db, auth, "https://hook/cb")
+        delivered: list = []
+        with (
+            patch(
+                "app.services.assessment.api.results.build_result",
+                return_value=self._result(errors=2, total=2),
+            ),
+            patch(
+                "app.services.assessment.api.callbacks.deliver",
+                side_effect=lambda **kw: delivered.append(kw),
+            ),
+        ):
+            _finalize(db, execution, assessment, dict(execution.execution))
+        db.refresh(execution)
+        expected = "All 2 request(s) failed at stage 'assessment': boom (2 rows)"
+        assert execution.error_message == expected
+        assert delivered[0]["failure_message"] == expected
+
+    def test_finalize_partial_errors_keeps_run_error_null(self, db) -> None:
+        """Clients may read a non-null run error as failure; rows carry their own."""
+        auth = get_user_test_auth_context(db)
+        assessment, execution = self._setup(db, auth, "https://hook/cb")
+        delivered: list = []
+        with (
+            patch(
+                "app.services.assessment.api.results.build_result",
+                return_value=self._result(errors=1, total=2),
+            ),
+            patch(
+                "app.services.assessment.api.callbacks.deliver",
+                side_effect=lambda **kw: delivered.append(kw),
+            ),
+        ):
+            _finalize(db, execution, assessment, dict(execution.execution))
+        db.refresh(execution)
+        assert execution.error_message is None
+        assert delivered[0]["failure_message"] is None
+
+    def test_summary_lists_the_top_reasons_and_counts_the_rest(self) -> None:
+        errors = {str(i): f"[OPENAI] bad url /img/{i}.png" for i in range(8)}
+        summary = summarize_row_errors("assessment", errors, 8)
+        assert summary.startswith("All 8 request(s) failed at stage 'assessment': ")
+        assert summary.count("(1 row)") == 5
+        assert summary.endswith("| +3 more distinct error(s)")
+
+    def test_summary_groups_rows_that_differ_only_in_request_id(self) -> None:
+        reason = "[ANTHROPIC] invalid_request_error: Unable to download the file."
+        errors = {str(i): f"{reason} (request_id=req_{i})" for i in range(40)}
+        assert summarize_row_errors("assessment", errors, 40) == (
+            f"All 40 request(s) failed at stage 'assessment': {reason} (40 rows)"
+        )
+
+    def test_submit_failure_still_fails_the_run_when_the_config_is_broken(
+        self,
+    ) -> None:
+        """Resolving the stage provider can raise for the same broken config."""
+        with (
+            patch(
+                "app.services.assessment.api.batch.stage_provider_model",
+                side_effect=KeyError("model"),
+            ),
+            patch("app.services.assessment.api.batch._fail") as fail,
+        ):
+            outcome = _submit_failed(
+                MagicMock(),
+                MagicMock(),
+                MagicMock(),
+                {"provider": "anthropic"},
+                MagicMock(),
+                "assessment",
+                RuntimeError("boom"),
+            )
+        assert outcome == {"requeue": False}
+        assert (
+            fail.call_args.args[-1]
+            == "[ANTHROPIC] internal_error: the batch could not be submitted because of an internal error"
+        )
+
+    def test_fail_never_records_an_empty_reason(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        assessment, execution = self._setup(db, auth, "")
+        with patch(
+            "app.services.assessment.api.results.build_result",
+            return_value=self._result(errors=0, total=1),
+        ):
+            _fail(db, execution, assessment, dict(execution.execution), "  ")
+        db.refresh(execution)
+        assert execution.error_message == (
+            "Stage 'assessment' failed and no reason was recorded"
+        )
+
 
 class TestRunBatchStageProcessingBranches:
     def _processing_execution(self, db, auth, *, stage_pipeline_prefilter=False):
@@ -1604,6 +1907,146 @@ class TestRunBatchStageProcessingBranches:
             ),
         ):
             assert self._tick(db, execution, auth) == {"requeue": True}
+
+    def test_all_rows_failed_surfaces_each_provider_reason(self, db) -> None:
+        """Every row errored: the client and the DB get the provider's reason, not a count."""
+        auth = get_user_test_auth_context(db)
+        assessment, execution = self._processing_execution(db, auth)
+        job = db.get(BatchJob, execution.execution["stage_batches"]["assessment"])
+        job.error_message = "Batch ended with no successful requests (errored=2, ...)"
+        db.add(job)
+        db.commit()
+        # Shape of real OpenAI error-file lines for an unreachable image URL.
+        failed_rows = [
+            {
+                "custom_id": f"row_{i}",
+                "error": None,
+                "response": {
+                    "status_code": 400,
+                    "body": {
+                        "error": {
+                            "message": "Error while downloading file. Upstream status code: 403.",
+                            "type": "invalid_request_error",
+                            "param": "url",
+                            "code": "invalid_value",
+                        }
+                    },
+                },
+            }
+            for i in range(2)
+        ]
+        uploaded: list = []
+        with (
+            patch(
+                "app.services.assessment.api.batch.Session",
+                lambda _e: _SessionCtx(db),
+            ),
+            patch("app.services.assessment.api.batch._build_batch_provider"),
+            patch(
+                "app.services.assessment.api.batch._poll_outcome",
+                return_value=("failed", failed_rows),
+            ),
+            patch("app.services.assessment.api.result_files.get_cloud_storage"),
+            patch(
+                "app.services.assessment.api.result_files.upload_jsonl_to_object_store",
+                side_effect=lambda **kw: uploaded.append(kw) or "s3://b/errors.jsonl",
+            ),
+        ):
+            assert self._tick(db, execution, auth) == {"requeue": False}
+
+        row_error = (
+            "[OPENAI] invalid_value: Error while downloading file. Upstream status "
+            "code: 403. (param=url)"
+        )
+        expected = (
+            f"All 2 request(s) failed at stage 'assessment': {row_error} (2 rows)"
+        )
+        db.refresh(execution)
+        db.refresh(job)
+        assert execution.status == AssessmentStatus.FAILED
+        assert execution.error_message == expected
+        assert job.error_message == expected
+        assert execution.execution["stage_errors"]["assessment"] == {
+            "0": row_error,
+            "1": row_error,
+        }
+        result = build_result(session=db, assessment=assessment, execution=execution)
+        assert [item.error for item in result.items] == [row_error, row_error]
+        assert result.counts.errors == 2
+        errors_jsonl = [kw for kw in uploaded if kw["filename"] == "errors.jsonl"]
+        assert errors_jsonl[0]["results"] == [
+            {"type": "execution_error", "stage": "assessment", "error": expected},
+            {
+                "type": "row_error",
+                "stage": "assessment",
+                "row_index": 0,
+                "error": row_error,
+            },
+            {
+                "type": "row_error",
+                "stage": "assessment",
+                "row_index": 1,
+                "error": row_error,
+            },
+        ]
+
+    def test_all_rows_failed_marks_rows_missing_from_the_results(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        _, execution = self._processing_execution(db, auth)
+        only_row_0 = [{"custom_id": "row_0", "error": "[OPENAI] boom"}]
+        with (
+            patch(
+                "app.services.assessment.api.batch.Session",
+                lambda _e: _SessionCtx(db),
+            ),
+            patch("app.services.assessment.api.batch._build_batch_provider"),
+            patch(
+                "app.services.assessment.api.batch._poll_outcome",
+                return_value=("failed", only_row_0),
+            ),
+            patch("app.services.assessment.api.result_files.finalize_result_files"),
+        ):
+            self._tick(db, execution, auth)
+
+        db.refresh(execution)
+        assert execution.execution["stage_errors"]["assessment"] == {
+            "0": "[OPENAI] boom",
+            "1": MISSING_RESULT_ERROR,
+        }
+        assert execution.error_message.startswith(
+            "All 2 request(s) failed at stage 'assessment': "
+        )
+
+    def test_all_rows_failed_with_unreadable_results_keeps_the_batch_reason(
+        self, db
+    ) -> None:
+        auth = get_user_test_auth_context(db)
+        assessment, execution = self._processing_execution(db, auth)
+        job = db.get(BatchJob, execution.execution["stage_batches"]["assessment"])
+        job.error_message = "[OPENAI] failed: batch failed"
+        db.add(job)
+        db.commit()
+        with (
+            patch(
+                "app.services.assessment.api.batch.Session",
+                lambda _e: _SessionCtx(db),
+            ),
+            patch("app.services.assessment.api.batch._build_batch_provider"),
+            patch(
+                "app.services.assessment.api.batch._poll_outcome",
+                return_value=("failed", None),
+            ),
+            patch("app.services.assessment.api.result_files.finalize_result_files"),
+        ):
+            self._tick(db, execution, auth)
+
+        db.refresh(execution)
+        assert execution.error_message == "[OPENAI] failed: batch failed"
+        # No row-level reason exists, so every item carries the run's reason.
+        result = build_result(session=db, assessment=assessment, execution=execution)
+        assert [item.error for item in result.items] == [
+            "[OPENAI] failed: batch failed"
+        ] * 2
 
     def test_poll_error_retries(self, db) -> None:
         auth = get_user_test_auth_context(db)
@@ -1848,7 +2291,10 @@ class TestRunBatchStageFailurePaths:
             assert self._tick(db, execution, auth) == {"requeue": False}
         db.refresh(execution)
         assert execution.status == AssessmentStatus.FAILED
-        assert "provider credentials missing" in execution.error_message
+        assert (
+            execution.error_message
+            == "[OPENAI] internal_error: the batch could not be submitted because of an internal error"
+        )
         assert len(delivered) == 1
 
     def test_advance_submit_non_value_error_fails_run(self, db) -> None:
@@ -1918,7 +2364,10 @@ class TestRunBatchStageFailurePaths:
             assert self._tick(db, execution, auth) == {"requeue": False}
         db.refresh(execution)
         assert execution.status == AssessmentStatus.FAILED
-        assert execution.error_message == "provider blew up on next stage"
+        assert (
+            execution.error_message
+            == "[OPENAI] internal_error: the batch could not be submitted because of an internal error"
+        )
         assert len(delivered) == 1
 
     def test_poll_exception_still_requeues_not_fails(self, db) -> None:
@@ -2018,6 +2467,19 @@ class TestBuildResult:
             return_value=storage,
         )
 
+    def test_failed_stage_row_errors_are_used_for_items(self, db) -> None:
+        auth = get_user_test_auth_context(db)
+        bag = self._bag(
+            gate_passed=[True, True],
+            pipeline=[{"stage": "topic_relevance"}, {"stage": "assessment"}],
+            stage="topic_relevance",
+            stage_status="FAILED",
+            stage_errors={"topic_relevance": {"0": "[OPENAI] e0", "1": "[OPENAI] e1"}},
+        )
+        assessment = self._seed(db, auth, data=[{"a": "1"}, {"a": "2"}], bag=bag)
+        result = build_result(session=db, assessment=assessment)
+        assert [item.error for item in result.items] == ["[OPENAI] e0", "[OPENAI] e1"]
+
     def test_structured_output_and_verdict(self, db) -> None:
         auth = get_user_test_auth_context(db)
         bag = self._bag(
@@ -2069,7 +2531,7 @@ class TestBuildResult:
             result = build_result(session=db, assessment=assessment)
 
         assert result.items[0].output.assessment is None
-        assert result.items[0].error == "server error"
+        assert result.items[0].error == "[OPENAI] server error"
         assert result.counts.errors == 1
         assert result.counts.assessed == 0
 

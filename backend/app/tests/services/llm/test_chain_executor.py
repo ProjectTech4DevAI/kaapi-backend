@@ -214,6 +214,34 @@ class TestChainExecutor:
             ]
             assert len(running_calls) == 1
 
+    @pytest.mark.parametrize("result_fixture", ["success_result", "failure_result"])
+    def test_final_callback_gets_client_metadata_not_guardrail_merged(
+        self, context, request_obj, result_fixture, request
+    ):
+        request_obj.request_metadata = {"tracking_id": "t-1"}
+        chain_result = request.getfixturevalue(result_fixture)
+        mock_chain = MagicMock(spec=LLMChain)
+
+        # Stand-in for a block's input guardrail merging into request_metadata in place.
+        def execute(*_args, **_kwargs):
+            request_obj.request_metadata["input_guardrail"] = {"x": 1}
+            return chain_result
+
+        mock_chain.execute.side_effect = execute
+        executor = ChainExecutor(chain=mock_chain, context=context, request=request_obj)
+
+        with (
+            patch("app.services.llm.chain.executor.Session"),
+            patch("app.services.llm.chain.executor.send_callback") as mock_callback,
+            patch("app.services.llm.chain.executor.update_llm_chain_status"),
+            patch("app.services.llm.chain.executor.get_webhook_secret"),
+        ):
+            executor.run()
+
+        assert mock_callback.call_args.kwargs["request_metadata"] == {
+            "tracking_id": "t-1"
+        }
+
 
 class TestOnBlockCompleted:
     def _make_executor(self, context, request_obj):
@@ -308,6 +336,29 @@ class TestOnBlockCompleted:
             executor._on_block_completed(0, result)
 
             mock_callback.assert_called_once()
+
+    def test_intermediate_callback_gets_client_metadata_not_guardrail_merged(
+        self, context, request_obj, text_response
+    ):
+        context.total_blocks = 2
+        context.intermediate_callback_flags = [True, False]
+        request_obj.request_metadata = {"tracking_id": "t-1"}
+        executor = self._make_executor(context, request_obj)
+        request_obj.request_metadata["input_guardrail"] = {"x": 1}
+        result = BlockResult(
+            response=text_response, llm_call_id=uuid4(), usage=text_response.usage
+        )
+
+        with (
+            patch("app.services.llm.chain.executor.Session"),
+            patch("app.services.llm.chain.executor.update_llm_chain_block_completed"),
+            patch("app.services.llm.chain.executor.send_callback") as mock_callback,
+        ):
+            executor._on_block_completed(0, result)
+
+        assert mock_callback.call_args.kwargs["request_metadata"] == {
+            "tracking_id": "t-1"
+        }
 
     def test_skips_intermediate_callback_for_last_block(
         self, context, request_obj, text_response

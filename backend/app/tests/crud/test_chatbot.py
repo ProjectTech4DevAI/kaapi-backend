@@ -43,6 +43,7 @@ from app.services.chatbot.exceptions import (
     ChatbotSessionConflictError,
 )
 from app.tests.utils.chatbot import (
+    COORDINATOR_NODE_ID,
     ONBOARDING_NODE_ID,
     add_test_chatbot_messages,
     build_onboarding_node,
@@ -563,6 +564,28 @@ class TestUpdateChatbotSessionProgress:
         stored = _reload(db, chatbot_session)
         assert stored.collected_fields == {"name": "Asha"}
         assert stored.completion_status == ChatbotCompletionStatusEnum.IN_PROGRESS
+
+    def test_active_node_moves_only_when_given(
+        self, db: Session, chatbot: Chatbot
+    ) -> None:
+        chatbot_session = create_test_chatbot_session(db, chatbot=chatbot)
+
+        update_chatbot_session_progress(
+            db,
+            session_id=chatbot_session.id,
+            collected_fields={},
+            completion_status=ChatbotCompletionStatusEnum.IN_PROGRESS,
+            active_node_id=COORDINATOR_NODE_ID,
+        )
+        assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
+
+        update_chatbot_session_progress(
+            db,
+            session_id=chatbot_session.id,
+            collected_fields={},
+            completion_status=ChatbotCompletionStatusEnum.IN_PROGRESS,
+        )
+        assert _reload(db, chatbot_session).active_node_id == COORDINATOR_NODE_ID
 
     def test_unknown_id_returns_none(self, db: Session) -> None:
         assert (

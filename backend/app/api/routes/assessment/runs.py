@@ -12,6 +12,11 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.api.deps import AuthContextDep, SessionDep
+from app.api.docs.assessment.examples import (
+    ASSESSMENT_RUN_CREATE_EXAMPLES,
+    ASSESSMENT_RUN_POST_PROCESSING_EXAMPLES,
+)
+from app.api.openapi_docs import request_examples
 from app.api.permissions import Permission, require_permission
 from app.crud.assessment import (
     get_assessment_by_id,
@@ -98,6 +103,7 @@ def _build_run_public(
     description=load_description("assessment/create_run.md"),
     response_model=APIResponse[AssessmentRunResponse],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(ASSESSMENT_RUN_CREATE_EXAMPLES),
 )
 def create_assessment_runs(
     request: AssessmentRunCreate,
@@ -284,6 +290,7 @@ def export_assessment_run_results(
     description=load_description("assessment/update_post_processing.md"),
     response_model=APIResponse[AssessmentRunPublic],
     dependencies=[Depends(require_permission(Permission.REQUIRE_PROJECT))],
+    openapi_extra=request_examples(ASSESSMENT_RUN_POST_PROCESSING_EXAMPLES),
 )
 def update_post_processing(
     run_id: int,

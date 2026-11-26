@@ -16,6 +16,7 @@ Conditional forwarding:
 
 import json
 import logging
+import re
 from enum import StrEnum
 from typing import Any, cast
 from uuid import UUID
@@ -36,7 +37,7 @@ from app.core.batch import (
     process_completed_batch,
     start_batch_job,
 )
-from app.core.batch.base import BatchProvider
+from app.core.batch.base import BatchProvider, BatchSubmissionRejectedError
 from app.core.batch.client import GeminiClient
 from app.core.config import settings
 from app.core.db import engine
@@ -47,7 +48,7 @@ from app.crud.assessment.batch import (
     build_openai_jsonl,
 )
 from app.crud.credentials import get_provider_credential
-from app.crud.job import get_batch_job
+from app.crud.job import get_batch_job, update_batch_job
 from app.models.assessment import (
     Assessment,
     AssessmentAttachment,
@@ -59,7 +60,7 @@ from app.models.assessment import (
     StageStatus,
     Verdict,
 )
-from app.models.batch_job import BatchJob, BatchJobType
+from app.models.batch_job import BatchJob, BatchJobType, BatchJobUpdate
 from app.models.config.assessment_blob import (
     ATTACHMENT_COLUMN_TYPES,
     AssessmentCompletionConfig,
@@ -71,6 +72,14 @@ from app.services.llm.mappers import (
     map_kaapi_to_anthropic_params,
     map_kaapi_to_google_params,
     map_kaapi_to_openai_params,
+)
+from app.services.assessment.api.provider_errors import (
+    describe_exception,
+    error_from_payload,
+    format_provider_error,
+    job_failure_reason,
+    join_reasons,
+    row_error,
 )
 from app.services.assessment.utils.attachments import rewrite_gcs_attachment_urls
 from app.services.assessment.validators import normalize_llm_text, stage_batch_prefix
@@ -504,10 +513,44 @@ def _row_index(row_id: Any) -> int | None:
         return None
 
 
-def _err_str(error: Any) -> str:
-    if isinstance(error, dict):
-        return str(error.get("message") or error)
-    return str(error)
+def _empty_output_error(provider_name: str, response: dict[str, Any]) -> str:
+    """Why a successful response carried no text, from the provider's own stop fields."""
+    reason: str | None = None
+    if provider_name == LLMProvider.OPENAI:
+        refusal = next(
+            (
+                c.get("refusal")
+                for item in response.get("output") or []
+                if isinstance(item, dict)
+                for c in item.get("content") or []
+                if isinstance(c, dict) and c.get("type") == "refusal"
+            ),
+            None,
+        )
+        details = response.get("incomplete_details") or {}
+        reason = (
+            f"refusal: {refusal}"
+            if refusal
+            else details.get("reason") or response.get("status")
+        )
+    elif provider_name == LLMProvider.ANTHROPIC:
+        reason = response.get("stop_reason")
+    else:
+        feedback = (
+            response.get("promptFeedback") or response.get("prompt_feedback") or {}
+        )
+        candidate = (response.get("candidates") or [{}])[0]
+        reason = (
+            feedback.get("blockReason")
+            or feedback.get("block_reason")
+            or candidate.get("finishReason")
+            or candidate.get("finish_reason")
+        )
+    return format_provider_error(
+        provider_name,
+        code="empty_output",
+        message=f"the model returned no text (stop reason: {reason or 'not given'})",
+    )
 
 
 def _openai_output_text(output: Any) -> str:
@@ -528,11 +571,11 @@ def _openai_output_text(output: Any) -> str:
 
 
 def parse_one(result: dict[str, Any], provider_name: str) -> ParsedResult:
-    error = result.get("error")
+    error = result.get("error_raw") or result.get("error")
     if error:
         return {
             "output": None,
-            "error": _err_str(error),
+            "error": row_error(provider_name, error),
             "usage": None,
             "response_id": None,
         }
@@ -542,16 +585,33 @@ def parse_one(result: dict[str, Any], provider_name: str) -> ParsedResult:
         status = response.get("status_code")
         body = response.get("body") or {}
         if status and status >= 400:
+            body_error = body.get("error") or {
+                "code": status,
+                "message": f"HTTP {status}",
+            }
             return {
                 "output": None,
-                "error": (body.get("error") or {}).get("message", f"status {status}"),
+                "error": error_from_payload(
+                    LLMProvider.OPENAI,
+                    {**body_error, "request_id": response.get("request_id")},
+                ),
                 "usage": None,
                 "response_id": body.get("id"),
             }
         text = body.get("output_text") or _openai_output_text(body.get("output"))
+        if not text and isinstance(body.get("error"), dict):
+            return {
+                "output": None,
+                "error": error_from_payload(
+                    LLMProvider.OPENAI,
+                    {**body["error"], "request_id": response.get("request_id")},
+                ),
+                "usage": body.get("usage"),
+                "response_id": body.get("id"),
+            }
         return {
             "output": text or None,
-            "error": None if text else "Empty response output",
+            "error": None if text else _empty_output_error(provider_name, body),
             "usage": body.get("usage"),
             "response_id": body.get("id"),
         }
@@ -565,7 +625,7 @@ def parse_one(result: dict[str, Any], provider_name: str) -> ParsedResult:
         )
         return {
             "output": text or None,
-            "error": None if text else "Empty response",
+            "error": None if text else _empty_output_error(provider_name, response),
             "usage": response.get("usage"),
             "response_id": response.get("id"),
         }
@@ -579,7 +639,9 @@ def parse_one(result: dict[str, Any], provider_name: str) -> ParsedResult:
         text = extract_text_from_response_dict(response) if response else None
         return {
             "output": text or None,
-            "error": None if text else "Empty response",
+            "error": None
+            if text
+            else _empty_output_error(provider_name, response or {}),
             "usage": None,
             "response_id": None,
         }
@@ -760,6 +822,55 @@ def error_file_entries(provider: BatchProvider, file_id: str) -> list[dict[str, 
     return entries
 
 
+def _fetch_failed_rows(
+    provider: BatchProvider, batch_job: BatchJob
+) -> list[dict[str, Any]] | None:
+    """Per-row results of a failed batch; None when nothing was readable."""
+    rows: list[dict[str, Any]] = []
+    reads = (
+        (batch_job.provider_output_file_id, provider.download_batch_results),
+        (
+            batch_job.provider_error_file_id,
+            lambda file_id: error_file_entries(provider, file_id),
+        ),
+    )
+    for file_id, read in reads:
+        if not file_id:
+            continue
+        try:
+            rows.extend(read(file_id))
+        except Exception:
+            logger.warning(
+                "[_fetch_failed_rows] Provider results unreadable | batch_job_id=%s | file_id=%s",
+                batch_job.id,
+                file_id,
+                exc_info=True,
+            )
+    return rows or None
+
+
+_REQUEST_ID = re.compile(r" \(request_id=[^)]*\)")
+
+
+def summarize_row_errors(stage: str, errors: dict[str, str], total: int) -> str:
+    """Run-level message: each distinct row error once, with how many rows hit it."""
+    counts: dict[str, int] = {}
+    for error in errors.values():
+        # Request ids differ per row; the rows' own errors keep them.
+        reason = _REQUEST_ID.sub("", error)
+        counts[reason] = counts.get(reason, 0) + 1
+    parts = [
+        f"{error} ({n} row{'s' if n != 1 else ''})"
+        for error, n in sorted(counts.items(), key=lambda kv: -kv[1])
+    ]
+    head = (
+        f"All {total} request(s) failed at stage '{stage}'"
+        if len(errors) >= total
+        else f"{len(errors)} of {total} request(s) failed at stage '{stage}'"
+    )
+    return f"{head}: {join_reasons(parts)}"
+
+
 def _poll_outcome(
     session: Session,
     provider: BatchProvider,
@@ -780,7 +891,9 @@ def _poll_outcome(
             or status_result.get("error_file_id")
             or status_result.get("error_message")
         ):
-            return "failed", None
+            # Nothing succeeded, but each row's reason is still in the provider results.
+            _record_job_reason(session, batch_job, status_result)
+            return "failed", _fetch_failed_rows(provider, batch_job)
         if batch_job.provider_output_file_id:
             results, _ = process_completed_batch(
                 session=session,
@@ -805,8 +918,22 @@ def _poll_outcome(
             return "completed", results
         return "processing", None  # output not ready yet
     if status in _FAILED_STATUSES:
-        return "failed", None
+        _record_job_reason(session, batch_job, status_result)
+        return "failed", _fetch_failed_rows(provider, batch_job)
     return "processing", None
+
+
+def _record_job_reason(
+    session: Session, batch_job: BatchJob, status_result: dict[str, Any]
+) -> None:
+    """Store the provider's own reason for a failed batch on this assessment's batch job."""
+    reason = job_failure_reason(batch_job.provider, status_result)
+    if reason and reason != batch_job.error_message:
+        update_batch_job(
+            session=session,
+            batch_job=batch_job,
+            batch_job_update=BatchJobUpdate(error_message=reason),
+        )
 
 
 def _finalize(
@@ -832,6 +959,16 @@ def _finalize(
     else:
         status = AssessmentStatus.COMPLETED
 
+    # A partly failed run keeps a null run-level error; its rows carry their own.
+    failure_message = None
+    if status == AssessmentStatus.FAILED:
+        row_errors = {
+            str(i): item.error for i, item in enumerate(result.items) if item.error
+        }
+        failure_message = summarize_row_errors(
+            bag["stage"], row_errors, len(result.items)
+        )
+        execution.error_message = failure_message
     api.update_status(session=session, obj=execution, status=status)
     api.update_status(session=session, obj=assessment, status=status)
     logger.info(
@@ -844,7 +981,11 @@ def _finalize(
 
     # Before the callback check: durability must not depend on a callback existing.
     finalize_result_files(
-        session=session, execution=execution, assessment=assessment, bag=bag
+        session=session,
+        execution=execution,
+        assessment=assessment,
+        bag=bag,
+        failure_message=failure_message,
     )
 
     callback_url = bag.get("callback_url")
@@ -855,8 +996,37 @@ def _finalize(
             result=result,
             callback_url=callback_url,
             request_metadata=bag.get("request_metadata"),
-            failure_message=None,
+            failure_message=failure_message,
         )
+
+
+def _submit_failed(
+    session: Session,
+    execution: AssessmentRun,
+    assessment: Assessment,
+    bag: BatchRunState,
+    blob: AssessmentConfigBlob,
+    stage: str,
+    exc: Exception,
+) -> dict[str, bool]:
+    """Fail the run with the provider's own reason for rejecting the submission."""
+    if isinstance(exc, (BatchSubmissionRejectedError, ValueError)):
+        message = str(exc)  # already written for the client
+    else:
+        # The config may be what failed, so resolving its provider must not raise here.
+        try:
+            provider_name = stage_provider_model(blob, stage)[0]
+        except Exception:
+            provider_name = bag.get("provider") or "provider"
+        message = describe_exception(provider_name, exc)
+        logger.error(
+            "[_submit_failed] Submission failed | execution_id=%s | stage=%s",
+            execution.id,
+            stage,
+            exc_info=exc,
+        )
+    _fail(session, execution, assessment, bag, message)
+    return {"requeue": False}
 
 
 def _fail(
@@ -870,6 +1040,10 @@ def _fail(
     from app.services.assessment.api.result_files import finalize_result_files
     from app.services.assessment.api.results import build_result
 
+    if not (message or "").strip():
+        # Never hand the client a failure with no reason; flag the code path that did.
+        logger.error("[_fail] Empty failure message | execution_id=%s", execution.id)
+        message = f"Stage '{bag.get('stage')}' failed and no reason was recorded"
     bag["stage_status"] = StageStatus.FAILED.value
     bag["error"] = message
     api.save_execution_state(session=session, execution=execution, state=bag)
@@ -949,8 +1123,15 @@ def _advance_or_finalize(
         )
         return {"requeue": True}
     except Exception as exc:
-        _fail(session, execution, assessment, bag, str(exc))
-        return {"requeue": False}
+        return _submit_failed(
+            session,
+            execution,
+            assessment,
+            bag,
+            blob,
+            nxt,
+            exc,
+        )
     if not submitted:
         bag["stage_status"] = StageStatus.COMPLETED.value
         api.save_execution_state(session=session, execution=execution, state=bag)
@@ -1056,10 +1237,15 @@ def run_batch_stage(
                 )
                 return {"requeue": True}
             except Exception as exc:
-                # Credential/provider/network errors from _submit_provider_batch, not
-                # just ValueError — all are terminal for this run.
-                _fail(session, execution, assessment, bag, str(exc))
-                return {"requeue": False}
+                return _submit_failed(
+                    session,
+                    execution,
+                    assessment,
+                    bag,
+                    blob,
+                    stage,
+                    exc,
+                )
             if not submitted:
                 # Empty subset (all rows gated out): the stage is done — advance/finalize
                 # rather than re-submitting a PENDING stage forever.
@@ -1111,13 +1297,28 @@ def run_batch_stage(
         if outcome == "processing":
             return {"requeue": True}
         if outcome == "failed":
-            _fail(
-                session,
-                execution,
-                assessment,
-                bag,
-                batch_job.error_message or f"Stage {stage} batch failed",
-            )
+            message = batch_job.error_message or f"Stage {stage} batch failed"
+            if results:
+                parsed = parse_batch_results(results, bag["provider"])
+                stage_errors = {
+                    str(idx): out["error"]
+                    for idx, out in parsed.items()
+                    if out.get("error")
+                }
+                if stage_errors:
+                    kind = _stage_kind(bag["pipeline"], stage)
+                    subset = _row_subset(bag, stage, kind, execution.total_items)
+                    for idx in subset:
+                        if idx not in parsed:
+                            stage_errors[str(idx)] = MISSING_RESULT_ERROR
+                    bag.setdefault("stage_errors", {})[stage] = stage_errors
+                    message = summarize_row_errors(stage, stage_errors, len(subset))
+                    update_batch_job(
+                        session=session,
+                        batch_job=batch_job,
+                        batch_job_update=BatchJobUpdate(error_message=message),
+                    )
+            _fail(session, execution, assessment, bag, message)
             return {"requeue": False}
 
         # outcome == "completed"

@@ -351,6 +351,37 @@ def test_get_guardrails_success_falls_back_to_original_text(
     assert value == "hello world"
 
 
+@pytest.mark.parametrize(
+    "stored",
+    [{"input_from_user": "hi", "output_to_user": "hi", "validators": []}, None],
+    ids=["stored", "absent"],
+)
+def test_get_guardrails_success_returns_guardrail_metadata(
+    client: TestClient,
+    db: Session,
+    user_api_key: TestAuthContext,
+    user_api_key_header: dict[str, str],
+    stored: dict | None,
+) -> None:
+    callback: dict = {"response_id": "r", "delivered": False, "warnings": []}
+    if stored is not None:
+        callback["guardrail"] = stored
+    job = _seed_guardrails_job(
+        db,
+        project_id=user_api_key.project_id,
+        status=JobStatus.SUCCESS,
+        meta={
+            "request": {"text": "hi"},
+            "response": {"data": {}},
+            "callback": callback,
+        },
+    )
+
+    resp = client.get(f"api/v1/guardrails/{job.id}", headers=user_api_key_header)
+    assert resp.status_code == 200
+    assert resp.json()["data"]["guardrail_metadata"] == stored
+
+
 def test_get_guardrails_failed_returns_error_message(
     client: TestClient,
     db: Session,
