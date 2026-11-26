@@ -1,6 +1,6 @@
-Perform a delete of the document.
+Soft delete a document.
 
-This marks the document as deleted and hides it from all API responses. It does not delete the document
-from cloud storage or its information from the database.
+This marks the document as deleted and hides it from all API responses. The file stays in cloud storage and the
+database record is kept.
 
-If the document belongs to any active collections, those collections will also be deleted. This includes all associated knowledge bases — for example, any OpenAI vector stores that were created through this platform with this document.
+Collections and knowledge bases that contain this document are not touched.

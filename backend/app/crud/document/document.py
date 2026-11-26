@@ -2,6 +2,7 @@ import logging
 from uuid import UUID
 
 from fastapi import HTTPException
+from sqlalchemy import update
 from sqlmodel import Session, and_, col, select
 
 from app.core.util import now
@@ -129,13 +130,33 @@ class DocumentCrud:
 
         return document
 
-    def delete(self, doc_id: UUID) -> Document:
-        document = self.read_one(doc_id)
-        document.deleted_at = now()
-        document.updated_at = now()
+    def delete(self, doc_id: UUID) -> None:
+        """Soft delete in a single UPDATE; 404 when no active row matches."""
+        timestamp = now()
+        statement = (
+            update(Document)
+            .where(
+                col(Document.id) == doc_id,
+                col(Document.project_id) == self.project_id,
+                col(Document.deleted_at).is_(None),
+            )
+            .values(deleted_at=timestamp, updated_at=timestamp)
+        )
+        if self.session.exec(statement).rowcount == 0:
+            logger.warning(
+                f"[DocumentCrud.delete] Document not found | {{'doc_id': '{doc_id}', 'project_id': {self.project_id}}}"
+            )
+            raise HTTPException(status_code=404, detail="Document not found")
 
-        updated_document = self.update(document)
+        self.session.commit()
         logger.info(
             f"[DocumentCrud.delete] Document deleted successfully | {{'doc_id': '{doc_id}', 'project_id': {self.project_id}}}"
         )
-        return updated_document
+
+    def hard_delete(self, document: Document) -> None:
+        """Remove the document row; dependent rows go via ON DELETE CASCADE."""
+        self.session.delete(document)
+        self.session.commit()
+        logger.info(
+            f"[DocumentCrud.hard_delete] Document row removed | {{'doc_id': '{document.id}', 'project_id': {self.project_id}}}"
+        )

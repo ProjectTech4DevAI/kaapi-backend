@@ -14,6 +14,7 @@ from app.core.cloud.storage import (
     GCS_SCOPES,
     LLM_AUDIO_PREFIX,
     PENDING_PREFIX,
+    TIMEOUT_CLIENT_MAX_ATTEMPTS,
     AmazonCloudStorage,
     AmazonCloudStorageClient,
     CloudStorageError,
@@ -34,6 +35,21 @@ def test_build_gcp_sa_credentials_passes_key_and_scopes():
 
     mock_from_info.assert_called_once_with(sa_key, scopes=list(GCS_SCOPES))
     assert creds is mock_from_info.return_value
+
+
+class TestClientTimeout:
+    def test_timeout_bounds_connect_read_and_disables_retries(self):
+        config = AmazonCloudStorageClient(timeout=5).client.meta.config
+
+        assert config.connect_timeout == 5
+        assert config.read_timeout == 5
+        assert config.retries["total_max_attempts"] == TIMEOUT_CLIENT_MAX_ATTEMPTS
+
+    def test_no_timeout_keeps_botocore_defaults(self):
+        config = AmazonCloudStorageClient().client.meta.config
+
+        assert config.connect_timeout == 60
+        assert "total_max_attempts" not in (config.retries or {})
 
 
 def client_error(code: str, operation: str = "HeadObject") -> ClientError:

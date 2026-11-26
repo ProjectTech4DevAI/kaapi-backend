@@ -6,7 +6,7 @@ Deep dive: `docs/architecture/kaapi-knowledge-base-ARCHITECTURE.md` (§3 upload,
 All paths relative to `backend/app/`.
 
 ## Routes
-- `api/routes/documents/document.py` — upload/list (v1 multipart upload, the only path that transforms)
+- `api/routes/documents/document.py` — upload/list (v1 multipart upload, the only path that transforms); `DELETE /documents/{id}` soft-deletes the row, `DELETE /documents/{id}/permanent` removes the S3 object and the row (dependents cascade). Neither touches collections or the provider.
 - `api/routes/documents/v2/document.py` — v2 pre-signed upload: `POST /documents/uploads` → 200 (issues a pre-signed POST to a pending key; nothing persisted) then `PUT /documents/{document_id}` → 201 (registers the pending object; no body); no transformation
 - `api/routes/collections.py`, `api/routes/collection_job.py` — collection CRUD + job status
 - `api/routes/doc_transformation_job.py` — transform job status

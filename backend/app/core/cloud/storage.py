@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from typing import Any, NamedTuple
 import boto3
 from fastapi import UploadFile
+from botocore.config import Config
 from botocore.exceptions import ClientError
 from botocore.response import StreamingBody
 from google.cloud import storage as gcs
@@ -30,6 +31,9 @@ def _mask(value: str | None) -> str:
 
 
 logger = logging.getLogger(__name__)
+
+# Single attempt so a caller's timeout bounds the whole call, not each retry.
+TIMEOUT_CLIENT_MAX_ATTEMPTS = 1
 
 
 def _attachment_disposition(filename: str) -> str:
@@ -84,6 +88,9 @@ class StoredObject(NamedTuple):
 
 
 class AmazonCloudStorageClient:
+    def __init__(self, timeout: float | None = None):
+        self.timeout = timeout
+
     @ft.cached_property
     def client(self):
         kwargs = {
@@ -97,6 +104,13 @@ class AmazonCloudStorageClient:
             )
             kwargs["aws_secret_access_key"] = os.environ.get(
                 "AWS_SECRET_ACCESS_KEY", settings.AWS_SECRET_ACCESS_KEY
+            )
+
+        if self.timeout is not None:
+            kwargs["config"] = Config(
+                connect_timeout=self.timeout,
+                read_timeout=self.timeout,
+                retries={"total_max_attempts": TIMEOUT_CLIENT_MAX_ATTEMPTS},
             )
 
         client = boto3.client("s3", **kwargs)
@@ -272,9 +286,11 @@ class CloudStorage(ABC):
 
 
 class AmazonCloudStorage(CloudStorage):
-    def __init__(self, project_id: int, storage_path: UUID):
+    def __init__(
+        self, project_id: int, storage_path: UUID, timeout: float | None = None
+    ):
         super().__init__(project_id, storage_path)
-        self.aws = AmazonCloudStorageClient()
+        self.aws = AmazonCloudStorageClient(timeout=timeout)
 
     def put(
         self, source: UploadFile, file_path: Path, root_prefix: str | None = None
@@ -494,9 +510,12 @@ class AmazonCloudStorage(CloudStorage):
             raise _to_storage_error(err, url) from err
 
 
-def get_cloud_storage(session: Session, project_id: int) -> CloudStorage:
+def get_cloud_storage(
+    session: Session, project_id: int, timeout: float | None = None
+) -> CloudStorage:
     """
     Method to create and configure a cloud storage instance.
+    `timeout` (seconds) caps S3 connect/read with no retries; None keeps botocore defaults.
     """
     # Lazy import to avoid a top-level cycle: storage.py is imported from
     # app.services.llm.providers.google_gcp, which itself is wired into the
@@ -510,7 +529,9 @@ def get_cloud_storage(session: Session, project_id: int) -> CloudStorage:
     storage_path = project.storage_path
 
     try:
-        return AmazonCloudStorage(project_id=project_id, storage_path=storage_path)
+        return AmazonCloudStorage(
+            project_id=project_id, storage_path=storage_path, timeout=timeout
+        )
     except Exception as err:
         logger.error(
             f"[get_cloud_storage] Failed to initialize storage for project_id={project_id}: {err}",

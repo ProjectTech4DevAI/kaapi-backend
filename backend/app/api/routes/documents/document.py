@@ -16,12 +16,10 @@ from fastapi import HTTPException
 
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.permissions import Permission, require_permission
-from app.crud import CollectionCrud, DocumentCrud
-from app.crud.rag import OpenAIFileCrud, OpenAIVectorStoreCrud
+from app.crud import DocumentCrud
 from app.models import (
     Document,
     DocumentPublic,
-    ProviderType,
     TransformedDocumentPublic,
     DocumentUploadResponse,
     Message,
@@ -29,7 +27,10 @@ from app.models import (
     DocTransformationJobPublic,
 )
 from app.core.cloud import get_cloud_storage
-from app.services.documents.constants import MAX_DOC_SIZE_MB
+from app.services.documents.constants import (
+    MAX_DOC_SIZE_MB,
+    S3_DELETE_TIMEOUT_SECONDS,
+)
 from app.services.documents.helpers import (
     calculate_file_size,
     schedule_transformation,
@@ -39,7 +40,6 @@ from app.services.documents.helpers import (
 )
 from app.utils import (
     APIResponse,
-    get_openai_client,
     load_description,
     validate_callback_url,
 )
@@ -208,21 +208,7 @@ def remove_doc(
     current_user: AuthContextDep,
     doc_id: UUID = FastPath(description="Document to delete"),
 ) -> APIResponse[Message]:
-    client = get_openai_client(
-        session, current_user.organization_.id, current_user.project_.id
-    )
-
-    v_crud = OpenAIVectorStoreCrud(client)
-    f_crud = OpenAIFileCrud(client)
-    d_crud = DocumentCrud(session, current_user.project_.id)
-    c_crud = CollectionCrud(session, current_user.project_.id)
-    document = d_crud.read_one(doc_id)
-
-    c_crud.delete(document, v_crud)
-    openai_file_id = (document.file_id or {}).get(ProviderType.openai.value)
-    if openai_file_id:
-        f_crud.delete(openai_file_id)
-    d_crud.delete(doc_id)
+    DocumentCrud(session, current_user.project_.id).delete(doc_id)
 
     return APIResponse[Message].success_response(
         Message(message="Document Deleted Successfully")
@@ -240,23 +226,16 @@ def permanent_delete_doc(
     current_user: AuthContextDep,
     doc_id: UUID = FastPath(description="Document to permanently delete"),
 ) -> APIResponse[Message]:
-    client = get_openai_client(
-        session, current_user.organization_.id, current_user.project_.id
-    )
-    v_crud = OpenAIVectorStoreCrud(client)
-    f_crud = OpenAIFileCrud(client)
     d_crud = DocumentCrud(session, current_user.project_.id)
-    c_crud = CollectionCrud(session, current_user.project_.id)
-    storage = get_cloud_storage(session=session, project_id=current_user.project_.id)
-
     document = d_crud.read_one(doc_id)
 
-    c_crud.delete(document, v_crud)
-    openai_file_id = (document.file_id or {}).get(ProviderType.openai.value)
-    if openai_file_id:
-        f_crud.delete(openai_file_id)
+    storage = get_cloud_storage(
+        session=session,
+        project_id=current_user.project_.id,
+        timeout=S3_DELETE_TIMEOUT_SECONDS,
+    )
     storage.delete(document.object_store_url)
-    d_crud.delete(doc_id)
+    d_crud.hard_delete(document)
 
     return APIResponse[Message].success_response(
         Message(message="Document permanently deleted successfully")

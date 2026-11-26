@@ -99,6 +99,7 @@ class ModelEvaluation(ModelEvaluationBase, table=True):
     document_id: UUID = Field(
         foreign_key="document.id",
         nullable=False,
+        ondelete="CASCADE",
         sa_column_kwargs={"comment": "Reference to the evaluation document"},
     )
     project_id: int = Field(
