@@ -129,6 +129,18 @@ class OpenAIBatchProvider(BatchProvider):
                 if batch.error_file_id:
                     error_msg += f" (error_file_id: {batch.error_file_id})"
                 result["error_message"] = error_msg
+                # A rejected input file explains itself here, not in an error file.
+                errors = getattr(getattr(batch, "errors", None), "data", None)
+                if isinstance(errors, list) and errors:
+                    result["provider_errors"] = [
+                        {
+                            "code": e.code,
+                            "message": e.message,
+                            "param": e.param,
+                            "line": e.line,
+                        }
+                        for e in errors
+                    ]
 
             logger.info(
                 f"[get_batch_status] OpenAI batch status | batch_id={batch_id} | status={batch.status} | completed={batch.request_counts.completed}/{batch.request_counts.total}"

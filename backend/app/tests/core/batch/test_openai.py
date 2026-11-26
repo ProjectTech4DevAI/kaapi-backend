@@ -230,6 +230,36 @@ class TestOpenAIBatchProvider:
         assert "error_message" in result
         assert "Batch failed" in result["error_message"]
         assert "error-file-456" in result["error_message"]
+        assert "provider_errors" not in result
+
+    def test_get_batch_status_failed_adds_batch_errors(
+        self, provider, mock_openai_client
+    ):
+        """Shape of a real batch rejected for an unknown model."""
+        mock_batch = create_mock_batch(
+            batch_id="batch-xyz789", status="failed", output_file_id=None
+        )
+        mock_batch.errors.data = [
+            MagicMock(
+                code="model_not_found",
+                message="The provided model 'gpt-does-not-exist' is not supported by the Batch API.",
+                param="body.model",
+                line=1,
+            )
+        ]
+        mock_openai_client.batches.retrieve.return_value = mock_batch
+
+        result = provider.get_batch_status("batch-xyz789")
+
+        assert result["error_message"].startswith("Batch failed")
+        assert result["provider_errors"] == [
+            {
+                "code": "model_not_found",
+                "message": "The provided model 'gpt-does-not-exist' is not supported by the Batch API.",
+                "param": "body.model",
+                "line": 1,
+            }
+        ]
 
     def test_get_batch_status_expired(self, provider, mock_openai_client):
         """Test getting status of an expired batch."""

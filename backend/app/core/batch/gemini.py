@@ -180,6 +180,11 @@ class GeminiBatchProvider(BatchProvider):
 
             if state in _FAILED_STATES:
                 result["error_message"] = f"Batch {state}"
+                if batch_job.error and batch_job.error.message:
+                    result["provider_error"] = {
+                        "code": batch_job.error.code,
+                        "message": batch_job.error.message,
+                    }
 
             logger.info(
                 f"[get_batch_status] Gemini batch status | batch_id={batch_id} | "
@@ -265,6 +270,7 @@ class GeminiBatchProvider(BatchProvider):
                                     BATCH_KEY: custom_id,
                                     "response": None,
                                     "error": str(parsed["error"]),
+                                    "error_raw": parsed["error"],
                                 }
                             )
                     except json.JSONDecodeError as e:

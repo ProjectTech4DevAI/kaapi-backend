@@ -206,6 +206,23 @@ class TestGeminiBatchProvider:
         assert "error_message" in result
         assert "Batch JOB_STATE_FAILED" in result["error_message"]
 
+    def test_get_batch_status_failed_adds_the_job_error(
+        self, provider, mock_genai_client
+    ):
+        mock_batch_job = MagicMock()
+        mock_batch_job.state.name = "JOB_STATE_FAILED"
+        mock_batch_job.error.code = 3
+        mock_batch_job.error.message = "Request contains an invalid argument."
+        mock_genai_client.batches.get.return_value = mock_batch_job
+
+        result = provider.get_batch_status("batches/batch-xyz789")
+
+        assert result["error_message"] == "Batch JOB_STATE_FAILED"
+        assert result["provider_error"] == {
+            "code": 3,
+            "message": "Request contains an invalid argument.",
+        }
+
     def test_get_batch_status_cancelled(self, provider, mock_genai_client):
         """Test getting status of a cancelled batch."""
         batch_id = "batches/batch-xyz789"
