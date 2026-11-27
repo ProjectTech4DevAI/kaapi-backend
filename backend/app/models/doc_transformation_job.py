@@ -49,6 +49,7 @@ class DocTransformationJob(SQLModel, table=True):
     # Foreign keys
     source_document_id: UUID = Field(
         foreign_key="document.id",
+        ondelete="CASCADE",
         sa_column_kwargs={
             "comment": "Reference to the source document being transformed"
         },
@@ -56,6 +57,7 @@ class DocTransformationJob(SQLModel, table=True):
     transformed_document_id: UUID | None = Field(
         default=None,
         foreign_key="document.id",
+        ondelete="CASCADE",
         sa_column_kwargs={"comment": "Reference to the resulting transformed document"},
     )
 

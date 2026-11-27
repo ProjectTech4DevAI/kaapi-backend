@@ -57,6 +57,8 @@ class Document(DocumentBase, table=True):
         default=None,
         foreign_key="document.id",
         nullable=True,
+        ondelete="CASCADE",
+        index=True,
         sa_column_kwargs={
             "comment": "Reference to source document if this is a transformation"
         },

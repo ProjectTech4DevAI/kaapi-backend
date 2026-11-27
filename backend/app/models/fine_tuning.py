@@ -113,6 +113,7 @@ class FineTuning(FineTuningJobBase, table=True):
     document_id: UUID = Field(
         foreign_key="document.id",
         nullable=False,
+        ondelete="CASCADE",
         sa_column_kwargs={"comment": "Reference to the training document"},
     )
     project_id: int = Field(

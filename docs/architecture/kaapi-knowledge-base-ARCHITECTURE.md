@@ -523,33 +523,20 @@ deletes the remote vector store (`provider.delete`), **soft-deletes** the
 Note that the **provider files are not deleted** here — they remain for reuse by
 other collections.
 
-### Synchronous doc delete → cascade (`DELETE /documents/{id}`)
+### Doc delete (`DELETE /documents/{id}`, `DELETE /documents/{id}/permanent`)
 
 [routes/documents/document.py → `remove_doc` / `permanent_delete_doc`](../../backend/app/api/routes/documents/document.py)
-takes a very different, **fully synchronous** route:
+is DB + storage only; it never touches collections or the provider:
 
-```mermaid
-flowchart TD
-    D["DELETE /documents/{id}"] --> C["CollectionCrud.delete(document, v_crud)"]
-    C --> Q["find every ACTIVE collection containing this doc\n(join document_collection)"]
-    Q --> Loop{for each collection}
-    Loop --> RD["remote.delete(vector_store_id)\n(hard-delete on OpenAI)"]
-    RD --> SD["soft-delete the collection row"]
-    SD --> Loop
-    Loop --> F["delete the OpenAI file (if any)"]
-    F --> DD["soft-delete the document"]
-    F -.->|/permanent only| S3["also delete bytes from S3"]
-```
+- `DELETE /documents/{id}` sets `deleted_at` on the row. Bytes stay in S3. The
+  document drops out of document endpoints and of `GET /collections/{id}?include_docs=true`.
+- `DELETE /documents/{id}/permanent` deletes the S3 object, then the row. Rows
+  that reference the document (transformed documents, `doc_transformation_job`,
+  `fine_tuning`, `model_evaluation`, `document_collection`) go via
+  `ON DELETE CASCADE`. Soft-deleted documents can be purged too.
 
-So deleting **one document** synchronously tears down **every collection that
-contains it** — hard-deleting each remote vector store and soft-deleting each
-collection row — all inside the request thread, with **no job, no callback, and
-no Celery task**.
-
-The cascade is implemented with a `singledispatch` `delete` on
-[CollectionCrud](../../backend/app/crud/collection/collection.py): one overload
-deletes a `Collection`, the other receives a `Document` and fans out to all of
-its active collections.
+Collections that contain the document keep their vector stores and provider
+files; remove a knowledge base through the collection delete endpoint.
 
 ### Immutability
 
@@ -566,30 +553,17 @@ To change membership you create a **new** collection. The rationale is
 This section captures intentional-but-rough behaviour and open design questions.
 Treat it as the "read me before you touch this" list.
 
-### 11.1 Document deletion is synchronous and cascades — should be a job
+### 11.1 Document deletion no longer cascades to collections
 
-- `DELETE /documents/{id}` deletes the document **and every collection that
-  contains it**, synchronously, in the web request thread. For a doc that is part
-  of several / large collections this blocks the request on multiple remote
-  vector-store deletions and DB writes — a latency and availability risk for the
-  backend.
-- **TODO:** move the cascade into a Celery task (mirroring the async collection
-  delete), or at minimum bound/parallelize it.
+- Resolved in #1266: document delete is a plain DB/S3 operation with no provider
+  calls (see §10). The earlier cascade tore down every collection containing the
+  document inside the request thread.
 
-### 11.2 Should deleting a doc delete its collections at all?
+### 11.2 Deleted documents stay in existing knowledge bases
 
-- The cascade is aggressive: removing one source document silently destroys whole
-  knowledge bases that may still be referenced by production configs. It also
-  bypasses the job/callback machinery that the dedicated collection-delete
-  endpoint uses, so callers get no async notification.
-- This is entangled with the immutability decision (§11.3): because a collection
-  cannot have a member removed, the only way to "remove a doc from a KB" became
-  "delete the KB" — which is almost certainly not what a caller deleting a single
-  document expects.
-- **TODO:** rethink the contract. Options: block deletion of docs that are in
-  active collections; detach instead of cascade-delete; or make the behaviour
-  explicit and opt-in. Whatever is chosen must be **communicated clearly to
-  users.**
+- Because collections are immutable (§11.3) and doc delete no longer touches them,
+  a deleted document's content remains searchable in any collection built from it
+  until that collection is deleted.
 
 ### 11.3 Collections are immutable — the evals rationale
 
@@ -690,7 +664,7 @@ watch stalled `PROCESSING` jobs is still open.
 3. [services/collections/create_collection.py](../../backend/app/services/collections/create_collection.py) — **`execute_setup_job` → `execute_batch_job`** (the batched pipeline).
 4. [services/collections/helpers.py](../../backend/app/services/collections/helpers.py) — `batch_documents` + the size/count constants.
 5. [services/collections/providers/openai.py](../../backend/app/services/collections/providers/openai.py) + [providers/base.py](../../backend/app/services/collections/providers/base.py) — the provider contract and reuse logic.
-6. [services/collections/delete_collection.py](../../backend/app/services/collections/delete_collection.py) — async deletion (contrast with the synchronous doc cascade in `routes/documents/document.py`).
+6. [services/collections/delete_collection.py](../../backend/app/services/collections/delete_collection.py) — async deletion.
 
 ---
 
