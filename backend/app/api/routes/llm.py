@@ -7,6 +7,12 @@ from opentelemetry import trace
 from pydantic import TypeAdapter
 from sqlmodel import Session
 
+from app.core.telemetry.constants import (
+    CALLBACK_ENABLED,
+    JOB_ID,
+    TENANT_ORG_ID,
+    TENANT_PROJECT_ID,
+)
 from app.api.deps import AuthContextDep, SessionDep
 from app.api.docs.llm.examples import LLM_CALL_EXAMPLES
 from app.api.openapi_docs import request_examples
@@ -116,14 +122,14 @@ def llm_call(
         system="llm-call",
         lifecycle="api.llm.call",
         project_id=project_id,
-        organization_id=organization_id,
+        org_id=organization_id,
         callback_enabled=request.callback_url is not None,
     ):
         span = trace.get_current_span()
         if span.is_recording():
-            span.set_attribute("kaapi.project_id", project_id)
-            span.set_attribute("kaapi.organization_id", organization_id)
-            span.set_attribute("llm.callback_enabled", request.callback_url is not None)
+            span.set_attribute(TENANT_PROJECT_ID, str(project_id))
+            span.set_attribute(TENANT_ORG_ID, str(organization_id))
+            span.set_attribute(CALLBACK_ENABLED, request.callback_url is not None)
 
         if request.callback_url:
             validate_callback_url(str(request.callback_url))
@@ -136,7 +142,7 @@ def llm_call(
         )
 
         if span.is_recording():
-            span.set_attribute("llm.job_id", str(job_id))
+            span.set_attribute(JOB_ID, str(job_id))
 
         job_crud = JobCrud(session=session)
         job = job_crud.get(job_id=job_id, project_id=project_id)
@@ -183,7 +189,7 @@ def get_llm_call_status(
         lifecycle="api.llm.call.status",
         job_id=job_id,
         project_id=project_id,
-        organization_id=_current_user.organization_.id,
+        org_id=_current_user.organization_.id,
     ):
         job_crud = JobCrud(session=session)
         job = job_crud.get(job_id=job_id, project_id=project_id)

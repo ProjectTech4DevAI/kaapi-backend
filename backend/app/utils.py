@@ -36,6 +36,11 @@ from tenacity import (
     wait_exponential,
 )
 
+from app.core.telemetry.constants import (
+    CALLBACK_DURATION_MS,
+    CALLBACK_REQUEST_BODY_SIZE,
+    CALLBACK_RESPONSE_STATUS_CODE,
+)
 from app.core import security
 from app.core.audio_utils import AudioRef
 from app.core.config import settings
@@ -634,7 +639,7 @@ def send_callback(
         return False
     log_payload = {k: v for k, v in data.items() if k != CALLBACK_USER_DATA_KEY}
     span = trace.get_current_span()
-    span.set_attribute("callback.request.body.size", len(raw_body))
+    span.set_attribute(CALLBACK_REQUEST_BODY_SIZE, len(raw_body))
     started_at = time.perf_counter()
     attempt_count = 0
     # Explicit Retrying instead of @retry: decorator .statistics is shared across
@@ -650,10 +655,8 @@ def send_callback(
                 attempt_count = attempt.retry_state.attempt_number
                 response = _post_callback(callback_url, raw_body, webhook_secret)
                 latency = (time.perf_counter() - started_at) * 1000
-                span.set_attribute("callback.duration_ms", round(latency, 2))
-                span.set_attribute(
-                    "callback.response.status_code", response.status_code
-                )
+                span.set_attribute(CALLBACK_DURATION_MS, round(latency, 2))
+                span.set_attribute(CALLBACK_RESPONSE_STATUS_CODE, response.status_code)
                 _save_webhook_log(
                     **log_fields,
                     status=WebhookDeliveryStatusEnum.DELIVERED,

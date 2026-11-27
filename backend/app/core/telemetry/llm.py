@@ -10,6 +10,25 @@ from opentelemetry.instrumentation.utils import (
     suppress_http_instrumentation as otel_suppress_http_instrumentation,
 )
 
+from app.core.telemetry.constants import (
+    GEN_AI_OPERATION_NAME,
+    GEN_AI_PROVIDER_NAME,
+    GEN_AI_REQUEST_AVAILABLE_TOOLS,
+    GEN_AI_REQUEST_FREQUENCY_PENALTY,
+    GEN_AI_REQUEST_MAX_TOKENS,
+    GEN_AI_REQUEST_MODEL,
+    GEN_AI_REQUEST_PRESENCE_PENALTY,
+    GEN_AI_REQUEST_TEMPERATURE,
+    GEN_AI_REQUEST_TOP_P,
+    GEN_AI_RESPONSE_MODEL,
+    GEN_AI_SYSTEM,
+    GEN_AI_USAGE_INPUT_TOKENS,
+    GEN_AI_USAGE_OUTPUT_TOKENS,
+    GEN_AI_USAGE_REASONING_OUTPUT_TOKENS,
+    GEN_AI_USAGE_TOTAL_TOKENS,
+    TENANT_ORG_ID,
+    TENANT_PROJECT_ID,
+)
 from app.core.telemetry.metrics import emit_sentry_metric
 
 if TYPE_CHECKING:
@@ -24,14 +43,14 @@ def _llm_call_attrs(
     project_id: int | None,
 ) -> dict[str, str]:
     attrs: dict[str, str] = {
-        "gen_ai.system": provider,
-        "gen_ai.request.model": model,
-        "gen_ai.operation.name": operation,
+        GEN_AI_SYSTEM: provider,
+        GEN_AI_REQUEST_MODEL: model,
+        GEN_AI_OPERATION_NAME: operation,
     }
     if organization_id is not None:
-        attrs["kaapi.organization_id"] = str(organization_id)
+        attrs[TENANT_ORG_ID] = str(organization_id)
     if project_id is not None:
-        attrs["kaapi.project_id"] = str(project_id)
+        attrs[TENANT_PROJECT_ID] = str(project_id)
     return attrs
 
 
@@ -44,7 +63,7 @@ def record_llm_call_started(
 ) -> None:
     """Emit LLM call-start metric to Sentry."""
     attrs = _llm_call_attrs(provider, model, operation, organization_id, project_id)
-    emit_sentry_metric("count", "llm.call.total", 1, attributes=attrs)
+    emit_sentry_metric("count", "llm.call.count", 1, attributes=attrs)
 
 
 def record_llm_call_finished(
@@ -70,7 +89,7 @@ def record_llm_call_finished(
         attributes=attrs,
     )
     if error:
-        emit_sentry_metric("count", "llm.call.errors", 1, attributes=attrs)
+        emit_sentry_metric("count", "llm.call.error", 1, attributes=attrs)
     if input_tokens is not None:
         emit_sentry_metric("count", "llm.tokens.input", input_tokens, attributes=attrs)
     if output_tokens is not None:
@@ -91,26 +110,24 @@ def set_gen_ai_request_attributes(
     project_id: int | None,
     params: Mapping[str, object] | None = None,
 ) -> None:
-    """Set OTel GenAI request attributes on `span` (semantic-convention keys + kaapi ids)."""
-    span.set_attribute("gen_ai.system", provider)
-    span.set_attribute("gen_ai.provider.name", provider)
-    span.set_attribute("gen_ai.operation.name", operation)
+    """Set OTel GenAI request attributes on `span` (semantic-convention keys + tenant ids)."""
+    span.set_attribute(GEN_AI_SYSTEM, provider)
+    span.set_attribute(GEN_AI_PROVIDER_NAME, provider)
+    span.set_attribute(GEN_AI_OPERATION_NAME, operation)
     if model:
-        span.set_attribute("gen_ai.request.model", model)
+        span.set_attribute(GEN_AI_REQUEST_MODEL, model)
     if organization_id is not None:
-        span.set_attribute("kaapi.organization_id", organization_id)
-        span.set_attribute("gen_ai.request.organization_id", organization_id)
+        span.set_attribute(TENANT_ORG_ID, str(organization_id))
     if project_id is not None:
-        span.set_attribute("kaapi.project_id", project_id)
-        span.set_attribute("gen_ai.request.project_id", project_id)
+        span.set_attribute(TENANT_PROJECT_ID, str(project_id))
 
     params = params or {}
     for attr_key, param_key in (
-        ("gen_ai.request.temperature", "temperature"),
-        ("gen_ai.request.max_tokens", "max_tokens"),
-        ("gen_ai.request.top_p", "top_p"),
-        ("gen_ai.request.presence_penalty", "presence_penalty"),
-        ("gen_ai.request.frequency_penalty", "frequency_penalty"),
+        (GEN_AI_REQUEST_TEMPERATURE, "temperature"),
+        (GEN_AI_REQUEST_MAX_TOKENS, "max_tokens"),
+        (GEN_AI_REQUEST_TOP_P, "top_p"),
+        (GEN_AI_REQUEST_PRESENCE_PENALTY, "presence_penalty"),
+        (GEN_AI_REQUEST_FREQUENCY_PENALTY, "frequency_penalty"),
     ):
         value = params.get(param_key)
         if isinstance(value, str | bool | int | float):
@@ -118,7 +135,7 @@ def set_gen_ai_request_attributes(
 
     tools = params.get("tools")
     if tools is not None:
-        span.set_attribute("gen_ai.request.available_tools", json.dumps(tools))
+        span.set_attribute(GEN_AI_REQUEST_AVAILABLE_TOOLS, json.dumps(tools))
 
 
 def set_gen_ai_response_attributes(
@@ -131,14 +148,14 @@ def set_gen_ai_response_attributes(
         output_tokens = usage.output_tokens
         if reasoning_tokens and usage.input_tokens + output_tokens < usage.total_tokens:
             output_tokens += reasoning_tokens
-        span.set_attribute("gen_ai.usage.input_tokens", usage.input_tokens)
-        span.set_attribute("gen_ai.usage.output_tokens", output_tokens)
-        span.set_attribute("gen_ai.usage.total_tokens", usage.total_tokens)
+        span.set_attribute(GEN_AI_USAGE_INPUT_TOKENS, usage.input_tokens)
+        span.set_attribute(GEN_AI_USAGE_OUTPUT_TOKENS, output_tokens)
+        span.set_attribute(GEN_AI_USAGE_TOTAL_TOKENS, usage.total_tokens)
         if reasoning_tokens:
-            span.set_attribute("gen_ai.usage.reasoning.output_tokens", reasoning_tokens)
+            span.set_attribute(GEN_AI_USAGE_REASONING_OUTPUT_TOKENS, reasoning_tokens)
 
     if response.response and response.response.model:
-        span.set_attribute("gen_ai.response.model", response.response.model)
+        span.set_attribute(GEN_AI_RESPONSE_MODEL, response.response.model)
 
 
 @contextmanager
