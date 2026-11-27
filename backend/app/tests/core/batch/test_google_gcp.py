@@ -226,7 +226,21 @@ class TestFromCredentials:
         assert genai_client.call_args.kwargs["vertexai"] is True
         gcs_client.assert_called_once()
 
-    @pytest.mark.parametrize("drop", ["project_id", "location", "gcs_bucket", "sa_key"])
+    def test_project_and_location_default_from_sa_key(self):
+        cred = {
+            "sa_key": {"type": "service_account", "project_id": "sa-proj"},
+            "gcs_bucket": _BUCKET,
+        }
+        with (
+            patch("app.core.batch.google_gcp.build_gcp_sa_credentials"),
+            patch("app.core.batch.google_gcp.genai.Client") as genai_client,
+            patch("app.core.batch.google_gcp.gcs.Client"),
+        ):
+            GoogleGCPBatchProvider.from_credentials(cred)
+        assert genai_client.call_args.kwargs["project"] == "sa-proj"
+        assert genai_client.call_args.kwargs["location"] is None
+
+    @pytest.mark.parametrize("drop", ["gcs_bucket", "sa_key"])
     def test_missing_field_raises(self, drop):
         cred = {k: v for k, v in self._CRED.items() if k != drop}
         with pytest.raises(ValueError, match=drop):

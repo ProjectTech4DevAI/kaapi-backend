@@ -303,27 +303,37 @@ class TestCreateClient:
                 {
                     "api_key": "byok-key",
                     "project_id": "byok-proj",
+                    "location": "us-central1",
                     "gcs_bucket": "byok-bucket",
                 }
             )
 
-        assert mock_client.call_args.kwargs["api_key"] == "byok-key"
+        kwargs = mock_client.call_args.kwargs
+        assert kwargs["api_key"] == "byok-key"
+        assert kwargs["project"] == "byok-proj"
+        assert kwargs["location"] == "us-central1"
         assert c.project_id == "byok-proj"
         assert c.gcs_bucket == "byok-bucket"
 
-    def test_partial_byok_fills_from_platform(self):
+    def test_byok_api_key_does_not_mix_platform_auth(self):
         with (
             platform_settings(
-                GCP_VERTEX_API_KEY="platform-key",
+                GCP_SA_KEY=json.dumps(SA_INFO),
                 GCP_PROJECT_ID="platform-proj",
                 GCS_AUDIO_BUCKET="platform-bucket",
             ),
+            patch(f"{GCP_MODULE}.build_gcp_sa_credentials"),
             patch(f"{GCP_MODULE}.genai.Client") as mock_client,
         ):
             c = GoogleGCPProvider.create_client({"api_key": "byok-key"})
 
         assert mock_client.call_args.kwargs["api_key"] == "byok-key"
-        assert c.project_id == "platform-proj"
+        kwargs = mock_client.call_args.kwargs
+        assert "credentials" not in kwargs
+        # No project: neither is sent, so the SDK uses the projectless endpoint.
+        assert kwargs["project"] is None
+        assert kwargs["location"] is None
+        assert c.project_id is None
         assert c.gcs_bucket == "platform-bucket"
 
     def test_missing_everything_raises_value_error(self):

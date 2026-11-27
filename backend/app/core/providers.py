@@ -105,7 +105,11 @@ def parse_provider_credentials(
         return config.model.model_validate(credentials)
     except ValidationError as e:
         invalid_fields = ", ".join(
-            f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+            (
+                f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+                if err["loc"]
+                else err["msg"]
+            )
             for err in e.errors()
         )
         raise ValueError(f"Invalid credentials for {provider}: {invalid_fields}")
