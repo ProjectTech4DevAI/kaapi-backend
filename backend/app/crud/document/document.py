@@ -16,14 +16,13 @@ class DocumentCrud:
         self.session = session
         self.project_id = project_id
 
-    def read_one(self, doc_id: UUID) -> Document:
+    def read_one(self, doc_id: UUID, include_deleted: bool = False) -> Document:
         statement = select(Document).where(
-            and_(
-                Document.id == doc_id,
-                Document.project_id == self.project_id,
-                col(Document.deleted_at).is_(None),
-            )
+            Document.id == doc_id,
+            Document.project_id == self.project_id,
         )
+        if not include_deleted:
+            statement = statement.where(col(Document.deleted_at).is_(None))
 
         result = self.session.exec(statement).one_or_none()
         if result is None:

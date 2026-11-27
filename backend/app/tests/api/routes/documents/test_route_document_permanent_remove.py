@@ -10,6 +10,7 @@ from sqlmodel import Session
 from app.core.cloud import AmazonCloudStorageClient
 from app.core.config import settings
 from app.models import Document
+from app.tests.utils.test_data import create_test_project
 from app.tests.utils.document import (
     DocumentMaker,
     DocumentStore,
@@ -91,16 +92,38 @@ class TestDocumentRoutePermanentRemove:
         db.expire_all()
         assert db.get(Document, child_id) is None
 
-    def test_cannot_permanently_delete_soft_deleted_document(
+    def test_permanent_delete_purges_soft_deleted_document(
         self,
         db: Session,
         route: Route,
         crawler: WebCrawler,
     ) -> None:
+        aws = AmazonCloudStorageClient()
+        aws.create()
+
         store = DocumentStore(db=db, project_id=crawler.user_api_key.project_id)
         document = store.put()
+        document_id = document.id
+        s3_key = _put_s3_object(aws, document)
 
         crawler.delete(route.append(document))
+        response = crawler.delete(route.append(document, suffix="permanent"))
+
+        assert response.is_success
+        db.expire_all()
+        assert db.get(Document, document_id) is None
+        with pytest.raises(ClientError):
+            aws.client.head_object(Bucket=settings.AWS_S3_BUCKET, Key=s3_key)
+
+    def test_cannot_permanently_delete_other_projects_document(
+        self,
+        db: Session,
+        route: Route,
+        crawler: WebCrawler,
+    ) -> None:
+        other_project = create_test_project(db)
+        document = DocumentStore(db=db, project_id=other_project.id).put()
+
         response = crawler.delete(route.append(document, suffix="permanent"))
 
         assert response.status_code == 404

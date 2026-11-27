@@ -52,7 +52,10 @@ class DocumentCollectionCrud:
                 DocumentCollection,
                 col(DocumentCollection.document_id) == Document.id,
             )
-            .where(DocumentCollection.collection_id == collection.id)
+            .where(
+                DocumentCollection.collection_id == collection.id,
+                col(Document.deleted_at).is_(None),
+            )
         )
         if skip is not None:
             if skip < 0:

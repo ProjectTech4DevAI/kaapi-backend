@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.tests.utils.utils import get_project, get_document
 from app.tests.utils.collection import get_vector_store_collection
-from app.crud import DocumentCollectionCrud
+from app.crud import DocumentCollectionCrud, DocumentCrud
 from app.models import Collection, Document
 from app.services.collections.helpers import get_service_name
 
@@ -137,6 +137,34 @@ def test_collection_info_pagination_skip_and_limit(
     docs_resp = payload.get("documents", [])
 
     assert len(docs_resp) == 1
+
+
+def test_collection_info_excludes_soft_deleted_documents(
+    client: TestClient,
+    db: Session,
+    user_api_key_header: dict[str, str],
+) -> None:
+    project = get_project(db, "Dalgo")
+    collection = get_vector_store_collection(db, project)
+
+    documents = db.exec(
+        select(Document).where(Document.deleted_at.is_(None)).limit(2)
+    ).all()
+    assert len(documents) >= 2, "Test requires at least two documents in the DB"
+    active, deleted = documents[0], documents[1]
+
+    DocumentCollectionCrud(db).create(collection, [active, deleted])
+    DocumentCrud(db, deleted.project_id).delete(deleted.id)
+
+    response = client.get(
+        f"{settings.API_V1_STR}/collections/{collection.id}",
+        headers=user_api_key_header,
+    )
+
+    assert response.status_code == 200
+    doc_ids = {d["id"] for d in response.json()["data"]["documents"]}
+    assert str(active.id) in doc_ids
+    assert str(deleted.id) not in doc_ids
 
 
 def test_collection_info_vector_store_collection(

@@ -528,11 +528,12 @@ other collections.
 [routes/documents/document.py → `remove_doc` / `permanent_delete_doc`](../../backend/app/api/routes/documents/document.py)
 is DB + storage only; it never touches collections or the provider:
 
-- `DELETE /documents/{id}` sets `deleted_at` on the row. Bytes stay in S3.
+- `DELETE /documents/{id}` sets `deleted_at` on the row. Bytes stay in S3. The
+  document drops out of document endpoints and of `GET /collections/{id}?include_docs=true`.
 - `DELETE /documents/{id}/permanent` deletes the S3 object, then the row. Rows
   that reference the document (transformed documents, `doc_transformation_job`,
   `fine_tuning`, `model_evaluation`, `document_collection`) go via
-  `ON DELETE CASCADE`. Only active (not soft-deleted) documents can be purged.
+  `ON DELETE CASCADE`. Soft-deleted documents can be purged too.
 
 Collections that contain the document keep their vector stores and provider
 files; remove a knowledge base through the collection delete endpoint.

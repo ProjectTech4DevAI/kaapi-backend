@@ -227,7 +227,7 @@ def permanent_delete_doc(
     doc_id: UUID = FastPath(description="Document to permanently delete"),
 ) -> APIResponse[Message]:
     d_crud = DocumentCrud(session, current_user.project_.id)
-    document = d_crud.read_one(doc_id)
+    document = d_crud.read_one(doc_id, include_deleted=True)
 
     storage = get_cloud_storage(
         session=session,
