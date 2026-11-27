@@ -77,14 +77,19 @@ class GoogleGCPBatchProvider(BatchProvider):
             parse_provider_credentials(Provider.GOOGLE_GCP, credentials),
         )
 
+        # Batch reads/writes GCS, which an API key cannot authorize.
+        if not (creds_model.sa_key and creds_model.gcs_bucket):
+            raise ValueError("google-gcp batch requires sa_key and gcs_bucket")
+        project_id = creds_model.project_id or str(creds_model.sa_key["project_id"])
         creds = build_gcp_sa_credentials(creds_model.sa_key)
+        # location=None lets the SDK default to "global".
         client = genai.Client(
             vertexai=True,
-            project=creds_model.project_id,
+            project=project_id,
             location=creds_model.location,
             credentials=creds,
         )
-        storage_client = gcs.Client(project=creds_model.project_id, credentials=creds)
+        storage_client = gcs.Client(project=project_id, credentials=creds)
         return cls(
             client=client,
             storage_client=storage_client,

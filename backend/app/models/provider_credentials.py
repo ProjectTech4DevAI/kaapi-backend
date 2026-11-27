@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 
 class Provider(str, Enum):
@@ -60,11 +60,32 @@ class GoogleCredentials(ProviderCredentialsBase):
 
 
 class GoogleGcpCredentials(ProviderCredentialsBase):
-    api_key: str = Field(description="Google GCP API key")
-    project_id: str = Field(description="GCP project ID")
-    location: str = Field(description="GCP region/location")
-    sa_key: dict[str, JsonValue] = Field(description="Service account key JSON object")
-    gcs_bucket: str = Field(description="GCS bucket name")
+    """Either ``api_key`` or ``sa_key`` authenticates. API keys hit Vertex's
+    projectless endpoint; an SA key carries its own ``project_id``."""
+
+    api_key: str | None = Field(default=None, description="Google GCP API key")
+    sa_key: dict[str, JsonValue] | None = Field(
+        default=None, description="Service account key JSON object"
+    )
+    project_id: str | None = Field(
+        default=None, description="GCP project ID; defaults to sa_key.project_id"
+    )
+    location: str | None = Field(
+        default=None, description="Vertex location; defaults to 'global'"
+    )
+    gcs_bucket: str | None = Field(
+        default=None,
+        description="GCS bucket name; needed with sa_key for STT audio and batch",
+    )
+
+    @model_validator(mode="after")
+    def _require_auth(self) -> "GoogleGcpCredentials":
+        if not (self.api_key or self.sa_key):
+            raise ValueError("provide api_key or sa_key")
+        # A cross-project SA needs project_id set explicitly to bill elsewhere.
+        if self.sa_key and not (self.project_id or self.sa_key.get("project_id")):
+            raise ValueError("sa_key has no project_id; set project_id")
+        return self
 
 
 class WebhookSecretCredentials(ProviderCredentialsBase):

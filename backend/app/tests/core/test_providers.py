@@ -43,3 +43,24 @@ def test_parse_gcp_credentials_accepts_sa_key_object():
 def test_parse_gcp_credentials_rejects_non_object_sa_key(sa_key: object):
     with pytest.raises(ValueError, match="sa_key"):
         parse_provider_credentials("google-gcp", {**_GCP_CRED, "sa_key": sa_key})
+
+
+@pytest.mark.parametrize(
+    "cred",
+    [{"api_key": "test-key"}, {"sa_key": _SA_KEY}],
+)
+def test_parse_gcp_credentials_accepts_api_key_or_sa_key_alone(cred: dict) -> None:
+    creds = parse_provider_credentials("google-gcp", cred)
+    assert creds.project_id is None and creds.location is None
+
+
+def test_parse_gcp_credentials_requires_api_key_or_sa_key() -> None:
+    with pytest.raises(ValueError, match="provide api_key or sa_key"):
+        parse_provider_credentials("google-gcp", {"project_id": "proj"})
+
+
+def test_parse_gcp_credentials_requires_project_for_sa_key_without_one() -> None:
+    with pytest.raises(ValueError, match="set project_id"):
+        parse_provider_credentials(
+            "google-gcp", {"sa_key": {"type": "service_account"}}
+        )

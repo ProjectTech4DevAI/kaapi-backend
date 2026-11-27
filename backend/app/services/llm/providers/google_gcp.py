@@ -99,18 +99,18 @@ class GoogleGCPProvider(BaseProvider):
 
     @staticmethod
     def create_client(credentials: dict[str, Any]) -> Any:
-        # Each field falls back to platform settings on its own, so a BYOK row
-        # only needs the fields it wants to override.
+        # Auth comes wholly from the BYOK row or wholly from platform settings:
+        # mixing them would bill a BYOK api_key-only row to the platform SA.
         credentials = credentials or {}
-        api_key = credentials.get("api_key") or settings.GCP_VERTEX_API_KEY
-        sa_info = _parse_sa_info(credentials.get("sa_key")) or _parse_sa_info(
-            settings.GCP_SA_KEY
-        )
-        project_id = (
-            credentials.get("project_id")
-            or settings.GCP_PROJECT_ID
-            or (sa_info or {}).get("project_id")
-        )
+        if credentials.get("api_key") or credentials.get("sa_key"):
+            api_key = credentials.get("api_key")
+            sa_info = _parse_sa_info(credentials.get("sa_key"))
+            project_id = credentials.get("project_id")
+        else:
+            api_key = settings.GCP_VERTEX_API_KEY
+            sa_info = _parse_sa_info(settings.GCP_SA_KEY)
+            project_id = settings.GCP_PROJECT_ID
+        project_id = project_id or (sa_info or {}).get("project_id")
         location = (
             credentials.get("location")
             or settings.GCP_VERTEX_LOCATION
@@ -146,8 +146,16 @@ class GoogleGCPProvider(BaseProvider):
             )
         elif api_key:
             auth_mode = "api_key"
+            # Location without a project makes the SDK build "projects/None/..."
+            # paths, so both are sent or neither (the projectless global endpoint).
+            if not project_id:
+                location = None
             genai_client = genai.Client(
-                vertexai=True, api_key=api_key, http_options=http_options
+                vertexai=True,
+                api_key=api_key,
+                project=project_id,
+                location=location,
+                http_options=http_options,
             )
         else:
             raise ValueError(
